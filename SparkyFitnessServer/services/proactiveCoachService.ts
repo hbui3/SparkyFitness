@@ -6,7 +6,12 @@ import coachProfileRepository, {
 import coachContextService, {
   type CoachContextSnapshot,
 } from './coachContextService.js';
+import telegramCoachService from './telegramCoachService.js';
 import { log } from '../config/logging.js';
+
+export const ADAPTIVE_COACH_START_MINUTES = 7 * 60;
+export const ADAPTIVE_COACH_END_MINUTES = 20 * 60;
+export const ADAPTIVE_COACH_INTERVAL_MINUTES = 2 * 60;
 
 function timeToMinutes(value: string): number {
   const [hour = '0', minute = '0'] = value.split(':');
@@ -22,12 +27,44 @@ function isAtOrAfterScheduledTime(
   return local.hour * 60 + local.minute >= timeToMinutes(scheduledTime);
 }
 
+function minuteLabel(totalMinutes: number): string {
+  const hour = Math.floor(totalMinutes / 60);
+  const minute = totalMinutes % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+export function getAdaptiveDeliverySlot(
+  candidate: ProactiveCoachCandidate,
+  now: Date
+): string | null {
+  if (!candidate.adaptiveCheckInsEnabled) return null;
+  const local = instantHourMinute(now, candidate.timezone);
+  const localMinutes = local.hour * 60 + local.minute;
+  if (
+    localMinutes < ADAPTIVE_COACH_START_MINUTES ||
+    localMinutes > ADAPTIVE_COACH_END_MINUTES
+  ) {
+    return null;
+  }
+  const elapsed = localMinutes - ADAPTIVE_COACH_START_MINUTES;
+  const slotMinutes =
+    ADAPTIVE_COACH_START_MINUTES +
+    Math.floor(elapsed / ADAPTIVE_COACH_INTERVAL_MINUTES) *
+      ADAPTIVE_COACH_INTERVAL_MINUTES;
+  if (slotMinutes > ADAPTIVE_COACH_END_MINUTES) return null;
+  return `${instantToDay(now, candidate.timezone)}T${minuteLabel(slotMinutes)}`;
+}
+
 export function getDueMessageKinds(
   candidate: ProactiveCoachCandidate,
   now: Date
 ): ProactiveCoachMessageKind[] {
   const kinds: ProactiveCoachMessageKind[] = [];
   const localDate = instantToDay(now, candidate.timezone);
+  const adaptiveSlot = getAdaptiveDeliverySlot(candidate, now);
+  if (adaptiveSlot && candidate.adaptiveLastSentSlot !== adaptiveSlot) {
+    kinds.push('adaptive');
+  }
   if (
     candidate.dailyCheckInEnabled &&
     candidate.dailyLastSentOn !== localDate &&
@@ -52,6 +89,108 @@ export function getDueMessageKinds(
     kinds.push('weekly');
   }
   return kinds;
+}
+
+function targetValue(value: number | null, suffix: string): string {
+  return value === null ? `– ${suffix}` : `${value} ${suffix}`;
+}
+
+function adaptiveMetricsDe(snapshot: CoachContextSnapshot): string {
+  const { today } = snapshot;
+  return `Aktuell: ${today.caloriesConsumed} / ${targetValue(today.calorieTarget, 'kcal')}, ${today.proteinConsumedG} / ${targetValue(today.proteinTargetG, 'g Protein')} und ${today.waterConsumedMl} / ${targetValue(today.waterTargetMl, 'ml Wasser')}. Noch offen: ${today.caloriesRemaining ?? '–'} kcal, ${today.proteinRemainingG ?? '–'} g Protein und ${today.waterRemainingMl ?? '–'} ml Wasser.`;
+}
+
+function adaptiveMetricsEn(snapshot: CoachContextSnapshot): string {
+  const { today } = snapshot;
+  return `Right now: ${today.caloriesConsumed} / ${targetValue(today.calorieTarget, 'kcal')}, ${today.proteinConsumedG} / ${targetValue(today.proteinTargetG, 'g protein')}, and ${today.waterConsumedMl} / ${targetValue(today.waterTargetMl, 'ml water')}. Remaining: ${today.caloriesRemaining ?? '–'} kcal, ${today.proteinRemainingG ?? '–'} g protein, and ${today.waterRemainingMl ?? '–'} ml water.`;
+}
+
+function adaptiveFocusDe(
+  snapshot: CoachContextSnapshot,
+  slotMinutes: number
+): string {
+  const { today } = snapshot;
+  const slot = minuteLabel(slotMinutes);
+  if (today.caloriesConsumed === 0) {
+    if (slotMinutes >= 10 * 60) {
+      return `Bis ${slot} ist noch keine Mahlzeit erfasst. Falls du schon gegessen hast, trage sie jetzt nach; sonst plane die erste Mahlzeit passend zu deinem Ziel von ${targetValue(today.calorieTarget, 'kcal')}.`;
+    }
+    return `Plane deinen Tag jetzt grob: Ziel sind ${targetValue(today.calorieTarget, 'kcal')}, ${targetValue(today.proteinTargetG, 'g Protein')} und ${targetValue(today.waterTargetMl, 'ml Wasser')}.`;
+  }
+  if (today.waterConsumedMl === 0 && slotMinutes >= 9 * 60) {
+    return `Bis ${slot} ist noch kein Wasser erfasst. Starte jetzt und behalte die verbleibenden ${today.waterRemainingMl ?? '–'} ml im Blick.`;
+  }
+  if ((today.caloriesRemaining ?? 0) < 0) {
+    return `Du liegst ${Math.abs(today.caloriesRemaining ?? 0)} kcal über deinem heutigen Ziel. Kein Ausgleich durch extremes Sparen – halte die nächste Mahlzeit einfach und proteinreich.`;
+  }
+  if (slotMinutes >= 12 * 60 && (today.proteinRemainingG ?? 0) > 20) {
+    return `Es fehlen noch ${today.proteinRemainingG} g Protein. Plane die nächste Mahlzeit gezielt darum, statt den Rest am Abend nachholen zu müssen.`;
+  }
+  if ((today.waterRemainingMl ?? 0) > 500) {
+    return `Beim Wasser fehlen noch ${today.waterRemainingMl} ml. Teile das auf die verbleibenden Stunden auf.`;
+  }
+  if (slotMinutes >= 16 * 60 && (today.caloriesRemaining ?? 0) > 400) {
+    return `Es bleiben noch ${today.caloriesRemaining} kcal. Entscheide jetzt, wie Abendessen und Snack zusammen in dieses Budget passen.`;
+  }
+  return `Du bist bei den erfassten Hauptzielen gut unterwegs. Halte den Kurs; noch offen sind ${today.caloriesRemaining ?? '–'} kcal, ${today.proteinRemainingG ?? '–'} g Protein und ${today.waterRemainingMl ?? '–'} ml Wasser.`;
+}
+
+function adaptiveFocusEn(
+  snapshot: CoachContextSnapshot,
+  slotMinutes: number
+): string {
+  const { today } = snapshot;
+  const slot = minuteLabel(slotMinutes);
+  if (today.caloriesConsumed === 0) {
+    if (slotMinutes >= 10 * 60) {
+      return `No meal is logged by ${slot}. If you already ate, log it now; otherwise plan the first meal around your ${targetValue(today.calorieTarget, 'kcal')} target.`;
+    }
+    return `Sketch out today now: targets are ${targetValue(today.calorieTarget, 'kcal')}, ${targetValue(today.proteinTargetG, 'g protein')}, and ${targetValue(today.waterTargetMl, 'ml water')}.`;
+  }
+  if (today.waterConsumedMl === 0 && slotMinutes >= 9 * 60) {
+    return `No water is logged by ${slot}. Start now and keep the remaining ${today.waterRemainingMl ?? '–'} ml in view.`;
+  }
+  if ((today.caloriesRemaining ?? 0) < 0) {
+    return `You are ${Math.abs(today.caloriesRemaining ?? 0)} kcal above today's target. Do not compensate aggressively; keep the next meal simple and protein-rich.`;
+  }
+  if (slotMinutes >= 12 * 60 && (today.proteinRemainingG ?? 0) > 20) {
+    return `${today.proteinRemainingG} g protein remain. Build the next meal around that instead of leaving it all for the evening.`;
+  }
+  if ((today.waterRemainingMl ?? 0) > 500) {
+    return `${today.waterRemainingMl} ml water remain. Spread that across the hours left today.`;
+  }
+  if (slotMinutes >= 16 * 60 && (today.caloriesRemaining ?? 0) > 400) {
+    return `${today.caloriesRemaining} kcal remain. Decide now how dinner and a possible snack fit that budget together.`;
+  }
+  return `Your logged main targets are on track. Keep going; ${today.caloriesRemaining ?? '–'} kcal, ${today.proteinRemainingG ?? '–'} g protein, and ${today.waterRemainingMl ?? '–'} ml water remain.`;
+}
+
+function slotMinutesFromKey(slot: string): number {
+  return timeToMinutes(slot.slice(-5));
+}
+
+export function renderAdaptiveCoachMessage(
+  snapshot: CoachContextSnapshot,
+  language: string,
+  slot: string
+): string {
+  const slotMinutes = slotMinutesFromKey(slot);
+  if (language.toLowerCase().startsWith('de')) {
+    return [
+      `### Coach-Check um ${minuteLabel(slotMinutes)}`,
+      '',
+      adaptiveMetricsDe(snapshot),
+      '',
+      `**Jetzt sinnvoll:** ${adaptiveFocusDe(snapshot, slotMinutes)}`,
+    ].join('\n');
+  }
+  return [
+    `### Coach check at ${minuteLabel(slotMinutes)}`,
+    '',
+    adaptiveMetricsEn(snapshot),
+    '',
+    `**Useful now:** ${adaptiveFocusEn(snapshot, slotMinutes)}`,
+  ].join('\n');
 }
 
 function signed(value: number): string {
@@ -185,17 +324,41 @@ export async function processDueProactiveCoachMessages(
         );
         const localDate = instantToDay(now, candidate.timezone);
         for (const kind of kinds) {
+          const deliveryKey =
+            kind === 'adaptive'
+              ? getAdaptiveDeliverySlot(candidate, now)
+              : localDate;
+          if (!deliveryKey) continue;
           const content =
-            kind === 'daily'
-              ? renderDailyCoachMessage(snapshot, candidate.language)
-              : renderWeeklyCoachMessage(snapshot, candidate.language);
+            kind === 'adaptive'
+              ? renderAdaptiveCoachMessage(
+                  snapshot,
+                  candidate.language,
+                  deliveryKey
+                )
+              : kind === 'daily'
+                ? renderDailyCoachMessage(snapshot, candidate.language)
+                : renderWeeklyCoachMessage(snapshot, candidate.language);
           const saved = await coachProfileRepository.saveProactiveMessageIfDue(
             candidate.userId,
             kind,
-            localDate,
+            deliveryKey,
             content
           );
-          if (saved) delivered++;
+          if (!saved) continue;
+          delivered++;
+          try {
+            await telegramCoachService.sendProactiveCoachMessage(
+              candidate.userId,
+              content
+            );
+          } catch (error) {
+            log(
+              'error',
+              `Failed to send proactive coach message to Telegram for user ${candidate.userId}:`,
+              error
+            );
+          }
         }
       } catch (error) {
         log(
@@ -216,6 +379,8 @@ export async function processDueProactiveCoachMessages(
 
 export default {
   getDueMessageKinds,
+  getAdaptiveDeliverySlot,
+  renderAdaptiveCoachMessage,
   renderDailyCoachMessage,
   renderWeeklyCoachMessage,
   processDueProactiveCoachMessages,

@@ -72,7 +72,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `config/` - logging and Swagger config
 - `utils/` - startup helpers, CORS, permissions, timezone loading, OIDC helpers, migration helpers
 - `ai/` - AI provider configuration (`config.ts`), the unified provider-dispatch helper (`providerDispatch.ts`), and the in-process chatbot tool registry (`ai/tools/`)
-- Persistent coach: `routes/coachProfileRoutes.ts` → `services/coachProfileService.ts` → `models/coachProfileRepository.ts`; `services/coachContextService.ts` derives canonical onboarding/goals plus daily/7-day/30-day context, and `services/proactiveCoachService.ts` writes idempotent scheduled daily/weekly assistant messages. Meal validation remains deterministic in the profile service.
+- Persistent coach: `routes/coachProfileRoutes.ts` → `services/coachProfileService.ts` → `models/coachProfileRepository.ts`; `services/coachContextService.ts` derives canonical onboarding/goals plus daily/7-day/30-day context, and `services/proactiveCoachService.ts` writes idempotent adaptive/daily/weekly assistant messages. `routes/telegramRoutes.ts`, `services/telegramCoachService.ts`, `services/telegramApiService.ts`, and `models/coachTelegramRepository.ts` provide owner-paired bidirectional Telegram delivery using the same private chat history. The instance-wide bot token is handled by `routes/telegramAdminRoutes.ts` → `services/telegramAdminService.ts` / `services/telegramConfigService.ts` → `models/telegramConfigRepository.ts`, encrypted at rest, and accessed only with the system client. Meal validation remains deterministic in the profile service.
 - `security/` - encryption utilities (`encryption.ts`)
 - `validation/` - legacy express-validator rules for a few older routes (new routes use Zod schemas)
 - `constants/` - shared constants and supporting package data
@@ -233,7 +233,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 - AI chat or chatbot tool issue:
   inspect `services/chatService.ts`, `ai/tools/`, and the matching domain service and repository
 - Automatic coach context or proactive-message issue:
-  inspect `services/coachContextService.ts`, `services/proactiveCoachService.ts`, `services/coachProfileService.ts`, and `models/coachProfileRepository.ts`
+  inspect `services/coachContextService.ts`, `services/proactiveCoachService.ts`, `services/coachProfileService.ts`, and `models/coachProfileRepository.ts`; for Telegram delivery also inspect `services/telegramCoachService.ts`, `services/telegramApiService.ts`, `models/coachTelegramRepository.ts`, and `routes/telegramRoutes.ts`; for the instance-wide encrypted credential inspect `routes/telegramAdminRoutes.ts`, `services/telegramAdminService.ts`, `services/telegramConfigService.ts`, and `models/telegramConfigRepository.ts`
 - Fasting or mood issue:
   inspect `routes/fastingRoutes.ts` / `routes/moodRoutes.ts` and `models/fastingRepository.ts` / `models/moodRepository.ts`
 - Medications, cycle, or pregnancy issue:

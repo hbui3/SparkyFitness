@@ -8,6 +8,7 @@ import express, {
 import request from 'supertest';
 import coachProfileRoutes from '../routes/coachProfileRoutes.js';
 import coachProfileService from '../services/coachProfileService.js';
+import telegramCoachService from '../services/telegramCoachService.js';
 import type { UpdateCoachProfileRequest } from '@workspace/shared';
 
 vi.mock('../services/coachProfileService.js', () => ({
@@ -15,6 +16,13 @@ vi.mock('../services/coachProfileService.js', () => ({
     getCoachProfile: vi.fn(),
     updateCoachProfile: vi.fn(),
     validateMealSuggestion: vi.fn(),
+  },
+}));
+vi.mock('../services/telegramCoachService.js', () => ({
+  default: {
+    getConnectionStatus: vi.fn(),
+    createLink: vi.fn(),
+    disconnect: vi.fn(),
   },
 }));
 
@@ -41,6 +49,7 @@ const validProfile: UpdateCoachProfileRequest = {
   dislikedIngredients: [],
   routines: [],
   coachingNotes: null,
+  adaptiveCheckInsEnabled: true,
   dailyCheckInEnabled: true,
   dailyCheckInTime: '20:00',
   weeklyReviewEnabled: true,
@@ -98,6 +107,34 @@ describe('coach profile routes', () => {
 
     expect(response.statusCode).toBe(400);
     expect(coachProfileService.updateCoachProfile).not.toHaveBeenCalled();
+  });
+
+  it('creates and removes an owner-only Telegram coach connection', async () => {
+    vi.mocked(telegramCoachService.getConnectionStatus).mockResolvedValue({
+      available: true,
+      connected: false,
+      botUsername: 'sparky_test_bot',
+      telegramUsername: null,
+    });
+    vi.mocked(telegramCoachService.createLink).mockResolvedValue({
+      url: 'https://t.me/sparky_test_bot?start=one-time-token',
+      expiresAt: '2026-08-18T10:15:00.000Z',
+      botUsername: 'sparky_test_bot',
+    });
+    vi.mocked(telegramCoachService.disconnect).mockResolvedValue({
+      disconnected: true,
+    });
+
+    const status = await request(app).get('/api/coach-profile/telegram');
+    const link = await request(app).post('/api/coach-profile/telegram/link');
+    const removed = await request(app).delete('/api/coach-profile/telegram');
+
+    expect(status.statusCode).toBe(200);
+    expect(link.statusCode).toBe(200);
+    expect(link.body.url).toContain('https://t.me/sparky_test_bot');
+    expect(telegramCoachService.createLink).toHaveBeenCalledWith('owner-user');
+    expect(removed.statusCode).toBe(200);
+    expect(removed.body).toEqual({ disconnected: true });
   });
 
   it('returns deterministic meal validation results', async () => {

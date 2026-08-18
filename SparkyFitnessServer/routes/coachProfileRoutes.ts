@@ -5,6 +5,7 @@ import {
 } from '@workspace/shared';
 import { authenticate } from '../middleware/authMiddleware.js';
 import coachProfileService from '../services/coachProfileService.js';
+import telegramCoachService from '../services/telegramCoachService.js';
 
 const router = express.Router();
 router.use(authenticate);
@@ -78,6 +79,77 @@ router.put('/', async (req, res, next) => {
       parsed.data
     );
     res.json(profile);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /coach-profile/telegram:
+ *   get:
+ *     summary: Get the authenticated user's private Telegram coach connection
+ *     tags: [Coach Profile]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Telegram availability and connection state.
+ */
+router.get('/telegram', async (req, res, next) => {
+  try {
+    res.json(
+      await telegramCoachService.getConnectionStatus(req.authenticatedUserId)
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /coach-profile/telegram/link:
+ *   post:
+ *     summary: Create a short-lived Telegram bot pairing link
+ *     tags: [Coach Profile]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: One-time t.me pairing link.
+ *       503:
+ *         description: Telegram is not configured by the server operator.
+ */
+router.post('/telegram/link', async (req, res, next) => {
+  try {
+    const status = await telegramCoachService.getConnectionStatus(
+      req.authenticatedUserId
+    );
+    if (!status.available) {
+      res.status(503).json({ message: 'Telegram coach is not configured.' });
+      return;
+    }
+    res.json(await telegramCoachService.createLink(req.authenticatedUserId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /coach-profile/telegram:
+ *   delete:
+ *     summary: Disconnect Telegram from the authenticated user's coach
+ *     tags: [Coach Profile]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Telegram connection removed.
+ */
+router.delete('/telegram', async (req, res, next) => {
+  try {
+    res.json(await telegramCoachService.disconnect(req.authenticatedUserId));
   } catch (error) {
     next(error);
   }

@@ -85,6 +85,49 @@ Für einen reinen Tailnet-Zugriff kann die URL beispielsweise
 stabilen Secrets zu verändern. Nach Erstellung des ersten Kontos sollte
 `SPARKY_FITNESS_DISABLE_SIGNUP=true` gesetzt werden.
 
+### Telegram-Coach aktivieren
+
+Telegram nutzt denselben öffentlichen HTTPS-Endpunkt wie die Web-App; am
+Reverse Proxy ist deshalb **kein weiterer Port** nötig. `/api/telegram/webhook`
+wird über den bestehenden SparkyFitness-Port `3004` an den Server geleitet.
+
+1. Öffne in Telegram `@BotFather`, führe `/newbot` aus und bewahre den Bot-Token
+   sicher auf.
+2. Öffne SparkyFitness als Administrator und gehe zu **Administration →
+   Telegram-Coach**.
+3. Füge dort den BotFather-Token ein und wähle **Token prüfen und speichern**.
+
+SparkyFitness prüft den Token direkt bei Telegram, erzeugt selbst einen
+Webhook-Schlüssel und speichert beide Werte mit
+`SPARKY_FITNESS_API_ENCRYPTION_KEY` verschlüsselt in der Datenbank. Der Token
+wird danach weder in der Oberfläche angezeigt noch durch die API
+zurückgegeben. Ein Server-Neustart oder ein neues Container-Image verliert die
+Konfiguration nicht.
+
+Die folgenden `.env`-Werte sind nur noch ein optionaler Fallback für
+Installationen, die Telegram nicht über die Admin-Oberfläche konfigurieren
+möchten:
+
+```dotenv
+SPARKY_FITNESS_TELEGRAM_BOT_TOKEN=<BotFather-Token>
+SPARKY_FITNESS_TELEGRAM_WEBHOOK_SECRET=<zufälliger geheimer Wert>
+SPARKY_FITNESS_TELEGRAM_WEBHOOK_URL=https://sparky.wunderspiele.ch/api/telegram/webhook
+```
+
+Einen Fallback-Webhook-Schlüssel kannst du direkt auf Unraid mit
+`openssl rand -hex 32` erzeugen. Nach Änderungen an `.env` muss mindestens der
+Server neu gestartet werden:
+
+```bash
+cd /mnt/user/appdata/sparkyfitness/deployment
+docker compose --env-file .env -f compose.yml up -d sparkyfitness-server
+```
+
+Unter **Einstellungen → Nutrition & Diet → AI Coach Profile** erzeugt
+**Telegram verbinden** danach einen 15 Minuten gültigen Einmal-Link. Antworten
+im privaten Telegram-Chat laufen durch denselben konfigurierten KI-Anbieter und
+landen im selben privaten Sparky-Chatverlauf. `/stop` trennt die Verbindung.
+
 ## 3. GitHub konfigurieren
 
 Lege im Repository das Environment `unraid-production` an und speichere darin:

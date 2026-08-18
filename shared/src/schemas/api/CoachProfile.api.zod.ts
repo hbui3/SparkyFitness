@@ -15,6 +15,7 @@ export const updateCoachProfileRequestSchema = z.object({
   dislikedIngredients: compactTextListSchema,
   routines: compactTextListSchema,
   coachingNotes: z.string().trim().max(2_000).nullable(),
+  adaptiveCheckInsEnabled: z.boolean().default(false),
   dailyCheckInEnabled: z.boolean(),
   dailyCheckInTime: coachLocalTimeSchema,
   weeklyReviewEnabled: z.boolean(),

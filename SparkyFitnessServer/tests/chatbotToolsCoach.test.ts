@@ -58,6 +58,7 @@ beforeEach(() => {
     dislikedIngredients: [],
     routines: [],
     coachingNotes: null,
+    adaptiveCheckInsEnabled: false,
     dailyCheckInEnabled: false,
     dailyCheckInTime: '20:00',
     weeklyReviewEnabled: false,

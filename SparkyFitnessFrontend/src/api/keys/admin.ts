@@ -8,6 +8,7 @@ export const oidcKeys = {
 
 export const settingsKeys = {
   all: ['settings'] as const,
+  telegramCoach: () => [...settingsKeys.all, 'telegram-coach'] as const,
 };
 
 export const userKeys = {
