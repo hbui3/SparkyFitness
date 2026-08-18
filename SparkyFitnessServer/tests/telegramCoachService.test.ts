@@ -24,6 +24,9 @@ vi.mock('../models/userRepository.js', () => ({
   default: { findUserById: vi.fn().mockResolvedValue({ role: 'user' }) },
 }));
 vi.mock('../services/chatService.js', () => ({
+  isImageFollowUpText: vi.fn((value: string) =>
+    /^(?:logge es|log it|ja|yes)$/i.test(value.trim())
+  ),
   default: {
     getSparkyChatHistory: vi.fn(),
     getActiveAiServiceSetting: vi.fn(),
@@ -184,7 +187,7 @@ describe('telegramCoachService', () => {
     });
   });
 
-  it('downloads a Telegram photo with its caption and enables food vision tools', async () => {
+  it('downloads a Telegram photo with its caption and uses native vision with food tools', async () => {
     vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
       userId: 'user-1',
       claimed: true,
@@ -244,11 +247,73 @@ describe('telegramCoachService', () => {
         'user-1',
         'user-1',
         false,
-        ['food', 'reports', 'vision']
+        ['food', 'reports']
       );
       expect(sendTelegramMessage).toHaveBeenCalledWith(
         '12345',
         'Ich habe zwei Stück eingetragen.'
+      );
+    });
+  });
+
+  it('restores stored image parts so a short follow-up can still refer to the photo', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([
+      {
+        message_type: 'user',
+        content: '2 Stück davon',
+        parts: [
+          { type: 'text', text: '2 Stück davon' },
+          { type: 'image', image: 'data:image/jpeg;base64,/9j/' },
+        ],
+      },
+      {
+        message_type: 'assistant',
+        content: 'Soll ich die zwei Stück eintragen?',
+      },
+    ] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(chatService.processChatMessage).mockResolvedValue({
+      content: 'Ich habe die zwei Stück eingetragen.',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 14,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: 'Logge es',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(chatService.processChatMessage).toHaveBeenCalledWith(
+        [
+          {
+            role: 'user',
+            content: '2 Stück davon',
+            parts: [
+              { type: 'text', text: '2 Stück davon' },
+              { type: 'image', image: 'data:image/jpeg;base64,/9j/' },
+            ],
+          },
+          {
+            role: 'assistant',
+            content: 'Soll ich die zwei Stück eintragen?',
+          },
+          { role: 'user', content: 'Logge es' },
+        ],
+        'ai-1',
+        'user-1',
+        'user-1',
+        false,
+        CHAT_TOOL_CATEGORY_SLUGS.filter((slug) => slug !== 'vision')
       );
     });
   });

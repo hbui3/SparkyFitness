@@ -1445,6 +1445,57 @@ describe('chatService', () => {
       expect(nonTextParts(userMessages[1].content)).toHaveLength(1);
     });
 
+    it('retains the immediately preceding image for a short logging confirmation', async () => {
+      const model = streamModel([
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'logged' },
+        { type: 'text-end', id: 't1' },
+        {
+          type: 'finish',
+          finishReason: { unified: 'stop', raw: undefined },
+          usage,
+        },
+      ]);
+      const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+
+      const { stream } = await chatService.processChatMessageStream(
+        [
+          {
+            role: 'user',
+            parts: [
+              { type: 'text', text: '2 Stück davon' },
+              { type: 'image', image },
+            ],
+          },
+          {
+            role: 'assistant',
+            content: 'Das sind 273 kcal pro Stück. Soll ich sie eintragen?',
+          },
+          { role: 'user', content: 'Logge es' },
+        ],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+      await drainStream(stream);
+
+      const prompt = model.doStreamCalls[0].prompt;
+      const previousImageMessage = prompt.find(
+        (message) =>
+          message.role === 'user' &&
+          Array.isArray(message.content) &&
+          message.content.some(
+            (part) => (part as { type?: string }).type === 'file'
+          )
+      );
+      expect(previousImageMessage).toBeDefined();
+      expect(prompt[prompt.length - 1].role).toBe('user');
+      expect(prompt[prompt.length - 1].content).toEqual([
+        { type: 'text', text: 'Logge es' },
+      ]);
+    });
+
     it('trims old history to a token budget but always keeps the current turn', async () => {
       const model = streamModel([
         { type: 'stream-start', warnings: [] },

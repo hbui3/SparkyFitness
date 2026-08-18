@@ -791,10 +791,30 @@ interface LlmMessage {
 // Vision images are stored as base64 data URLs and re-sent inside the context
 // window on every turn until they age out, costing ~1-2K+ uncached tokens each,
 // each turn. The model only needs to *see* an image on the turn it arrives; for
-// earlier turns the assistant's text reply already captured the analysis. Strip
-// image parts from every message except the latest user turn. A turn that was
-// image-only keeps a short placeholder so it never becomes empty (some providers
-// reject empty messages); turns with accompanying text just lose the image.
+// earlier turns the assistant's text reply normally captured the analysis. Strip
+// image parts from every message except the latest user turn. One exception is a
+// short confirmation immediately following an image ("log it", "logge es"):
+// those words depend on the image, and a prior assistant reply may not have named
+// the product. In that case retain only the most recent preceding user image.
+// A turn that was image-only keeps a short placeholder so it never becomes empty
+// (some providers reject empty messages); turns with accompanying text just lose
+// the image.
+const IMAGE_FOLLOW_UP_PATTERN =
+  /^(?:yes|yeah|yep|ok(?:ay)?|do it|add it|log it|ja|jep|okay|ok|mach(?: das)?|füg(?:e)? (?:es|das) hinzu|trag(?:e)? (?:es|das) ein|logg?(?:e)? (?:es|das))(?:[.!? ]*)$/i;
+
+export function isImageFollowUpText(value: string): boolean {
+  return IMAGE_FOLLOW_UP_PATTERN.test(value.trim());
+}
+
+function messageText(message: LlmMessage): string {
+  if (typeof message.content === 'string') return message.content.trim();
+  return message.content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text ?? '')
+    .join(' ')
+    .trim();
+}
+
 function stripHistoricalImages(messages: LlmMessage[]): LlmMessage[] {
   let lastUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -804,8 +824,30 @@ function stripHistoricalImages(messages: LlmMessage[]): LlmMessage[] {
     }
   }
 
+  let retainedPreviousImageIndex = -1;
+  if (
+    lastUserIndex >= 0 &&
+    isImageFollowUpText(messageText(messages[lastUserIndex]))
+  ) {
+    for (let i = lastUserIndex - 1; i >= 0; i--) {
+      if (messages[i].role !== 'user') continue;
+      const candidateContent = messages[i].content;
+      if (
+        Array.isArray(candidateContent) &&
+        candidateContent.some((part) => part.type === 'image')
+      ) {
+        retainedPreviousImageIndex = i;
+      }
+      break;
+    }
+  }
+
   return messages.map((msg, index) => {
-    if (index === lastUserIndex || !Array.isArray(msg.content)) {
+    if (
+      index === lastUserIndex ||
+      index === retainedPreviousImageIndex ||
+      !Array.isArray(msg.content)
+    ) {
       return msg;
     }
     const withoutImages = msg.content.filter((part) => part.type !== 'image');
