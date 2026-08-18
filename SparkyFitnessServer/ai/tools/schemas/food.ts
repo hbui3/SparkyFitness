@@ -36,7 +36,7 @@ const lookupFoodNutritionSchema = z
     provider_type: foodProviderTypeEnum
       .optional()
       .describe(
-        'Optional: Force a specific provider search, bypassing the cascade lookup'
+        'Optional: Force a specific provider only when the user explicitly requests that source; otherwise omit this field to use the full cascade lookup'
       ),
   })
   .strict();

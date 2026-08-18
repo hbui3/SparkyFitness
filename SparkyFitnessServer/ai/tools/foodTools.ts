@@ -752,11 +752,15 @@ async function lookupFoodNutrition(
         alternatives: internalBroad.data.slice(1),
       };
     }
-    // "internal" explicitly requested and not found: stop here
-    if (providerType === 'internal') {
-      return { source: 'internal', food: null };
-    }
+    // Models sometimes set provider_type="internal" even though the user did
+    // not ask to restrict the search. An internal miss must therefore continue
+    // through the normal provider cascade; otherwise a perfectly ordinary
+    // "not found" is rendered as a database error and the requested food is
+    // never logged.
   }
+
+  const externalProviderType =
+    providerType === 'internal' ? undefined : providerType;
 
   let targetProviders: {
     id?: string;
@@ -764,8 +768,8 @@ async function lookupFoodNutrition(
     provider_name: string;
   }[] = [];
 
-  if (providerType) {
-    if (providerType === 'openfoodfacts') {
+  if (externalProviderType) {
+    if (externalProviderType === 'openfoodfacts') {
       targetProviders.push({
         provider_type: 'openfoodfacts',
         provider_name: 'OpenFoodFacts',
@@ -773,7 +777,7 @@ async function lookupFoodNutrition(
     } else {
       const rows = await externalProviderRepository.getActiveProvidersByTypes(
         userId,
-        [providerType]
+        [externalProviderType]
       );
       if (rows.length > 0) {
         targetProviders.push(rows[0]);
@@ -782,8 +786,8 @@ async function lookupFoodNutrition(
         // below fails (no credentials) and the cascade falls through to the
         // AI-estimate response — MCP behavior, pinned by test.
         targetProviders.push({
-          provider_type: providerType,
-          provider_name: providerType,
+          provider_type: externalProviderType,
+          provider_name: externalProviderType,
         });
       }
     }
@@ -888,7 +892,7 @@ export function buildFoodTools(userId: string, tz: string) {
 
 Actions:
 - search_food(food_name, search_type:"exact"|"broad", limit?, offset?)
-- lookup_food_nutrition(food_name, provider_type?) — AI MUST call this cascade lookup first before creating or estimating a food. Bypasses regular cascade to search specific provider (e.g. openfoodfacts, usda, yazio) if provider_type given.
+- lookup_food_nutrition(food_name, provider_type?) — AI MUST call this cascade lookup first before creating or estimating a food. Omit provider_type unless the user explicitly requested a specific source; setting it bypasses the regular cascade (except an internal miss, which safely continues to external providers).
 - list_meal_types() — lists the user's built-in and custom meal types with IDs, names, and sort order.
 - log_food(quantity, meal_type_id?|meal_type?, food_name?|food_id?, unit?, entry_date?, variant_id?) — use meal_type_id for custom meal types; the legacy meal_type fallback accepts "breakfast"|"lunch"|"dinner"|"snacks". meal_type_id takes precedence when both are supplied. Provide food_name or food_id (an internal food UUID, never a lookup result's External ID); unit defaults to the food's serving unit, entry_date defaults to today. Works only for foods already in the database (source='internal').
 - log_external_food(food_name, meal_type_id?|meal_type?, quantity?, unit?, entry_date?, external_id?, provider_type?) — PREFERRED way to log an external lookup_food_nutrition match (usda/openfoodfacts/...): the server re-fetches the provider result, saves it with full nutrition, and logs it in one call. quantity is in servings and defaults to 1.
@@ -1189,16 +1193,9 @@ Actions:
                 args.provider_type
               );
 
-              if (result.source === 'ai_estimate') {
+              if (result.source === 'ai_estimate' || !result.food) {
                 return `No matches found in internal DB or configured external databases/OpenFoodFacts for "${args.food_name}". You may estimate the nutrition using AI and save it using create_food.`;
               }
-              if (!result.food) {
-                // MCP quirk: an explicit provider_type='internal' miss
-                // crashed its renderer on the null food and surfaced as a
-                // DB error — ported as-is.
-                return ERRORS.DB_ERROR();
-              }
-
               const f = result.food;
               let text = `### Found match in **${result.source}**:\n`;
               text += `**${f.name}**`;

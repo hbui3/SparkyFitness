@@ -11,6 +11,23 @@ interface TelegramBotIdentity {
   username?: string;
 }
 
+interface TelegramRemoteFile {
+  file_path?: string;
+  file_size?: number;
+}
+
+export interface TelegramDownloadedImage {
+  dataUrl: string;
+  mimeType: string;
+}
+
+const MAX_TELEGRAM_IMAGE_BYTES = 10 * 1024 * 1024;
+const TELEGRAM_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
 let cachedBotIdentity: { token: string; username: string | null } | undefined;
 
 export async function getTelegramBotToken(): Promise<string | null> {
@@ -33,15 +50,19 @@ async function callTelegramApi<T>(
 ): Promise<T> {
   const token = explicitToken ?? (await getTelegramBotToken());
   if (!token) throw new Error('Telegram bot token is not configured.');
-  const response = await fetch(
-    `https://api.telegram.org/bot${token}/${method}`,
-    {
+  let response: Response;
+  try {
+    response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body ?? {}),
       signal: AbortSignal.timeout(15_000),
-    }
-  );
+    });
+  } catch {
+    // Fetch errors can include the request URL. Do not let the bot token from
+    // that URL escape into caller logs.
+    throw new Error(`Telegram API ${method} request failed.`);
+  }
   if (!response.ok) {
     throw new Error(
       `Telegram API ${method} failed with status ${response.status}.`
@@ -131,6 +152,96 @@ export async function sendTelegramTyping(
     chat_id: telegramChatId,
     action: 'typing',
   });
+}
+
+function inferTelegramImageMimeType(
+  contentType: string | null,
+  filePath: string
+): string | null {
+  const normalizedContentType = contentType
+    ?.split(';', 1)[0]
+    .trim()
+    .toLowerCase();
+  if (
+    normalizedContentType &&
+    TELEGRAM_IMAGE_MIME_TYPES.has(normalizedContentType)
+  ) {
+    return normalizedContentType;
+  }
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  return null;
+}
+
+/** Downloads a Telegram-hosted photo without exposing the bot token upstream. */
+export async function downloadTelegramImage(
+  fileId: string
+): Promise<TelegramDownloadedImage> {
+  const token = await getTelegramBotToken();
+  if (!token) throw new Error('Telegram bot token is not configured.');
+
+  const remoteFile = await callTelegramApi<TelegramRemoteFile>('getFile', {
+    file_id: fileId,
+  });
+  const filePath = remoteFile.file_path?.trim();
+  if (!filePath) throw new Error('Telegram did not return an image file path.');
+  if (
+    remoteFile.file_size !== undefined &&
+    remoteFile.file_size > MAX_TELEGRAM_IMAGE_BYTES
+  ) {
+    throw new Error('Telegram image exceeds the 10 MB processing limit.');
+  }
+
+  const pathSegments = filePath.split('/').filter(Boolean);
+  if (
+    pathSegments.length === 0 ||
+    pathSegments.some((segment) => segment === '.' || segment === '..')
+  ) {
+    throw new Error('Telegram returned an invalid image file path.');
+  }
+  const safePath = pathSegments.map(encodeURIComponent).join('/');
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.telegram.org/file/bot${token}/${safePath}`,
+      {
+        method: 'GET',
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+  } catch {
+    // As above, keep the token-bearing download URL out of logs.
+    throw new Error('Telegram image download request failed.');
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Telegram image download failed with status ${response.status}.`
+    );
+  }
+
+  const declaredLength = Number(response.headers.get('content-length') ?? 0);
+  if (declaredLength > MAX_TELEGRAM_IMAGE_BYTES) {
+    throw new Error('Telegram image exceeds the 10 MB processing limit.');
+  }
+  const mimeType = inferTelegramImageMimeType(
+    response.headers.get('content-type'),
+    filePath
+  );
+  if (!mimeType)
+    throw new Error('Telegram returned an unsupported image type.');
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0) throw new Error('Telegram returned an empty image.');
+  if (bytes.length > MAX_TELEGRAM_IMAGE_BYTES) {
+    throw new Error('Telegram image exceeds the 10 MB processing limit.');
+  }
+  return {
+    dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
+    mimeType,
+  };
 }
 
 export function getTelegramWebhookUrl(): string | null {

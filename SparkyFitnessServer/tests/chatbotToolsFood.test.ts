@@ -713,9 +713,16 @@ describe('lookup_food_nutrition', () => {
     );
   });
 
-  it('returns a DB error for an explicit internal miss (MCP quirk)', async () => {
+  it('continues through the provider cascade after an explicit internal miss', async () => {
     vi.mocked(foodRepository.getFoodsWithPagination).mockResolvedValue([]);
     vi.mocked(foodRepository.countFoods).mockResolvedValue(0);
+    vi.mocked(
+      externalProviderRepository.getActiveProvidersByTypes
+    ).mockResolvedValue([]);
+    vi.mocked(searchProviderFoods).mockResolvedValue({
+      foods: [],
+      pagination: { page: 1, pageSize: 20, totalCount: 0, hasMore: false },
+    });
 
     const result = await tools.sparky_manage_food.execute!(
       {
@@ -726,8 +733,15 @@ describe('lookup_food_nutrition', () => {
       opts
     );
 
-    expect(result).toBe(DB_ERROR_TEXT);
-    expect(searchProviderFoods).not.toHaveBeenCalled();
+    expect(result).toBe(
+      'No matches found in internal DB or configured external databases/OpenFoodFacts for "nope". You may estimate the nutrition using AI and save it using create_food.'
+    );
+    expect(searchProviderFoods).toHaveBeenCalledWith(
+      'user-1',
+      'openfoodfacts',
+      'nope',
+      { providerId: undefined }
+    );
   });
 
   it('supports explicit provider_type: "swissfood" in lookup_food_nutrition', async () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   configureTelegramWebhook,
+  downloadTelegramImage,
   getTelegramBotUsername,
   resetTelegramApiCache,
   sendTelegramMessage,
@@ -89,5 +90,46 @@ describe('telegramApiService', () => {
     expect(firstRequest.text).not.toContain('**');
     expect(firstRequest.text.length).toBeLessThanOrEqual(4_000);
     expect(secondRequest.text.length).toBeGreaterThan(0);
+  });
+
+  it('downloads a Telegram photo as a data URL for the chat vision pipeline', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              file_path: 'photos/meal.jpg',
+              file_size: 3,
+            },
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([0xff, 0xd8, 0xff]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        })
+      );
+
+    await expect(downloadTelegramImage('largest-file-id')).resolves.toEqual({
+      dataUrl: 'data:image/jpeg;base64,/9j/',
+      mimeType: 'image/jpeg',
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.telegram.org/bottest-token/getFile',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ file_id: 'largest-file-id' }),
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.telegram.org/file/bottest-token/photos/meal.jpg',
+      expect.objectContaining({ method: 'GET', redirect: 'error' })
+    );
   });
 });
