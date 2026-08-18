@@ -1,0 +1,217 @@
+name: Publish and Deploy to Unraid
+
+on:
+  workflow_run:
+    workflows: ["CI Tests"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: Commit, branch, or tag to publish (defaults to the current main commit)
+        required: false
+        type: string
+      deploy:
+        description: Deploy the published images to Unraid
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: sparkyfitness-unraid-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish immutable production images
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      frontend_image: ${{ steps.images.outputs.frontend }}
+      server_image: ${{ steps.images.outputs.server }}
+      source_sha: ${{ steps.source.outputs.sha }}
+
+    steps:
+      - name: Resolve source revision
+        id: requested-source
+        env:
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_REF: ${{ inputs.git_sha }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            printf 'ref=%s\n' "${WORKFLOW_RUN_SHA}" >> "${GITHUB_OUTPUT}"
+          elif [[ -n "${MANUAL_REF}" ]]; then
+            printf 'ref=%s\n' "${MANUAL_REF}" >> "${GITHUB_OUTPUT}"
+          else
+            printf 'ref=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout tested source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.requested-source.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Require a commit from main
+        run: |
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "Only commits already merged into main can be published or deployed." >&2
+            exit 1
+          }
+
+      - name: Record immutable source SHA
+        id: source
+        run: printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set lowercase image namespace
+        id: repository
+        run: printf 'name=%s\n' "${GITHUB_REPOSITORY,,}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and push frontend image
+        id: frontend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repository.outputs.name }}-frontend:main
+            ghcr.io/${{ steps.repository.outputs.name }}-frontend:sha-${{ steps.source.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+          cache-from: type=gha,scope=unraid-frontend
+          cache-to: type=gha,mode=max,scope=unraid-frontend
+
+      - name: Attest frontend image
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ steps.repository.outputs.name }}-frontend
+          subject-digest: ${{ steps.frontend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Build and push server image
+        id: server
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repository.outputs.name }}-server:main
+            ghcr.io/${{ steps.repository.outputs.name }}-server:sha-${{ steps.source.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+          cache-from: type=gha,scope=unraid-server
+          cache-to: type=gha,mode=max,scope=unraid-server
+
+      - name: Attest server image
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ steps.repository.outputs.name }}-server
+          subject-digest: ${{ steps.server.outputs.digest }}
+          push-to-registry: true
+
+      - name: Export immutable image references
+        id: images
+        env:
+          IMAGE_NAMESPACE: ghcr.io/${{ steps.repository.outputs.name }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+        run: |
+          printf 'frontend=%s-frontend@%s\n' "${IMAGE_NAMESPACE}" "${FRONTEND_DIGEST}" >> "${GITHUB_OUTPUT}"
+          printf 'server=%s-server@%s\n' "${IMAGE_NAMESPACE}" "${SERVER_DIGEST}" >> "${GITHUB_OUTPUT}"
+
+  deploy:
+    name: Back up and deploy on Unraid
+    needs: publish
+    if: >-
+      needs.publish.result == 'success' &&
+      vars.UNRAID_DEPLOY_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.deploy)
+    runs-on: ubuntu-latest
+    environment: unraid-production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      UNRAID_HOST: ${{ vars.UNRAID_TAILSCALE_HOST }}
+      UNRAID_DEPLOY_PATH: ${{ vars.UNRAID_DEPLOY_PATH || '/mnt/user/appdata/sparkyfitness/deployment' }}
+
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.publish.outputs.source_sha }}
+
+      - name: Validate deployment target
+        run: |
+          [[ "${UNRAID_HOST}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            echo "UNRAID_TAILSCALE_HOST must be a Tailscale IP or MagicDNS hostname." >&2
+            exit 1
+          }
+          [[ "${UNRAID_DEPLOY_PATH}" =~ ^/mnt/user/appdata/[A-Za-z0-9._/-]+$ ]] || {
+            echo "UNRAID_DEPLOY_PATH must be below /mnt/user/appdata." >&2
+            exit 1
+          }
+
+      - name: Connect ephemeral runner to the Tailnet
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ vars.UNRAID_TAILSCALE_HOST }}
+
+      - name: Synchronize deployment files
+        run: |
+          tailscale ssh "root@${UNRAID_HOST}" "mkdir -p '${UNRAID_DEPLOY_PATH}'"
+          tar -czf - -C deploy/unraid compose.yml .env.example bootstrap.sh deploy.sh \
+            | tailscale ssh "root@${UNRAID_HOST}" \
+                "tar -xzf - -C '${UNRAID_DEPLOY_PATH}' && chmod 700 '${UNRAID_DEPLOY_PATH}/bootstrap.sh' '${UNRAID_DEPLOY_PATH}/deploy.sh'"
+
+      - name: Deploy immutable images
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}
+          SERVER_IMAGE: ${{ needs.publish.outputs.server_image }}
+          SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
+        run: |
+          printf '%s\n' "${GHCR_TOKEN}" \
+            | tailscale ssh "root@${UNRAID_HOST}" \
+                "set -Eeuo pipefail; export DOCKER_CONFIG='/tmp/sparkyfitness-ghcr-${SOURCE_SHA}'; mkdir -p \"\${DOCKER_CONFIG}\"; trap 'rm -rf \"\${DOCKER_CONFIG}\"' EXIT; docker login ghcr.io --username '${GITHUB_ACTOR}' --password-stdin; cd '${UNRAID_DEPLOY_PATH}'; ./deploy.sh '${FRONTEND_IMAGE}' '${SERVER_IMAGE}' '${SOURCE_SHA}'"
+
+      - name: Deployment summary
+        env:
+          SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
+          FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}
+          SERVER_IMAGE: ${{ needs.publish.outputs.server_image }}
+        run: |
+          {
+            echo "### Unraid deployment completed"
+            echo
+            echo "- Commit: \`${SOURCE_SHA}\`"
+            echo "- Frontend: \`${FRONTEND_IMAGE}\`"
+            echo "- Server: \`${SERVER_IMAGE}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
