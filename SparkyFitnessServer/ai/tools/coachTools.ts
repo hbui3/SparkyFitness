@@ -2,6 +2,7 @@ import { tool } from 'ai';
 import { todayInZone, ENERGY_DENSITY_KCAL_PER_KG } from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import coachRepository from '../../models/coachRepository.js';
+import coachProfileService from '../../services/coachProfileService.js';
 import { ERRORS, formatZodError } from './errors.js';
 import { normalizeDayKeywords } from './dates.js';
 import { dayString, formatSuccess } from './formatting.js';
@@ -328,18 +329,37 @@ async function generateCoachingPlan(
 
   // 3. Find favorite high-protein foods for the shopping list
   const favorites = await coachRepository.getFrequentHighProteinFoods(userId);
+  const profile = await coachProfileService.getCoachProfile(userId);
+  if (profile.enabled && profile.calorieTarget !== null) {
+    targetCals = profile.calorieTarget;
+  }
+  const favoriteNames = (favorites as Array<{ food_name: string }>).map(
+    (favorite) => favorite.food_name
+  );
+  const safetyValidation =
+    favoriteNames.length > 0
+      ? await coachProfileService.validateMealSuggestion(userId, favoriteNames)
+      : { allowed: true, violations: [] };
+  const blockedFavorites = new Set(
+    safetyValidation.violations.map((violation) => violation.ingredient)
+  );
+  const safeFavorites = favoriteNames.filter(
+    (favorite) => !blockedFavorites.has(favorite)
+  );
 
   return {
     goal,
     current_estimated_tdee: estimatedTdee,
     recommended_targets: {
       daily_calories: targetCals,
-      protein_grams: Math.round((targetCals * 0.3) / 4), // 30% protein
+      protein_grams:
+        profile.enabled && profile.proteinTargetG !== null
+          ? profile.proteinTargetG
+          : Math.round((targetCals * 0.3) / 4), // 30% protein
       carbs_grams: Math.round((targetCals * 0.4) / 4), // 40% carbs
       fat_grams: Math.round((targetCals * 0.3) / 9), // 30% fat
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    shopping_list_suggestions: favorites.map((r: any) => r.food_name),
+    shopping_list_suggestions: safeFavorites,
     coaching_insight:
       goal === 'weight_loss' && trends.weight.trend === 'increasing'
         ? 'Your weight is currently trending up. To hit your weight loss goal, we need to bring daily calories down to ' +

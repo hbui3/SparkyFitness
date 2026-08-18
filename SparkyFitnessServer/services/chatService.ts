@@ -11,6 +11,7 @@ import {
 } from '../ai/providerDispatch.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import { TtlCache } from '../utils/ttlCache.js';
+import coachProfileService from './coachProfileService.js';
 import {
   assertOutboundUrlShapeAndLiteralAllowed,
   createGuardedFetch,
@@ -1095,6 +1096,19 @@ function buildLlmWindow(
   return llmMessages;
 }
 
+// Persistent coach context is application-controlled and may change whenever
+// the user edits their profile, so it is injected after history trimming. This
+// keeps it present on every turn without destabilizing the cacheable system
+// prompt or allowing old context to consume the history budget.
+export async function prependPersistentCoachContext(
+  userId: string,
+  messages: LlmMessage[]
+): Promise<LlmMessage[]> {
+  const context = await coachProfileService.getPersistentChatContext(userId);
+  if (!context) return messages;
+  return [{ role: 'user', content: context }, ...messages];
+}
+
 // Derives the display text and parts for saving a user message to history.
 function describeUserMessage(msg?: LlmMessage): {
   content: string;
@@ -1405,7 +1419,10 @@ async function processChatMessage(
     // Map conversation history messages to CoreMessage format, then apply the
     // shared context-window controls (image strip, token budget, user-first).
     const conversationMessages = toCoreMessages(messages);
-    const llmMessages = buildLlmWindow(conversationMessages, toolProfile);
+    const llmMessages = await prependPersistentCoachContext(
+      authenticatedUserId,
+      buildLlmWindow(conversationMessages, toolProfile)
+    );
 
     const executedToolsList: Array<{
       name: string;
@@ -1935,7 +1952,10 @@ async function processChatMessageStream(
     // Map client messages to CoreMessage format, then apply the shared
     // context-window controls (image strip, token budget, user-first).
     const conversationMessages = toCoreMessages(messages);
-    const llmMessages = buildLlmWindow(conversationMessages, toolProfile);
+    const llmMessages = await prependPersistentCoachContext(
+      authenticatedUserId,
+      buildLlmWindow(conversationMessages, toolProfile)
+    );
 
     log(
       'debug',

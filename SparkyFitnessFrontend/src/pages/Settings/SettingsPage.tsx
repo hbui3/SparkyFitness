@@ -15,6 +15,7 @@ import {
   User,
   Database,
   Heart,
+  Bot,
 } from 'lucide-react';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import FamilyAccessManager from './FamilyAccessManager';
@@ -34,6 +35,7 @@ import CalculationSettings from './CalculationSettings';
 import TooltipWarning from '@/components/TooltipWarning';
 import CustomNutrientsSettings from '@/pages/Settings/CustomNutrientsSettings';
 import AllergenSettings from '@/pages/Settings/AllergenSettings';
+import CoachProfileSettings from '@/pages/Settings/CoachProfileSettings';
 import { DeveloperResources } from './DevloperResources';
 import { AccountSecurity } from './AccountSecurity';
 import { ApiSettings } from './ApiSettings';
@@ -56,6 +58,7 @@ const SECTION_TO_TAB_MAP: Record<string, string> = {
   'family-access': 'profile-account',
   'data-management': 'profile-account',
   'allergen-preferences': 'nutrition-diet',
+  'coach-profile': 'nutrition-diet',
   'custom-nutrients': 'nutrition-diet',
   'nutrient-display': 'nutrition-diet',
   'nutrient-goal-direction': 'nutrition-diet',
@@ -219,6 +222,24 @@ const Settings = () => {
             className="w-full"
             defaultValue={defaultExpanded}
           >
+            <AccordionItem
+              value="coach-profile"
+              className="border rounded-lg mb-4"
+            >
+              <AccordionTrigger
+                className="flex items-center gap-2 p-4 hover:no-underline"
+                description={t(
+                  'settings.coachProfile.description',
+                  'Persistent goals and food constraints for every AI coaching conversation'
+                )}
+              >
+                <Bot className="h-5 w-5" />
+                {t('settings.coachProfile.title', 'AI Coach Profile')}
+              </AccordionTrigger>
+              <AccordionContent className="p-4 pt-0">
+                <CoachProfileSettings />
+              </AccordionContent>
+            </AccordionItem>
             <AccordionItem
               value="allergen-preferences"
               className="border rounded-lg mb-4"

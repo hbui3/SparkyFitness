@@ -5,6 +5,7 @@ import type { UIMessageChunk } from 'ai';
 import chatService, {
   mapUsageToMetadata,
   buildChatStopConditions,
+  prependPersistentCoachContext,
 } from '../services/chatService.js';
 import { ASK_USER_TOOL_NAME } from '@workspace/shared';
 import chatRepository from '../models/chatRepository.js';
@@ -15,6 +16,7 @@ import mealTypeRepository from '../models/mealType.js';
 import foodEntryService from '../services/foodEntryService.js';
 import { log } from '../config/logging.js';
 import { createOpenAI } from '@ai-sdk/openai';
+import coachProfileService from '../services/coachProfileService.js';
 // Mock dependencies
 vi.mock('../models/chatRepository');
 vi.mock('../models/userRepository');
@@ -58,6 +60,13 @@ vi.mock('../services/preferenceService', () => ({
     getUserPreferences: vi.fn(),
   },
 }));
+vi.mock('../services/coachProfileService', () => ({
+  default: {
+    getPersistentChatContext: vi.fn(async () => null),
+    getCoachProfile: vi.fn(),
+    validateMealSuggestion: vi.fn(),
+  },
+}));
 
 // processChatMessage builds its model from DB config via createOpenAI();
 // route the provider to a per-test scripted MockLanguageModelV3.
@@ -76,6 +85,35 @@ describe('chatService', () => {
   const mockTargetUserId = 'user-456';
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(coachProfileService.getPersistentChatContext).mockResolvedValue(
+      null
+    );
+  });
+  describe('persistent coach context', () => {
+    it('prepends current application context without changing the conversation', async () => {
+      vi.mocked(coachProfileService.getPersistentChatContext).mockResolvedValue(
+        'Dietary pattern: vegetarian'
+      );
+      const conversation = [{ role: 'user', content: 'Plan dinner' }];
+
+      const result = await prependPersistentCoachContext(
+        mockUserId,
+        conversation
+      );
+
+      expect(result).toEqual([
+        { role: 'user', content: 'Dietary pattern: vegetarian' },
+        ...conversation,
+      ]);
+      expect(conversation).toEqual([{ role: 'user', content: 'Plan dinner' }]);
+    });
+
+    it('returns the existing message array when no profile context exists', async () => {
+      const conversation = [{ role: 'user', content: 'Hello' }];
+      await expect(
+        prependPersistentCoachContext(mockUserId, conversation)
+      ).resolves.toBe(conversation);
+    });
   });
   describe('handleAiServiceSettings', () => {
     it('should save AI service settings', async () => {
@@ -643,7 +681,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 21\/38 active tools for chatbot \(profile=core/
+          /Loaded 22\/39 active tools for chatbot \(profile=core/
         )
       );
       // The core profile is the mitigation, so no context-window warning.
@@ -676,7 +714,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 38\/38 active tools for chatbot \(profile=full/
+          /Loaded 39\/39 active tools for chatbot \(profile=full/
         )
       );
       // Ollama + full profile is the risky combo, so warn about the 4096 default.
@@ -709,15 +747,15 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 38\/38 active tools for chatbot \(profile=full/
+          /Loaded 39\/39 active tools for chatbot \(profile=full/
         )
       );
     });
 
     it('never trims a non-Ollama service even with a stale core profile stored', async () => {
       // The profile gate keys on service_type, so a service that was Ollama+core
-      // and later switched to OpenAI still loads the full 38-tool surface
-      // (36 domain tools + sparky_enable_tools + sparky_ask_user).
+      // and later switched to OpenAI still loads the full 39-tool surface
+      // (37 domain tools + sparky_enable_tools + sparky_ask_user).
       vi.mocked(chatRepository.getAiServiceSettingForBackend).mockResolvedValue(
         {
           ...aiServiceSetting,
@@ -737,7 +775,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 38\/38 active tools for chatbot \(profile=full/
+          /Loaded 39\/39 active tools for chatbot \(profile=full/
         )
       );
       // The context-window warning is Ollama-only; cloud providers never see it.

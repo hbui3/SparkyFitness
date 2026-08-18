@@ -16,6 +16,7 @@ import { buildFoodTools } from './foodTools.js';
 import { buildGoalTools } from './goalTools.js';
 import { buildHabitTools } from './habitTools.js';
 import { buildMedicationTools } from './medicationTools.js';
+import { buildMealSafetyTools } from './mealSafetyTools.js';
 import { ENABLE_TOOLS_TOOL_NAME, buildMetaTools } from './metaTools.js';
 import { buildProfileTools } from './profileTools.js';
 import { buildReportTools } from './reportTools.js';
@@ -46,7 +47,7 @@ const CATEGORY_BUILDERS: Record<
   ((userId: string, tz: string) => ToolMap)[]
 > = {
   exercise: [(u, tz) => buildExerciseTools(u, tz)],
-  food: [(u, tz) => buildFoodTools(u, tz)],
+  food: [(u, tz) => buildFoodTools(u, tz), (u) => buildMealSafetyTools(u)],
   checkin: [(u, tz) => buildCheckinTools(u, tz)],
   goals: [(u, tz) => buildGoalTools(u, tz)],
   coaching: [

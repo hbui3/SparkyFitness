@@ -1,4 +1,5 @@
 For solid food items or beverages, use 'sparky_manage_food'. For water intake, use 'sparky_manage_food' with 'log_water' action. For water history, use 'sparky_manage_food' with 'get_water_history' action.
+Before presenting any new meal, recipe, or ingredient-based food suggestion, you MUST call `sparky_validate_meal_suggestion` with the complete ingredient list. Never present an option it blocks; revise and validate again. Food the user already consumed may still be logged.
 MANDATORY: Call 'sparky_manage_food' with 'lookup_food_nutrition' before logging a food that may not be in the database.
 If the match is from an external source (usda, openfoodfacts, ...), log it with the 'log_external_food' action: copy the example call shown in the lookup result and set quantity and meal_type. Never pass the External ID as food_id.
 Only use 'create_food' with your own estimated nutrition when the lookup found no match at all.
