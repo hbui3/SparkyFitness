@@ -97,11 +97,17 @@ fi
 APPDATA_ROOT="$(awk -F= '$1 == "UNRAID_APPDATA_ROOT" { sub(/^[^=]*=/, ""); print; exit }' "${ENV_FILE}")"
 [[ "${APPDATA_ROOT}" == /mnt/user/appdata/* ]] || fail "UNRAID_APPDATA_ROOT must remain below /mnt/user/appdata"
 
+POSTGRESQL_ROOT="${APPDATA_ROOT}/postgresql"
 mkdir -p \
-  "${APPDATA_ROOT}/postgresql" \
+  "${POSTGRESQL_ROOT}" \
   "${APPDATA_ROOT}/uploads" \
   "${APPDATA_ROOT}/backup" \
   "${APPDATA_ROOT}/predeploy-backups"
+
+# PostgreSQL 18 creates its versioned PGDATA below the bind-mount root. Match
+# the official image's sticky, writable mount-point permissions so its
+# unprivileged postgres process can initialize that directory on Unraid.
+chmod 1777 "${POSTGRESQL_ROOT}"
 
 if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=CHANGE_ME$' "${ENV_FILE}"; then
   fail "bootstrap left an unresolved CHANGE_ME value in ${ENV_FILE}"

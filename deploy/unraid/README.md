@@ -120,6 +120,12 @@ veröffentlicht. Persistente Daten liegen unter:
 - `/mnt/user/appdata/sparkyfitness/backup`
 - `/mnt/user/appdata/sparkyfitness/predeploy-backups`
 
+Das oberste `postgresql`-Mount erhält entsprechend dem offiziellen
+PostgreSQL-18-Alpine-Image den Sticky-Modus `1777`, damit der unprivilegierte
+Containerbenutzer sein versionsbezogenes Datenverzeichnis initialisieren kann.
+Das eigentliche Datenverzeichnis darunter bleibt ausschließlich für PostgreSQL
+zugänglich.
+
 Hilfreiche Befehle auf Unraid:
 
 ```bash
