@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import proactiveCoachService from '../services/proactiveCoachService.js';
 import coachProfileRepository from '../models/coachProfileRepository.js';
 import coachContextService from '../services/coachContextService.js';
+import telegramCoachService from '../services/telegramCoachService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
@@ -14,12 +15,19 @@ vi.mock('../services/coachContextService.js', () => ({
     getCoachContextSnapshot: vi.fn(),
   },
 }));
+vi.mock('../services/telegramCoachService.js', () => ({
+  default: {
+    sendProactiveCoachMessage: vi.fn(),
+  },
+}));
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
 const candidate = {
   userId: 'user-1',
   timezone: 'Europe/Berlin',
   language: 'de',
+  adaptiveCheckInsEnabled: false,
+  adaptiveLastSentSlot: null,
   dailyCheckInEnabled: true,
   dailyCheckInTime: '20:00',
   dailyLastSentOn: null,
@@ -94,6 +102,58 @@ describe('proactiveCoachService', () => {
     vi.mocked(
       coachProfileRepository.saveProactiveMessageIfDue
     ).mockResolvedValue(true);
+    vi.mocked(telegramCoachService.sendProactiveCoachMessage).mockResolvedValue(
+      true
+    );
+  });
+
+  it('claims local two-hour slots only between 07:00 and 20:00', () => {
+    const adaptiveCandidate = {
+      ...candidate,
+      adaptiveCheckInsEnabled: true,
+      dailyCheckInEnabled: false,
+      weeklyReviewEnabled: false,
+    };
+
+    expect(
+      proactiveCoachService.getDueMessageKinds(
+        adaptiveCandidate,
+        new Date('2026-08-23T05:05:00.000Z')
+      )
+    ).toEqual(['adaptive']);
+    expect(
+      proactiveCoachService.getAdaptiveDeliverySlot(
+        adaptiveCandidate,
+        new Date('2026-08-23T15:45:00.000Z')
+      )
+    ).toBe('2026-08-23T17:00');
+    expect(
+      proactiveCoachService.getDueMessageKinds(
+        {
+          ...adaptiveCandidate,
+          adaptiveLastSentSlot: '2026-08-23T17:00',
+        },
+        new Date('2026-08-23T15:45:00.000Z')
+      )
+    ).toEqual([]);
+    expect(
+      proactiveCoachService.getAdaptiveDeliverySlot(
+        adaptiveCandidate,
+        new Date('2026-08-23T19:01:00.000Z')
+      )
+    ).toBeNull();
+  });
+
+  it('renders current values and a concrete adaptive action', () => {
+    const message = proactiveCoachService.renderAdaptiveCoachMessage(
+      snapshot,
+      'de',
+      '2026-08-23T17:00'
+    );
+
+    expect(message).toContain('1800 / 3000 kcal');
+    expect(message).toContain('110 / 160 g Protein');
+    expect(message).toContain('50 g Protein');
   });
 
   it('respects local time and weekday schedules', () => {
@@ -139,6 +199,13 @@ describe('proactiveCoachService', () => {
       'weekly',
       '2026-08-23',
       expect.stringContaining('Wochenrückblick')
+    );
+    expect(
+      telegramCoachService.sendProactiveCoachMessage
+    ).toHaveBeenCalledTimes(2);
+    expect(telegramCoachService.sendProactiveCoachMessage).toHaveBeenCalledWith(
+      'user-1',
+      expect.stringContaining('1800 / 3000 kcal')
     );
   });
 

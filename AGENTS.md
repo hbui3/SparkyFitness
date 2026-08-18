@@ -1,10 +1,11 @@
 # AGENTS.md
 
-*Last updated: 2026-08-18*
+_Last updated: 2026-08-18_
 
 This is the repo-root monorepo guide for SparkyFitness. Use it to choose the right package, understand shared repo-level rules, and find the next guide to read.
 
 **For AI Tools & Developers:** Start with `agent-docs/README.md` (in this repo) for quick navigation to:
+
 - `file-and-domain-reference.md` — Find any code by feature in seconds
 - `testing-patterns.md` — Concrete test examples for each layer
 - `architecture-permissions.md` — Permission types and RLS patterns
@@ -37,7 +38,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `shared/` - source-first TypeScript workspace package for `@workspace/shared` schemas, constants, and timezone/day helpers.
 - `docs/` - Nuxt / Docus docs site.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
-- The persistent AI coach spans `shared` contracts, the server's owner-only `coach_profiles` preferences/schedule domain, canonical onboarding/goal-derived daily and trend context, proactive chat-history delivery, meal-safety tool enforcement, and the frontend Nutrition & Diet settings.
+- The persistent AI coach spans `shared` contracts, the server's owner-only `coach_profiles` preferences/schedule domain, canonical onboarding/goal-derived daily and trend context, proactive chat-history delivery, bidirectional Telegram bot delivery via owner-only `coach_telegram_connections`, the encrypted system-only `telegram_coach_settings` credential configured through the admin UI, meal-safety tool enforcement, and the frontend Nutrition & Diet settings.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
 - `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.
@@ -83,9 +84,8 @@ Cheap ways to learn things:
 - Auth or API contract changes usually need a quick check in both web and mobile because they share the same backend.
 - Frontend local dev proxies `/api`, `/health-data`, and `/uploads` to the server on `3010`. The `/health-data` proxy is rewritten to `/api/health-data`, while server APIs remain rooted at `/api`.
 - Server runtime secrets are usually sourced from repo-root `.env`, commonly created from `docker/.env.example`. The server can also load secret files via `SparkyFitnessServer/utils/secretLoader.ts`.
-- Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract *behavior*, not coincidental shape. See `agent-docs/anti-patterns.md`.
+- Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract _behavior_, not coincidental shape. See `agent-docs/anti-patterns.md`.
 - **Strict TypeScript Typing:** Never use `any` or `// eslint-disable-next-line @typescript-eslint/no-explicit-any` when creating new functions or editing existing code. Always define explicit TypeScript interfaces, types, or import schemas from `@workspace/shared`. Do NOT copy legacy `any` parameter signatures when refactoring or extending legacy service/repository files.
-
 
 ## Architecture Docs (Reduce Scanning, Prevent Bugs)
 

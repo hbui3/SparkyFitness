@@ -150,7 +150,8 @@ describe.runIf(RUN)('RLS permission matrix', () => {
   // Generic helper-policy domains (diary/checkin/medication/library) get their
   // expected helper asserted automatically. `custom` tables have bespoke,
   // hand-written policies; the well-known ones are pinned explicitly below, the
-  // rest are only required to *exist* (no unprotected table).
+  // rest are only required to *exist* (no unprotected table). `system` tables
+  // are intentionally policy-free and reachable only through getSystemClient.
   // ---------------------------------------------------------------------------
   type Domain =
     | 'owner'
@@ -158,12 +159,14 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     | 'checkin'
     | 'medication'
     | 'library'
-    | 'custom';
+    | 'custom'
+    | 'system';
 
   const DOMAIN: Record<string, Domain> = {
     // owner-only (no delegation)
     api_key: 'owner',
     coach_profiles: 'owner',
+    coach_telegram_connections: 'owner',
     sparky_chat_history: 'owner',
     user_ignored_updates: 'owner',
     user_oidc_links: 'owner',
@@ -257,6 +260,8 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     // system/internal: RLS-enabled with an explicit deny-all policy; only
     // getSystemClient (which bypasses RLS) touches it.
     passkey_registration_tickets: 'custom',
+    // system-only secret: RLS with no policies is intentional default-deny.
+    telegram_coach_settings: 'system',
   };
 
   // Expected helper substrings for the generic-policy domains.
@@ -369,6 +374,17 @@ describe.runIf(RUN)('RLS permission matrix', () => {
           ps.length,
           `${table} is RLS-enabled but has no policy`
         ).toBeGreaterThan(0);
+      }
+    );
+
+    it.each(tablesIn('system'))(
+      'system-only table "%s" has no user policy',
+      async (table) => {
+        const ps = await policies(table);
+        expect(
+          ps,
+          `${table} must remain accessible only through getSystemClient`
+        ).toEqual([]);
       }
     );
 

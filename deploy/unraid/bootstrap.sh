@@ -89,6 +89,7 @@ set_env_value SPARKY_FITNESS_DB_PASSWORD "$(openssl rand -hex 32)"
 set_env_value SPARKY_FITNESS_APP_DB_PASSWORD "$(openssl rand -hex 32)"
 set_env_value SPARKY_FITNESS_API_ENCRYPTION_KEY "$(openssl rand -hex 32)"
 set_env_value BETTER_AUTH_SECRET "$(openssl rand -hex 48)"
+set_env_value SPARKY_FITNESS_TELEGRAM_WEBHOOK_SECRET "$(openssl rand -hex 32)"
 
 if [[ -n "${ADMIN_EMAIL}" ]]; then
   set_env_value SPARKY_FITNESS_ADMIN_EMAIL "${ADMIN_EMAIL}"

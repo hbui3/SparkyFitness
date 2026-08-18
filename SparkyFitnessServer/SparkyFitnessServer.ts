@@ -70,6 +70,8 @@ import customNutrientRoutes from './routes/customNutrientRoutes.js';
 import aiUnitConversionRoutes from './routes/aiUnitConversionRoutes.js';
 import allergenPreferenceRoutes from './routes/allergenPreferenceRoutes.js';
 import coachProfileRoutes from './routes/coachProfileRoutes.js';
+import telegramRoutes from './routes/telegramRoutes.js';
+import telegramAdminRoutes from './routes/telegramAdminRoutes.js';
 import { applyMigrations } from './utils/dbMigrations.js';
 import { applyRlsPolicies } from './utils/applyRlsPolicies.js';
 import waterContainerRoutes from './routes/waterContainerRoutes.js';
@@ -84,6 +86,7 @@ import reviewRoutes from './routes/reviewRoutes.js';
 import cron from 'node-cron';
 import { scheduleBackupsOnStartup } from './services/backupScheduler.js';
 import { processDueProactiveCoachMessages } from './services/proactiveCoachService.js';
+import { configureTelegramWebhook } from './services/telegramApiService.js';
 import externalProviderRepository from './models/externalProviderRepository.js';
 import garminService from './services/garminService.js';
 import { getGarminSyncPhaseErrors } from './services/garminSyncResult.js';
@@ -459,6 +462,7 @@ const publicRoutes = [
   '/api/uploads',
   '/uploads',
   '/api/ping',
+  '/api/telegram/webhook',
 ];
 if (isPublicApiDocsEnabled) {
   publicRoutes.push('/api/api-docs');
@@ -542,6 +546,7 @@ app.use('/api/integrations/strava', stravaRoutes);
 app.use('/api/integrations/hevy', hevyRoutes);
 app.use('/api/mood', moodRoutes);
 app.use('/api/fasting', fastingRoutes);
+app.use('/api/admin/telegram-coach', telegramAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/auth', (req, res, next) => adminAuthRoutes(req, res, next));
 app.use('/api/water-containers', waterContainerRoutes);
@@ -556,6 +561,7 @@ app.use('/api/review', reviewRoutes);
 app.use('/api/custom-nutrients', customNutrientRoutes);
 app.use('/api/allergen-preferences', allergenPreferenceRoutes);
 app.use('/api/coach-profile', coachProfileRoutes);
+app.use('/api/telegram', telegramRoutes);
 app.use('/api/adaptive-tdee', adaptiveTdeeRoutes);
 app.use('/api/meal-types', mealTypeRoutes);
 // Swagger
@@ -876,6 +882,9 @@ applyMigrations()
       console.log(`DEBUG: Server started and listening on port ${PORT}`);
       log('info', `SparkyFitnessServer listening on port ${PORT}`);
       console.log('View API documentation at: /api/api-docs/swagger');
+      void configureTelegramWebhook().catch((error) =>
+        log('error', 'Telegram webhook setup failed:', error)
+      );
     });
     // Fix for reverse proxies using HTTP keepalive (e.g. Traefik, Caddy)
     server.keepAliveTimeout = 181000; // Must be > proxy's idle timeout (nginx=75s, traefik=default 180s)

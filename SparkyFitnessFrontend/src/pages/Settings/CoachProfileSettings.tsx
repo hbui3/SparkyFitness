@@ -19,6 +19,9 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useCoachProfile,
+  useCoachTelegram,
+  useCreateCoachTelegramLink,
+  useDisconnectCoachTelegram,
   useUpdateCoachProfile,
 } from '@/hooks/Settings/useCoachProfile';
 
@@ -34,6 +37,7 @@ const EMPTY_PROFILE: CoachProfileResponse = {
   dislikedIngredients: [],
   routines: [],
   coachingNotes: null,
+  adaptiveCheckInsEnabled: false,
   dailyCheckInEnabled: false,
   dailyCheckInTime: '20:00',
   weeklyReviewEnabled: false,
@@ -109,6 +113,7 @@ function CoachProfileForm({
       dislikedIngredients: form.dislikedIngredients,
       routines: form.routines,
       coachingNotes: form.coachingNotes,
+      adaptiveCheckInsEnabled: form.adaptiveCheckInsEnabled,
       dailyCheckInEnabled: form.dailyCheckInEnabled,
       dailyCheckInTime: form.dailyCheckInTime,
       weeklyReviewEnabled: form.weeklyReviewEnabled,
@@ -323,7 +328,33 @@ function CoachProfileForm({
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="space-y-3 rounded-md bg-muted/30 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Label htmlFor="adaptive-check-ins-enabled">
+                  {t(
+                    'settings.coachProfile.adaptiveCheckIns',
+                    'Adaptive check-ins'
+                  )}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    'settings.coachProfile.adaptiveCheckInsDescription',
+                    'Every two hours from 07:00 to 20:00, Sparky checks today’s live values and only sends the next relevant action.'
+                  )}
+                </p>
+              </div>
+              <Switch
+                id="adaptive-check-ins-enabled"
+                checked={form.adaptiveCheckInsEnabled}
+                onCheckedChange={(adaptiveCheckInsEnabled) =>
+                  setForm({ ...form, adaptiveCheckInsEnabled })
+                }
+              />
+            </div>
+          </div>
+
           <div className="space-y-3 rounded-md bg-muted/30 p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -436,6 +467,8 @@ function CoachProfileForm({
         </div>
       </div>
 
+      <CoachTelegramSettings />
+
       <div className="flex items-center justify-between gap-4">
         <p className="text-xs text-muted-foreground">
           {t(
@@ -450,6 +483,105 @@ function CoachProfileForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function CoachTelegramSettings() {
+  const { t } = useTranslation();
+  const { data: telegram, isLoading } = useCoachTelegram();
+  const createLink = useCreateCoachTelegramLink();
+  const disconnect = useDisconnectCoachTelegram();
+
+  const connect = async () => {
+    const link = await createLink.mutateAsync();
+    window.location.assign(link.url);
+  };
+
+  return (
+    <div className="space-y-4 rounded-lg border p-4">
+      <div>
+        <h3 className="font-medium">
+          {t('settings.coachProfile.telegramTitle', 'Telegram coach chat')}
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'settings.coachProfile.telegramDescription',
+            'Connect a private Telegram chat to receive proactive coach messages and reply in the same Sparky chat history.'
+          )}
+        </p>
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'settings.coachProfile.telegramLoading',
+            'Loading Telegram connection…'
+          )}
+        </p>
+      ) : !telegram?.available ? (
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'settings.coachProfile.telegramUnavailable',
+            'Telegram is not configured on this SparkyFitness server yet.'
+          )}
+        </p>
+      ) : telegram.connected ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/30 p-4">
+          <div>
+            <p className="text-sm font-medium">
+              {t('settings.coachProfile.telegramConnected', 'Connected')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {telegram.telegramUsername
+                ? `@${telegram.telegramUsername}`
+                : t(
+                    'settings.coachProfile.telegramPrivateChat',
+                    'Private Telegram chat'
+                  )}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disconnect.isPending}
+            onClick={() => disconnect.mutate()}
+          >
+            {t('settings.coachProfile.telegramDisconnect', 'Disconnect')}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/30 p-4">
+          <p className="text-sm text-muted-foreground">
+            {telegram.botUsername
+              ? t(
+                  'settings.coachProfile.telegramBotReady',
+                  'The bot @{{username}} is ready to connect.',
+                  { username: telegram.botUsername }
+                )
+              : t(
+                  'settings.coachProfile.telegramReady',
+                  'The Telegram bot is ready to connect.'
+                )}
+          </p>
+          <Button
+            type="button"
+            disabled={createLink.isPending}
+            onClick={() => void connect()}
+          >
+            {createLink.isPending
+              ? t('settings.coachProfile.telegramOpening', 'Opening Telegram…')
+              : t('settings.coachProfile.telegramConnect', 'Connect Telegram')}
+          </Button>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        {t(
+          'settings.coachProfile.telegramPrivacy',
+          'Telegram receives the messages delivered through the bot. SparkyFitness keeps the complete conversation private to your account.'
+        )}
+      </p>
+    </div>
   );
 }
 

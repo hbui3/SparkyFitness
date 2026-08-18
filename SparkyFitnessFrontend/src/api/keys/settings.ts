@@ -38,4 +38,5 @@ export const preferencesKeys = {
   nutrientGoalDirection: () =>
     [...preferencesKeys.all, 'nutrient-goal-direction'] as const,
   coachProfile: () => [...preferencesKeys.all, 'coach-profile'] as const,
+  coachTelegram: () => [...preferencesKeys.all, 'coach-telegram'] as const,
 };

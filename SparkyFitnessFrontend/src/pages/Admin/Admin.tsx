@@ -4,6 +4,7 @@ import OidcSettings from './OidcSettings';
 import UserManagement from './UserManagement';
 import GlobalAISettings from './GlobalAISettings';
 import GlobalProviderSettings from './GlobalProviderSettings';
+import TelegramCoachSettings from './TelegramCoachSettings';
 
 const AdminPage = () => {
   return (
@@ -11,6 +12,7 @@ const AdminPage = () => {
       <AuthenticationSettings />
       <OidcSettings />
       <GlobalAISettings />
+      <TelegramCoachSettings />
       <GlobalProviderSettings />
       <BackupSettings />
       <UserManagement />

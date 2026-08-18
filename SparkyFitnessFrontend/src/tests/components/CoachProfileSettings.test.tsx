@@ -3,6 +3,9 @@ import '@testing-library/jest-dom';
 import CoachProfileSettings from '@/pages/Settings/CoachProfileSettings';
 import {
   useCoachProfile,
+  useCoachTelegram,
+  useCreateCoachTelegramLink,
+  useDisconnectCoachTelegram,
   useUpdateCoachProfile,
 } from '@/hooks/Settings/useCoachProfile';
 
@@ -14,6 +17,9 @@ jest.mock('react-i18next', () => ({
 
 jest.mock('@/hooks/Settings/useCoachProfile', () => ({
   useCoachProfile: jest.fn(),
+  useCoachTelegram: jest.fn(),
+  useCreateCoachTelegramLink: jest.fn(),
+  useDisconnectCoachTelegram: jest.fn(),
   useUpdateCoachProfile: jest.fn(),
 }));
 
@@ -35,6 +41,7 @@ describe('CoachProfileSettings', () => {
         dislikedIngredients: ['olives'],
         routines: ['meal prep sunday'],
         coachingNotes: 'Keep weekday recipes short.',
+        adaptiveCheckInsEnabled: true,
         dailyCheckInEnabled: true,
         dailyCheckInTime: '20:00',
         weeklyReviewEnabled: true,
@@ -48,6 +55,23 @@ describe('CoachProfileSettings', () => {
       mutate,
       isPending: false,
     } as unknown as ReturnType<typeof useUpdateCoachProfile>);
+    jest.mocked(useCoachTelegram).mockReturnValue({
+      data: {
+        available: false,
+        connected: false,
+        botUsername: null,
+        telegramUsername: null,
+      },
+      isLoading: false,
+    } as ReturnType<typeof useCoachTelegram>);
+    jest.mocked(useCreateCoachTelegramLink).mockReturnValue({
+      mutateAsync: jest.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useCreateCoachTelegramLink>);
+    jest.mocked(useDisconnectCoachTelegram).mockReturnValue({
+      mutate: jest.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useDisconnectCoachTelegram>);
   });
 
   it('renders inherited goals and saves only coach-owned settings', () => {
@@ -67,6 +91,7 @@ describe('CoachProfileSettings', () => {
       dislikedIngredients: ['olives'],
       routines: ['meal prep sunday'],
       coachingNotes: 'Keep weekday recipes short.',
+      adaptiveCheckInsEnabled: true,
       dailyCheckInEnabled: true,
       dailyCheckInTime: '20:00',
       weeklyReviewEnabled: true,

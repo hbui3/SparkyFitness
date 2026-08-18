@@ -3,7 +3,10 @@ import { useTranslation } from 'react-i18next';
 import type { UpdateCoachProfileRequest } from '@workspace/shared';
 import { preferencesKeys } from '@/api/keys/settings';
 import {
+  createCoachTelegramLink,
+  disconnectCoachTelegram,
   getCoachProfile,
+  getCoachTelegramStatus,
   updateCoachProfile,
 } from '@/api/Settings/coachProfile';
 import { useAuth } from '@/hooks/useAuth';
@@ -41,6 +44,62 @@ export const useUpdateCoachProfile = () => {
       successMessage: t(
         'settings.coachProfile.saveSuccess',
         'Coach profile saved.'
+      ),
+    },
+  });
+};
+
+export const useCoachTelegram = () => {
+  const { user } = useAuth();
+  const { t } = useTranslation();
+  return useQuery({
+    queryKey: preferencesKeys.coachTelegram(),
+    queryFn: getCoachTelegramStatus,
+    enabled: !!user,
+    refetchInterval: (query) =>
+      query.state.data?.available && !query.state.data.connected
+        ? 5_000
+        : false,
+    meta: {
+      errorMessage: t(
+        'settings.coachProfile.telegramLoadError',
+        'Failed to load the Telegram connection.'
+      ),
+    },
+  });
+};
+
+export const useCreateCoachTelegramLink = () => {
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: createCoachTelegramLink,
+    meta: {
+      errorMessage: t(
+        'settings.coachProfile.telegramLinkError',
+        'Failed to create a Telegram connection link.'
+      ),
+    },
+  });
+};
+
+export const useDisconnectCoachTelegram = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: disconnectCoachTelegram,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: preferencesKeys.coachTelegram(),
+      });
+    },
+    meta: {
+      errorMessage: t(
+        'settings.coachProfile.telegramDisconnectError',
+        'Failed to disconnect Telegram.'
+      ),
+      successMessage: t(
+        'settings.coachProfile.telegramDisconnectSuccess',
+        'Telegram disconnected.'
       ),
     },
   });
