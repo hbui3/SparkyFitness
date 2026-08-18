@@ -17,12 +17,11 @@ This directory contains all GitHub Actions workflows for the SparkyFitness proje
 - Detects which components changed using path filters
 - Runs component-specific test suites:
   - **Frontend**: `pnpm run validate` + `pnpm run test:ci` (type check, lint, format, tests)
-  - **Backend**: Format check, lint, tests (currently disabled)
+  - **Backend**: `pnpm run validate` + `pnpm run test:ci`
   - **Mobile**: Lint + `pnpm run test:ci`
   - **Garmin**: Python pytest with coverage
+- Builds both production Docker images on relevant pull requests
 - Uploads coverage reports as artifacts
-
-**Note**: Backend tests are currently disabled (`if: false`) per maintainer request.
 
 ---
 
@@ -72,6 +71,25 @@ hasUIChanges = .tsx/.jsx/.css files in components/screens/pages/
 ---
 
 ### Deployment Workflows
+
+#### `unraid-cd.yml`
+
+**Purpose**: Publish immutable fork images to GHCR and deploy them safely to an
+Unraid server through an ephemeral Tailscale connection.
+
+**Triggers**: Successful `CI Tests` runs on `main`, plus manual workflow dispatch
+
+**Safety**:
+
+- deployment is disabled unless `UNRAID_DEPLOY_ENABLED=true`
+- no public SSH port or persistent self-hosted GitHub runner is required
+- the server creates a pre-deployment PostgreSQL backup
+- Compose health checks gate success and failed app updates roll back
+
+See [`deploy/unraid/README.md`](../../deploy/unraid/README.md) for setup and
+required GitHub variables/secrets.
+
+---
 
 #### `auto-docker-deploy.yml`
 

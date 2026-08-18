@@ -8,7 +8,11 @@ on:
       - "SparkyFitnessMobile/**"
       - "SparkyFitnessServer/**"
       - "SparkyFitnessGarmin/**"
+      - "shared/**"
+      - "docker/**"
+      - "deploy/unraid/**"
       - ".github/workflows/ci-tests.yml"
+      - ".github/workflows/unraid-cd.yml"
   push:
     branches: [main]
     paths:
@@ -16,7 +20,11 @@ on:
       - "SparkyFitnessMobile/**"
       - "SparkyFitnessServer/**"
       - "SparkyFitnessGarmin/**"
+      - "shared/**"
+      - "docker/**"
+      - "deploy/unraid/**"
       - ".github/workflows/ci-tests.yml"
+      - ".github/workflows/unraid-cd.yml"
 
 jobs:
   # Detect which components changed
@@ -29,23 +37,34 @@ jobs:
       server: ${{ steps.filter.outputs.server }}
       garmin: ${{ steps.filter.outputs.garmin }}
       migrations: ${{ steps.filter.outputs.migrations }}
+      containers: ${{ steps.filter.outputs.containers }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Check for changes
-        uses: dorny/paths-filter@v2
+        uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
             frontend:
               - 'SparkyFitnessFrontend/**'
+              - 'shared/**'
             mobile:
               - 'SparkyFitnessMobile/**'
             server:
               - 'SparkyFitnessServer/**'
+              - 'shared/**'
             garmin:
               - 'SparkyFitnessGarmin/**'
+            containers:
+              - 'SparkyFitnessFrontend/**'
+              - 'SparkyFitnessServer/**'
+              - 'shared/**'
+              - 'docker/**'
+              - 'deploy/unraid/**'
+              - '.github/workflows/ci-tests.yml'
+              - '.github/workflows/unraid-cd.yml'
             # Files whose change can break a fresh-install migration run.
             # Includes the jobs' own execution path (workflow + script) so a
             # change there can't break migration CI while the jobs gate out.
@@ -59,6 +78,41 @@ jobs:
               - 'SparkyFitnessServer/tests/rlsPermissionMatrix.integration.test.ts'
               - 'SparkyFitnessServer/package.json'
               - '.github/workflows/ci-tests.yml'
+
+  container-build-check:
+    name: Production Container Builds
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.containers == 'true'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=unraid-frontend
+          cache-to: type=gha,mode=max,scope=unraid-frontend
+
+      - name: Build server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=unraid-server
+          cache-to: type=gha,mode=max,scope=unraid-server
 
   frontend-tests:
     name: Frontend Tests
