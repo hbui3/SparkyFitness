@@ -36,15 +36,23 @@ app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
 const validProfile: UpdateCoachProfileRequest = {
   enabled: true,
   dietaryPattern: 'vegetarian',
-  primaryGoal: 'Build strength',
-  calorieTarget: 2200,
-  proteinTargetG: 140,
-  waterTargetMl: 2500,
   excludedIngredients: ['tofu'],
   preferredIngredients: ['lentils'],
   dislikedIngredients: [],
   routines: [],
   coachingNotes: null,
+  dailyCheckInEnabled: true,
+  dailyCheckInTime: '20:00',
+  weeklyReviewEnabled: true,
+  weeklyReviewDay: 0,
+  weeklyReviewTime: '18:00',
+};
+
+const inheritedGoals = {
+  primaryGoal: 'gain_weight',
+  calorieTarget: 3000,
+  proteinTargetG: 160,
+  waterTargetMl: 3000,
 };
 
 describe('coach profile routes', () => {
@@ -53,6 +61,7 @@ describe('coach profile routes', () => {
   it('always reads the authenticated owner profile during context switching', async () => {
     vi.mocked(coachProfileService.getCoachProfile).mockResolvedValue({
       ...validProfile,
+      ...inheritedGoals,
       updatedAt: null,
     });
 
@@ -67,6 +76,7 @@ describe('coach profile routes', () => {
   it('validates and saves a complete profile', async () => {
     vi.mocked(coachProfileService.updateCoachProfile).mockResolvedValue({
       ...validProfile,
+      ...inheritedGoals,
       updatedAt: '2026-08-18T10:00:00.000Z',
     });
 
@@ -81,10 +91,10 @@ describe('coach profile routes', () => {
     );
   });
 
-  it('rejects invalid targets before calling the service', async () => {
+  it('rejects an invalid proactive delivery time before calling the service', async () => {
     const response = await request(app)
       .put('/api/coach-profile')
-      .send({ ...validProfile, calorieTarget: 100 });
+      .send({ ...validProfile, dailyCheckInTime: '25:00' });
 
     expect(response.statusCode).toBe(400);
     expect(coachProfileService.updateCoachProfile).not.toHaveBeenCalled();

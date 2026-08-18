@@ -58,6 +58,11 @@ beforeEach(() => {
     dislikedIngredients: [],
     routines: [],
     coachingNotes: null,
+    dailyCheckInEnabled: false,
+    dailyCheckInTime: '20:00',
+    weeklyReviewEnabled: false,
+    weeklyReviewDay: 0,
+    weeklyReviewTime: '18:00',
     updatedAt: null,
   });
   vi.mocked(coachProfileService.validateMealSuggestion).mockResolvedValue({

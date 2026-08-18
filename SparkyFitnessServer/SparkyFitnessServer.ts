@@ -83,6 +83,7 @@ import errorHandler from './middleware/errorHandler.js';
 import reviewRoutes from './routes/reviewRoutes.js';
 import cron from 'node-cron';
 import { scheduleBackupsOnStartup } from './services/backupScheduler.js';
+import { processDueProactiveCoachMessages } from './services/proactiveCoachService.js';
 import externalProviderRepository from './models/externalProviderRepository.js';
 import garminService from './services/garminService.js';
 import { getGarminSyncPhaseErrors } from './services/garminSyncResult.js';
@@ -571,6 +572,14 @@ app.get(
 app.get('/api/api-docs/json', (_req, res) => res.json(swaggerSpecs));
 app.get('/api/api-docs', (_req, res) => res.redirect('/api/api-docs/swagger'));
 // Backup scheduling is handled by services/backupScheduler.ts
+const scheduleProactiveCoachMessages = () => {
+  const run = () =>
+    processDueProactiveCoachMessages().catch((error) =>
+      log('error', '[CRON] Proactive coach task failed:', error)
+    );
+  cron.schedule('*/5 * * * *', run);
+  void run();
+};
 // Session cleanup scheduling
 const scheduleSessionCleanup = async () => {
   // Run every day at 3 AM
@@ -847,6 +856,7 @@ applyMigrations()
       );
     }
     scheduleBackupsOnStartup();
+    scheduleProactiveCoachMessages();
     scheduleSessionCleanup();
     scheduleWithingsSyncs();
     scheduleGarminSyncs();

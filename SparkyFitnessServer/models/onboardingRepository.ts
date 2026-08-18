@@ -1,5 +1,9 @@
 import { getClient } from '../db/poolManager.js';
 import { log } from '../config/logging.js';
+
+export interface OnboardingGoalData {
+  primary_goal: string | null;
+}
 /**
  * Saves onboarding data and updates the user's status to complete.
  * This function uses a transaction to ensure atomicity.
@@ -87,6 +91,21 @@ async function getOnboardingStatus(userId: any) {
     client.release();
   }
 }
+
+async function getOnboardingGoalData(
+  userId: string
+): Promise<OnboardingGoalData | null> {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      'SELECT primary_goal FROM onboarding_data WHERE user_id = $1',
+      [userId]
+    );
+    return (result.rows[0] as OnboardingGoalData | undefined) ?? null;
+  } finally {
+    client.release();
+  }
+}
 /**
  * Resets the onboarding completion status for a given user to FALSE.
  * @param {string} userId - The UUID of the user.
@@ -133,11 +152,13 @@ async function setOnboardingSkipped(userId: any) {
 }
 export { saveOnboardingData };
 export { getOnboardingStatus };
+export { getOnboardingGoalData };
 export { resetOnboardingStatus };
 export { setOnboardingSkipped };
 export default {
   saveOnboardingData,
   getOnboardingStatus,
+  getOnboardingGoalData,
   resetOnboardingStatus,
   setOnboardingSkipped,
 };

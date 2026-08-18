@@ -8,6 +8,10 @@ import type {
 } from '@workspace/shared';
 import coachProfileRepository from '../models/coachProfileRepository.js';
 import AllergenPreferenceService from './allergenPreferenceService.js';
+import coachContextService, {
+  type CanonicalCoachGoals,
+} from './coachContextService.js';
+import { log } from '../config/logging.js';
 
 const MEAT_TERMS = [
   'beef',
@@ -154,6 +158,18 @@ const DEFAULT_PROFILE: Omit<CoachProfileResponse, 'updatedAt'> = {
   dislikedIngredients: [],
   routines: [],
   coachingNotes: null,
+  dailyCheckInEnabled: false,
+  dailyCheckInTime: '20:00',
+  weeklyReviewEnabled: false,
+  weeklyReviewDay: 0,
+  weeklyReviewTime: '18:00',
+};
+
+const EMPTY_CANONICAL_GOALS: CanonicalCoachGoals = {
+  primaryGoal: null,
+  calorieTarget: null,
+  proteinTargetG: null,
+  waterTargetMl: null,
 };
 
 function normalizeText(value: string): string {
@@ -174,25 +190,31 @@ function containsTerm(value: string, term: string): boolean {
   return normalizedValue.includes(normalizedTerm);
 }
 
-function toResponse(profile?: CoachProfiles): CoachProfileResponse {
-  if (!profile) return { ...DEFAULT_PROFILE, updatedAt: null };
+function localTime(value: string): string {
+  return value.slice(0, 5);
+}
+
+function toResponse(
+  profile?: CoachProfiles,
+  goals: CanonicalCoachGoals = EMPTY_CANONICAL_GOALS
+): CoachProfileResponse {
+  if (!profile) {
+    return { ...DEFAULT_PROFILE, ...goals, updatedAt: null };
+  }
   return {
     enabled: profile.enabled,
     dietaryPattern: profile.dietary_pattern,
-    primaryGoal: profile.primary_goal,
-    calorieTarget:
-      profile.calorie_target === null ? null : Number(profile.calorie_target),
-    proteinTargetG:
-      profile.protein_target_g === null
-        ? null
-        : Number(profile.protein_target_g),
-    waterTargetMl:
-      profile.water_target_ml === null ? null : Number(profile.water_target_ml),
+    ...goals,
     excludedIngredients: profile.excluded_ingredients,
     preferredIngredients: profile.preferred_ingredients,
     dislikedIngredients: profile.disliked_ingredients,
     routines: profile.routines,
     coachingNotes: profile.coaching_notes,
+    dailyCheckInEnabled: profile.daily_check_in_enabled,
+    dailyCheckInTime: localTime(profile.daily_check_in_time),
+    weeklyReviewEnabled: profile.weekly_review_enabled,
+    weeklyReviewDay: profile.weekly_review_day,
+    weeklyReviewTime: localTime(profile.weekly_review_time),
     updatedAt: profile.updated_at.toISOString(),
   };
 }
@@ -206,7 +228,11 @@ async function getAllergenNames(userId: string): Promise<string[]> {
 }
 
 async function getCoachProfile(userId: string): Promise<CoachProfileResponse> {
-  return toResponse(await coachProfileRepository.getCoachProfile(userId));
+  const [profile, goals] = await Promise.all([
+    coachProfileRepository.getCoachProfile(userId),
+    coachContextService.getCanonicalCoachGoals(userId),
+  ]);
+  return toResponse(profile, goals);
 }
 
 async function updateCoachProfile(
@@ -215,15 +241,19 @@ async function updateCoachProfile(
 ): Promise<CoachProfileResponse> {
   const normalized: UpdateCoachProfileRequest = {
     ...profile,
-    primaryGoal: profile.primaryGoal || null,
     coachingNotes: profile.coachingNotes || null,
     excludedIngredients: normalizeList(profile.excludedIngredients),
     preferredIngredients: normalizeList(profile.preferredIngredients),
     dislikedIngredients: normalizeList(profile.dislikedIngredients),
     routines: normalizeList(profile.routines),
   };
+  const saved = await coachProfileRepository.upsertCoachProfile(
+    userId,
+    normalized
+  );
   return toResponse(
-    await coachProfileRepository.upsertCoachProfile(userId, normalized)
+    saved,
+    await coachContextService.getCanonicalCoachGoals(userId)
   );
 }
 
@@ -302,23 +332,22 @@ async function getPersistentChatContext(
     getAllergenNames(userId),
   ]);
   const lines: string[] = [];
+  const profile = toResponse(storedProfile);
 
-  if (storedProfile?.enabled) {
-    const profile = toResponse(storedProfile);
+  if (profile.enabled) {
+    const snapshot = await coachContextService
+      .getCoachContextSnapshot(userId)
+      .catch((error) => {
+        log(
+          'warn',
+          `Failed to build automatic coach context for user ${userId}:`,
+          error
+        );
+        return null;
+      });
     lines.push(`Dietary pattern: ${profile.dietaryPattern}`);
-    if (profile.primaryGoal) lines.push(`Primary goal: ${profile.primaryGoal}`);
-    const targets = [
-      profile.calorieTarget === null
-        ? null
-        : `${profile.calorieTarget} kcal/day`,
-      profile.proteinTargetG === null
-        ? null
-        : `${profile.proteinTargetG} g protein/day`,
-      profile.waterTargetMl === null
-        ? null
-        : `${profile.waterTargetMl} ml water/day`,
-    ].filter((value): value is string => value !== null);
-    if (targets.length) lines.push(`Targets: ${targets.join(', ')}`);
+    if (snapshot)
+      lines.push(...coachContextService.formatCoachContext(snapshot));
     if (profile.excludedIngredients.length) {
       lines.push(
         `Hard ingredient exclusions: ${profile.excludedIngredients.join(', ')}`
