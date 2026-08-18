@@ -555,6 +555,13 @@ describe('chatService', () => {
           user_id: activeUserId,
           messageType: 'user',
           content: 'log 2 eggs for breakfast',
+          metadata: {
+            chatToolConfiguration: {
+              version: 1,
+              serviceConfigId: 'svc-1',
+              toolCategories: expect.any(Array),
+            },
+          },
         })
       );
       expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
@@ -584,6 +591,18 @@ describe('chatService', () => {
       expect(toolNames).not.toContain('sparky_manage_food');
       expect(toolNames).not.toContain('sparky_manage_goals');
       expect(toolNames).not.toContain('sparky_get_report');
+      expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageType: 'user',
+          metadata: {
+            chatToolConfiguration: {
+              version: 1,
+              serviceConfigId: 'svc-1',
+              toolCategories: ['exercise'],
+            },
+          },
+        })
+      );
     });
 
     it('falls back to the full tool set when toolCategories is omitted', async () => {
@@ -1241,7 +1260,51 @@ describe('chatService', () => {
         expect.objectContaining({
           messageType: 'user',
           content: 'Show my goal timeline',
+          metadata: expect.objectContaining({
+            chatToolConfiguration: expect.objectContaining({
+              serviceConfigId: 'svc-1',
+            }),
+          }),
         })
+      );
+    });
+
+    it('persists the web stream tool selection for other chat channels', async () => {
+      streamModel([
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'Here are your trends.' },
+        { type: 'text-end', id: 't1' },
+        {
+          type: 'finish',
+          finishReason: { unified: 'stop', raw: undefined },
+          usage,
+        },
+      ]);
+
+      const { stream } = await chatService.processChatMessageStream(
+        [{ role: 'user', content: 'Show my trends' }],
+        'svc-1',
+        activeUserId,
+        actorUserId,
+        false,
+        ['reports', 'coaching']
+      );
+      await drainStream(stream);
+
+      await vi.waitFor(() =>
+        expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messageType: 'user',
+            metadata: {
+              chatToolConfiguration: {
+                version: 1,
+                serviceConfigId: 'svc-1',
+                toolCategories: ['reports', 'coaching'],
+              },
+            },
+          })
+        )
       );
     });
 

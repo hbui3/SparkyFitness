@@ -103,8 +103,7 @@ const SparkyChatInner = ({
   // from its full/core profile. getSelected() is stable and reads the latest
   // value, so the runtime's prepareSendMessagesRequest closure (created once)
   // always sends the current selection without being recreated.
-  const { getSelected, setActiveService, hasCustomSelection } =
-    useChatToolCategories();
+  const { getSelected, setActiveService } = useChatToolCategories();
 
   useEffect(() => {
     setActiveService(
@@ -191,10 +190,10 @@ const SparkyChatInner = ({
         return {
           body: {
             ...options.body,
-            // Latest runtime tool-category selection (stable getter so the
-            // closure never sends a stale set). Empty => server falls back to
-            // the service's profile default.
-            toolCategories: hasCustomSelection ? getSelected() : undefined,
+            // Always send the effective runtime selection, including the
+            // profile-derived Full/Core default. The server persists it so
+            // Telegram can use the identical category set for this service.
+            toolCategories: getSelected(),
             messages: processedMessages,
           },
         };

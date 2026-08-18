@@ -6,6 +6,7 @@ import {
   getTelegramBotUsername,
   sendTelegramMessage,
 } from '../services/telegramApiService.js';
+import { CHAT_TOOL_CATEGORY_SLUGS } from '@workspace/shared';
 
 vi.mock('../models/coachTelegramRepository.js', () => ({
   default: {
@@ -95,6 +96,8 @@ describe('telegramCoachService', () => {
     ] as never);
     vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
       id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
     } as never);
     vi.mocked(chatService.processChatMessage).mockResolvedValue({
       content: 'Noch 35 g Protein. Plane jetzt Skyr ein.',
@@ -117,11 +120,60 @@ describe('telegramCoachService', () => {
         'ai-1',
         'user-1',
         'user-1',
-        false
+        false,
+        [...CHAT_TOOL_CATEGORY_SLUGS]
       );
       expect(sendTelegramMessage).toHaveBeenCalledWith(
         '12345',
         'Noch 35 g Protein. Plane jetzt Skyr ein.'
+      );
+    });
+  });
+
+  it('reuses the latest web tool selection for the active AI service', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([
+      {
+        message_type: 'user',
+        content: 'Zeige meine Trends',
+        metadata: {
+          chatToolConfiguration: {
+            version: 1,
+            serviceConfigId: 'ai-1',
+            toolCategories: ['reports', 'coaching'],
+          },
+        },
+      },
+      { message_type: 'assistant', content: 'Hier sind deine Trends.' },
+    ] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(chatService.processChatMessage).mockResolvedValue({
+      content: 'Ich nutze dieselben Analysewerkzeuge.',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 12,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: 'Und wie sieht es heute aus?',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(chatService.processChatMessage).toHaveBeenCalledWith(
+        expect.any(Array),
+        'ai-1',
+        'user-1',
+        'user-1',
+        false,
+        ['reports', 'coaching']
       );
     });
   });
