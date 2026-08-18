@@ -2,6 +2,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Clipboard } from 'lucide-react';
 import { useTranslation, Trans } from 'react-i18next';
 import type { ExternalDataProvider } from './ExternalProviderSettings';
@@ -396,6 +403,106 @@ export const ProviderSpecificFields = ({
         </>
       )}
 
+      {provider.provider_type === 'speediance' && (
+        <>
+          <div>
+            <Label htmlFor="add-speediance-email">Speediance Email</Label>
+            <Input
+              id="add-speediance-email"
+              type="email"
+              value={provider.app_id || ''}
+              onChange={(e) =>
+                setProvider((prev) => ({ ...prev, app_id: e.target.value }))
+              }
+              placeholder="Enter Speediance email"
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <Label htmlFor="add-speediance-password">Speediance Password</Label>
+            <Input
+              id="add-speediance-password"
+              type="password"
+              value={provider.app_key || ''}
+              onChange={(e) =>
+                setProvider((prev) => ({ ...prev, app_key: e.target.value }))
+              }
+              placeholder="Enter Speediance password"
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
+            <Label htmlFor="add-speediance-region">Account Region</Label>
+            <Select
+              value={
+                provider.base_url === 'https://api2.speediance.com'
+                  ? 'Global'
+                  : 'EU'
+              }
+              onValueChange={(region) =>
+                setProvider((prev) => ({
+                  ...prev,
+                  base_url:
+                    region === 'Global'
+                      ? 'https://api2.speediance.com'
+                      : 'https://euapi.speediance.com',
+                }))
+              }
+            >
+              <SelectTrigger id="add-speediance-region">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="EU">EU</SelectItem>
+                <SelectItem value="Global">Global</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="add-speediance-sync-frequency">
+              Sync Frequency
+            </Label>
+            <Select
+              value={provider.sync_frequency || 'manual'}
+              onValueChange={(value) =>
+                setProvider((prev) => ({
+                  ...prev,
+                  sync_frequency: value as 'hourly' | 'daily' | 'manual',
+                }))
+              }
+            >
+              <SelectTrigger id="add-speediance-sync-frequency">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="manual">Manual</SelectItem>
+                <SelectItem value="hourly">Hourly</SelectItem>
+                <SelectItem value="daily">Daily</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="col-span-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 space-y-1.5">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              Unofficial Speediance API
+            </p>
+            <p className="text-sm text-amber-800 dark:text-amber-300">
+              SparkyFitness stores the email and password encrypted and uses
+              them only to sign in when importing workouts. The integration is
+              based on the community-documented mobile API and may stop working
+              if Speediance changes it.{' '}
+              <a
+                href="https://github.com/ANPC86/SmartGymWorkoutManager"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline font-medium"
+              >
+                API reference
+              </a>
+            </p>
+          </div>
+        </>
+      )}
+
       {['withings', 'fitbit', 'oura', 'googlehealth', 'polar'].includes(
         provider.provider_type || ''
       ) && (
@@ -522,7 +629,9 @@ export const ProviderSpecificFields = ({
         </p>
       )}
 
-      {['hevy', 'polar'].includes(provider.provider_type || '') && (
+      {['hevy', 'polar', 'speediance'].includes(
+        provider.provider_type || ''
+      ) && (
         <div className="flex items-center space-x-2 col-span-2">
           <Switch
             id="full_sync_on_connect"

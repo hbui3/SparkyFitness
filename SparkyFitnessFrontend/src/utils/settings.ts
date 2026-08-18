@@ -15,10 +15,15 @@ export const providerRequirements: Record<string, string[]> = {
   strava: ['app_id', 'app_key'],
   usda: ['app_key'],
   hevy: ['app_key'],
+  speediance: ['app_id', 'app_key'],
   yazio: ['app_id', 'app_key', 'yazio_client_id', 'yazio_client_secret'],
 };
 
 const providerFieldLabels: Record<string, Record<string, string>> = {
+  speediance: {
+    app_id: 'Speediance email',
+    app_key: 'Speediance password',
+  },
   yazio: {
     app_id: 'YAZIO email / username',
     app_key: 'YAZIO password',

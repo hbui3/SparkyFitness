@@ -53,7 +53,7 @@ async function getExternalDataProviders(userId: any) {
         return {
           ...row,
           app_id: decryptedAppId,
-          app_key: decryptedAppKey,
+          app_key: row.provider_type === 'speediance' ? null : decryptedAppKey,
           has_token: !!row.encrypted_access_token,
         };
       })
@@ -146,7 +146,7 @@ async function getExternalDataProvidersByUserId(
           user_id: row.user_id,
           is_public: row.is_public,
           app_id: decryptedAppId,
-          app_key: decryptedAppKey,
+          app_key: row.provider_type === 'speediance' ? null : decryptedAppKey,
           token_expires_at: row.token_expires_at,
           external_user_id: row.external_user_id,
           garth_dump: decryptedGarthDump,
@@ -170,11 +170,12 @@ async function getExternalDataProvidersByUserId(
 async function createExternalDataProvider(providerData: any) {
   const client = await getClient(providerData.user_id); // User-specific operation
   try {
-    log(
-      'debug',
-      'createExternalDataProvider: Received providerData:',
-      providerData
-    );
+    log('debug', 'createExternalDataProvider: Creating provider', {
+      provider_name: providerData.provider_name,
+      provider_type: providerData.provider_type,
+      user_id: providerData.user_id,
+      is_active: providerData.is_active,
+    });
     const {
       provider_name,
       provider_type,

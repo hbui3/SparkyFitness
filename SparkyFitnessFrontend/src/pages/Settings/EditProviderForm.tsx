@@ -69,7 +69,8 @@ export const EditProviderForm = ({
                 provider_type: value as ExternalDataProvider['provider_type'],
                 app_id: '',
                 app_key: '',
-                base_url: '',
+                base_url:
+                  value === 'speediance' ? 'https://euapi.speediance.com' : '',
                 garmin_connect_status: 'disconnected',
                 garmin_last_status_check: '',
                 garmin_token_expires: '',
@@ -863,6 +864,84 @@ export const EditProviderForm = ({
           </p>
         </>
       )}
+      {editData.provider_type === 'speediance' && (
+        <>
+          <div>
+            <Label htmlFor="edit-speediance-email">Speediance Email</Label>
+            <Input
+              id="edit-speediance-email"
+              type="email"
+              value={editData.app_id || ''}
+              onChange={(e) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  app_id: e.target.value,
+                }))
+              }
+              placeholder="Enter Speediance email"
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-speediance-password">
+              Speediance Password
+            </Label>
+            <Input
+              id="edit-speediance-password"
+              type="password"
+              value={editData.app_key || ''}
+              onChange={(e) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  app_key: e.target.value,
+                }))
+              }
+              placeholder="Leave blank to keep the stored password"
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-speediance-region">Account Region</Label>
+            <Select
+              value={
+                editData.base_url === 'https://api2.speediance.com'
+                  ? 'Global'
+                  : 'EU'
+              }
+              onValueChange={(region) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  base_url:
+                    region === 'Global'
+                      ? 'https://api2.speediance.com'
+                      : 'https://euapi.speediance.com',
+                }))
+              }
+            >
+              <SelectTrigger id="edit-speediance-region">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="EU">EU</SelectItem>
+                <SelectItem value="Global">Global</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-sm text-muted-foreground col-span-2">
+            Credentials are encrypted in the SparkyFitness database. This uses
+            the unofficial Speediance mobile API documented by{' '}
+            <a
+              href="https://github.com/ANPC86/SmartGymWorkoutManager"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline font-medium"
+            >
+              SmartGymWorkoutManager
+            </a>
+            .
+          </p>
+        </>
+      )}
       {(editData.provider_type === 'withings' ||
         editData.provider_type === 'garmin' ||
         editData.provider_type === 'fitbit' ||
@@ -870,7 +949,8 @@ export const EditProviderForm = ({
         editData.provider_type === 'googlehealth' ||
         editData.provider_type === 'strava' ||
         editData.provider_type === 'polar' ||
-        editData.provider_type === 'hevy') && (
+        editData.provider_type === 'hevy' ||
+        editData.provider_type === 'speediance') && (
         <div>
           <Label htmlFor="edit_sync_frequency">Sync Frequency</Label>
           <Select

@@ -6,6 +6,21 @@ import {
   hasYazioProviderOAuthConfig,
   resolveYazioCredentials,
 } from '../integrations/yazio/yazioService.js';
+import { normalizeSpeedianceBaseUrl } from '../integrations/speediance/speedianceConfig.js';
+
+function validateSpeedianceCredentials(email: unknown, password: unknown) {
+  if (
+    typeof email !== 'string' ||
+    !email.trim() ||
+    !email.includes('@') ||
+    typeof password !== 'string' ||
+    !password
+  ) {
+    throw badRequest(
+      'Speediance credentials must include a valid email address and password.'
+    );
+  }
+}
 
 // Build a 400-tagged Error for user-input validation failures so the
 // centralized errorHandler surfaces them as client errors instead of the
@@ -242,6 +257,10 @@ async function createExternalDataProvider(
         providerData.app_key
       );
     }
+    if (providerData.provider_type === 'speediance') {
+      validateSpeedianceCredentials(providerData.app_id, providerData.app_key);
+      providerData.base_url = normalizeSpeedianceBaseUrl(providerData.base_url);
+    }
     const newProvider =
       await externalProviderRepository.createExternalDataProvider(providerData);
     if (
@@ -386,6 +405,30 @@ async function updateExternalDataProvider(
           clientSecret: mergedCredentials.clientSecret || '',
         });
       }
+    }
+
+    const isSpeediance =
+      existingProvider?.provider_type === 'speediance' ||
+      updateData.provider_type === 'speediance';
+    if (isSpeediance) {
+      const existingSpeediance =
+        existingProvider?.provider_type === 'speediance'
+          ? existingProvider
+          : undefined;
+      const resolveField = (nextValue: unknown, currentValue: unknown) => {
+        if (nextValue === null) return null;
+        if (nextValue === undefined) return currentValue;
+        return nextValue;
+      };
+      validateSpeedianceCredentials(
+        resolveField(updateData.app_id, existingSpeediance?.app_id),
+        resolveField(updateData.app_key, existingSpeediance?.app_key)
+      );
+      updateData.base_url = normalizeSpeedianceBaseUrl(
+        updateData.base_url === undefined
+          ? existingSpeediance?.base_url
+          : updateData.base_url
+      );
     }
 
     const updatedProvider =
