@@ -13,7 +13,7 @@ router.use(authenticate);
  * @swagger
  * tags:
  *   name: Coach Profile
- *   description: Private persistent preferences and constraints for the AI coach.
+ *   description: Private persistent preferences, constraints, and proactive schedules for the AI coach. Goal fields in responses are inherited from onboarding and active dated goals.
  */
 
 /**
@@ -26,7 +26,7 @@ router.use(authenticate);
  *       - cookieAuth: []
  *     responses:
  *       200:
- *         description: Coach profile or defaults when it has not been saved yet.
+ *         description: Coach preferences/schedules plus inherited canonical goals, or defaults when no profile has been saved yet.
  *       401:
  *         description: Unauthorized.
  */
@@ -45,7 +45,7 @@ router.get('/', async (req, res, next) => {
  * @swagger
  * /coach-profile:
  *   put:
- *     summary: Replace the authenticated user's private coach profile
+ *     summary: Replace the authenticated user's private coach preferences and proactive schedules
  *     tags: [Coach Profile]
  *     security:
  *       - cookieAuth: []

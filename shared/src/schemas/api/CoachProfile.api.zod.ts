@@ -3,23 +3,31 @@ import { coachDietaryPatternSchema } from "../database/CoachProfiles.zod.ts";
 
 const compactTextSchema = z.string().trim().min(1).max(100);
 const compactTextListSchema = z.array(compactTextSchema).max(50);
+export const coachLocalTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 export const updateCoachProfileRequestSchema = z.object({
   enabled: z.boolean(),
   dietaryPattern: coachDietaryPatternSchema,
-  primaryGoal: z.string().trim().max(500).nullable(),
-  calorieTarget: z.number().min(500).max(10_000).nullable(),
-  proteinTargetG: z.number().min(0).max(500).nullable(),
-  waterTargetMl: z.number().int().min(0).max(15_000).nullable(),
   excludedIngredients: compactTextListSchema,
   preferredIngredients: compactTextListSchema,
   dislikedIngredients: compactTextListSchema,
   routines: compactTextListSchema,
   coachingNotes: z.string().trim().max(2_000).nullable(),
+  dailyCheckInEnabled: z.boolean(),
+  dailyCheckInTime: coachLocalTimeSchema,
+  weeklyReviewEnabled: z.boolean(),
+  weeklyReviewDay: z.number().int().min(0).max(6),
+  weeklyReviewTime: coachLocalTimeSchema,
 });
 
 export const coachProfileResponseSchema =
   updateCoachProfileRequestSchema.extend({
+    primaryGoal: z.string().nullable(),
+    calorieTarget: z.number().nullable(),
+    proteinTargetG: z.number().nullable(),
+    waterTargetMl: z.number().int().nullable(),
     updatedAt: z.string().datetime().nullable(),
   });
 

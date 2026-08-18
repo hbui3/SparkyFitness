@@ -35,6 +35,11 @@ describe('CoachProfileSettings', () => {
         dislikedIngredients: ['olives'],
         routines: ['meal prep sunday'],
         coachingNotes: 'Keep weekday recipes short.',
+        dailyCheckInEnabled: true,
+        dailyCheckInTime: '20:00',
+        weeklyReviewEnabled: true,
+        weeklyReviewDay: 0,
+        weeklyReviewTime: '18:00',
         updatedAt: '2026-08-18T10:00:00.000Z',
       },
       isLoading: false,
@@ -45,7 +50,7 @@ describe('CoachProfileSettings', () => {
     } as unknown as ReturnType<typeof useUpdateCoachProfile>);
   });
 
-  it('renders stored profile values and saves the complete private profile', () => {
+  it('renders inherited goals and saves only coach-owned settings', () => {
     render(<CoachProfileSettings />);
 
     expect(screen.getByDisplayValue('Build strength')).toBeInTheDocument();
@@ -57,15 +62,16 @@ describe('CoachProfileSettings', () => {
     expect(mutate).toHaveBeenCalledWith({
       enabled: true,
       dietaryPattern: 'vegetarian',
-      primaryGoal: 'Build strength',
-      calorieTarget: 2200,
-      proteinTargetG: 140,
-      waterTargetMl: 2500,
       excludedIngredients: ['tofu'],
       preferredIngredients: ['lentils'],
       dislikedIngredients: ['olives'],
       routines: ['meal prep sunday'],
       coachingNotes: 'Keep weekday recipes short.',
+      dailyCheckInEnabled: true,
+      dailyCheckInTime: '20:00',
+      weeklyReviewEnabled: true,
+      weeklyReviewDay: 0,
+      weeklyReviewTime: '18:00',
     });
   });
 });

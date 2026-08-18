@@ -37,7 +37,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `shared/` - source-first TypeScript workspace package for `@workspace/shared` schemas, constants, and timezone/day helpers.
 - `docs/` - Nuxt / Docus docs site.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
-- The persistent AI coach profile spans `shared` contracts, the server's owner-only `coach_profiles` domain, chat context/tool enforcement, and the frontend Nutrition & Diet settings.
+- The persistent AI coach spans `shared` contracts, the server's owner-only `coach_profiles` preferences/schedule domain, canonical onboarding/goal-derived daily and trend context, proactive chat-history delivery, meal-safety tool enforcement, and the frontend Nutrition & Diet settings.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
 - `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.

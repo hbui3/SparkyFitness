@@ -1742,6 +1742,10 @@
       "coachingNotesPlaceholder": "Tone, recurring schedule, budget, cooking time, or other stable context…",
       "commaSeparatedPlaceholder": "comma, separated, values",
       "description": "Persistent goals and food constraints for every AI coaching conversation",
+      "dailyCheckIn": "Daily check-in",
+      "dailyCheckInDescription": "Today’s calories, protein, water, and a concrete next step.",
+      "deliveryDay": "Day",
+      "deliveryTime": "Delivery time",
       "dietaryPattern": "Dietary pattern",
       "dislikedDescription": "Soft preference: avoid these when alternatives fit.",
       "dislikedIngredients": "Disliked ingredients",
@@ -1751,6 +1755,7 @@
       "excludedIngredients": "Hard ingredient exclusions",
       "loadError": "Failed to load coach profile.",
       "loading": "Loading coach profile…",
+      "inheritedGoalsDescription": "Primary goal is inherited from onboarding. Calories, protein, and water are inherited from the active dated Goals entry and automatically stay in sync.",
       "patterns": {
         "omnivore": "Omnivore",
         "other": "Other",
@@ -1761,7 +1766,9 @@
       "preferredDescription": "The coach should favor these when practical.",
       "preferredIngredients": "Preferred ingredients",
       "primaryGoal": "Primary goal",
-      "primaryGoalPlaceholder": "e.g. Build strength while maintaining weight",
+      "primaryGoalPlaceholder": "Not set during onboarding",
+      "proactiveDescription": "Sparky writes scheduled summaries into your private chat using your local timezone.",
+      "proactiveTitle": "Proactive coach messages",
       "privacy": "Private to your account and never shared through family access.",
       "proteinTarget": "Protein (g) / day",
       "routines": "Routines",
@@ -1771,7 +1778,18 @@
       "saveSuccess": "Coach profile saved.",
       "saving": "Saving…",
       "title": "AI Coach Profile",
-      "waterTarget": "Water (ml) / day"
+      "waterTarget": "Water (ml) / day",
+      "weekdays": {
+        "friday": "Friday",
+        "monday": "Monday",
+        "saturday": "Saturday",
+        "sunday": "Sunday",
+        "thursday": "Thursday",
+        "tuesday": "Tuesday",
+        "wednesday": "Wednesday"
+      },
+      "weeklyReview": "Weekly review",
+      "weeklyReviewDescription": "Seven-day adherence plus your 30-day weight and nutrition trend."
     },
     "calculationExplanation": {
       "adaptiveFootnote": "* Dynamically adjusts your Daily Goal based on your actual metabolism. Needs consistent food and weight tracking for high accuracy.",

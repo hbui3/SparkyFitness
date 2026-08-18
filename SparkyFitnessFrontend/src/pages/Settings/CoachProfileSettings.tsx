@@ -34,6 +34,11 @@ const EMPTY_PROFILE: CoachProfileResponse = {
   dislikedIngredients: [],
   routines: [],
   coachingNotes: null,
+  dailyCheckInEnabled: false,
+  dailyCheckInTime: '20:00',
+  weeklyReviewEnabled: false,
+  weeklyReviewDay: 0,
+  weeklyReviewTime: '18:00',
   updatedAt: null,
 };
 
@@ -56,8 +61,12 @@ function textToList(value: string): string[] {
     .filter(Boolean);
 }
 
-function optionalNumber(value: string): number | null {
-  return value === '' ? null : Number(value);
+function primaryGoalLabel(value: string | null): string {
+  if (!value) return '';
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 export default function CoachProfileSettings() {
@@ -92,8 +101,21 @@ function CoachProfileForm({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const { updatedAt: _updatedAt, ...payload } = form;
-    updateProfile.mutate(payload satisfies UpdateCoachProfileRequest);
+    const payload: UpdateCoachProfileRequest = {
+      enabled: form.enabled,
+      dietaryPattern: form.dietaryPattern,
+      excludedIngredients: form.excludedIngredients,
+      preferredIngredients: form.preferredIngredients,
+      dislikedIngredients: form.dislikedIngredients,
+      routines: form.routines,
+      coachingNotes: form.coachingNotes,
+      dailyCheckInEnabled: form.dailyCheckInEnabled,
+      dailyCheckInTime: form.dailyCheckInTime,
+      weeklyReviewEnabled: form.weeklyReviewEnabled,
+      weeklyReviewDay: form.weeklyReviewDay,
+      weeklyReviewTime: form.weeklyReviewTime,
+    };
+    updateProfile.mutate(payload);
   };
 
   return (
@@ -150,13 +172,11 @@ function CoachProfileForm({
           </Label>
           <Input
             id="primary-goal"
-            value={form.primaryGoal ?? ''}
-            onChange={(event) =>
-              setForm({ ...form, primaryGoal: event.target.value || null })
-            }
+            value={primaryGoalLabel(form.primaryGoal)}
+            readOnly
             placeholder={t(
               'settings.coachProfile.primaryGoalPlaceholder',
-              'e.g. Build strength while maintaining weight'
+              'Not set during onboarding'
             )}
           />
         </div>
@@ -173,12 +193,7 @@ function CoachProfileForm({
             min={500}
             max={10000}
             value={form.calorieTarget ?? ''}
-            onChange={(event) =>
-              setForm({
-                ...form,
-                calorieTarget: optionalNumber(event.target.value),
-              })
-            }
+            readOnly
           />
         </div>
         <div className="space-y-2">
@@ -191,12 +206,7 @@ function CoachProfileForm({
             min={0}
             max={500}
             value={form.proteinTargetG ?? ''}
-            onChange={(event) =>
-              setForm({
-                ...form,
-                proteinTargetG: optionalNumber(event.target.value),
-              })
-            }
+            readOnly
           />
         </div>
         <div className="space-y-2">
@@ -209,15 +219,17 @@ function CoachProfileForm({
             min={0}
             max={15000}
             value={form.waterTargetMl ?? ''}
-            onChange={(event) =>
-              setForm({
-                ...form,
-                waterTargetMl: optionalNumber(event.target.value),
-              })
-            }
+            readOnly
           />
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        {t(
+          'settings.coachProfile.inheritedGoalsDescription',
+          'Primary goal is inherited from onboarding. Calories, protein, and water are inherited from the active dated Goals entry and automatically stay in sync.'
+        )}
+      </p>
 
       <div className="grid gap-5 md:grid-cols-2">
         <ListField
@@ -293,6 +305,135 @@ function CoachProfileForm({
             'Tone, recurring schedule, budget, cooking time, or other stable context…'
           )}
         />
+      </div>
+
+      <div className="space-y-4 rounded-lg border p-4">
+        <div>
+          <h3 className="font-medium">
+            {t(
+              'settings.coachProfile.proactiveTitle',
+              'Proactive coach messages'
+            )}
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'settings.coachProfile.proactiveDescription',
+              'Sparky writes scheduled summaries into your private chat using your local timezone.'
+            )}
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-3 rounded-md bg-muted/30 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Label htmlFor="daily-check-in-enabled">
+                  {t('settings.coachProfile.dailyCheckIn', 'Daily check-in')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    'settings.coachProfile.dailyCheckInDescription',
+                    'Today’s calories, protein, water, and a concrete next step.'
+                  )}
+                </p>
+              </div>
+              <Switch
+                id="daily-check-in-enabled"
+                checked={form.dailyCheckInEnabled}
+                onCheckedChange={(dailyCheckInEnabled) =>
+                  setForm({ ...form, dailyCheckInEnabled })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="daily-check-in-time">
+                {t('settings.coachProfile.deliveryTime', 'Delivery time')}
+              </Label>
+              <Input
+                id="daily-check-in-time"
+                type="time"
+                value={form.dailyCheckInTime}
+                disabled={!form.dailyCheckInEnabled}
+                onChange={(event) =>
+                  setForm({ ...form, dailyCheckInTime: event.target.value })
+                }
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-md bg-muted/30 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Label htmlFor="weekly-review-enabled">
+                  {t('settings.coachProfile.weeklyReview', 'Weekly review')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    'settings.coachProfile.weeklyReviewDescription',
+                    'Seven-day adherence plus your 30-day weight and nutrition trend.'
+                  )}
+                </p>
+              </div>
+              <Switch
+                id="weekly-review-enabled"
+                checked={form.weeklyReviewEnabled}
+                onCheckedChange={(weeklyReviewEnabled) =>
+                  setForm({ ...form, weeklyReviewEnabled })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="weekly-review-day">
+                  {t('settings.coachProfile.deliveryDay', 'Day')}
+                </Label>
+                <Select
+                  value={String(form.weeklyReviewDay)}
+                  disabled={!form.weeklyReviewEnabled}
+                  onValueChange={(value) =>
+                    setForm({ ...form, weeklyReviewDay: Number(value) })
+                  }
+                >
+                  <SelectTrigger id="weekly-review-day">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[
+                      'Sunday',
+                      'Monday',
+                      'Tuesday',
+                      'Wednesday',
+                      'Thursday',
+                      'Friday',
+                      'Saturday',
+                    ].map((day, index) => (
+                      <SelectItem key={day} value={String(index)}>
+                        {t(
+                          `settings.coachProfile.weekdays.${day.toLowerCase()}`,
+                          day
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="weekly-review-time">
+                  {t('settings.coachProfile.deliveryTime', 'Delivery time')}
+                </Label>
+                <Input
+                  id="weekly-review-time"
+                  type="time"
+                  value={form.weeklyReviewTime}
+                  disabled={!form.weeklyReviewEnabled}
+                  onChange={(event) =>
+                    setForm({ ...form, weeklyReviewTime: event.target.value })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-4">

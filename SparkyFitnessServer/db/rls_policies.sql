@@ -556,6 +556,8 @@ USING (
 SELECT create_owner_policy('api_key', 'reference_id');
 SELECT create_owner_policy('user_oidc_links');
 SELECT create_owner_policy('sparky_chat_history');
+-- Includes dietary preferences and local daily/weekly proactive-message
+-- schedules. Generated messages are written to the owner-only chat table.
 SELECT create_owner_policy('coach_profiles');
 
 -- Profiles: delegates can read (with any meaningful permission) but only owner can write.
