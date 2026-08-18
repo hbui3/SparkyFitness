@@ -103,7 +103,7 @@ mkdir -p \
   "${APPDATA_ROOT}/backup" \
   "${APPDATA_ROOT}/predeploy-backups"
 
-if grep -q 'CHANGE_ME' "${ENV_FILE}"; then
+if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=CHANGE_ME$' "${ENV_FILE}"; then
   fail "bootstrap left an unresolved CHANGE_ME value in ${ENV_FILE}"
 fi
 
