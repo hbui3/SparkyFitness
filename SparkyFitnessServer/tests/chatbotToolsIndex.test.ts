@@ -50,6 +50,7 @@ const EXPECTED_TOOLS = [
   'sparky_scan_label',
   'sparky_search_exercises',
   'sparky_search_foods',
+  'sparky_validate_meal_suggestion',
 ];
 
 // The 'core' profile (used for Ollama and other small/local models): the
@@ -78,6 +79,7 @@ const EXPECTED_CORE_TOOLS = [
   'sparky_manage_goals',
   'sparky_search_exercises',
   'sparky_search_foods',
+  'sparky_validate_meal_suggestion',
 ];
 
 describe('buildChatbotTools', () => {

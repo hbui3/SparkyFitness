@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-07-08_
+_Last updated: 2026-08-18_
 
 SparkyFitness Frontend is the React web app for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessFrontend/`.
 
@@ -96,6 +96,7 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - Family-access/acting-user issue: `src/contexts/ActiveUserContext.tsx` and the hooks consuming it.
 - Chat (Sparky) issue: `src/pages/Chat/`, `src/components/ai/`, `src/api/Chatbot/`.
 - Theme/preferences issue: `src/contexts/ThemeContext.tsx`, `src/contexts/PreferencesContext.tsx`, `src/services/preferenceService.ts`, `src/utils/userPreferences.ts`.
+- Persistent AI coach goals or dietary constraints: `src/pages/Settings/CoachProfileSettings.tsx`, `src/hooks/Settings/useCoachProfile.ts`, and `src/api/Settings/coachProfile.ts`.
 - Missing/wrong UI text: the i18n key in `public/locales/en/translation.json` and the `t('...')` call site.
 - Chart issue: Recharts usage in the domain page plus `src/components/ExerciseCharts/` or `ZoomableChart.tsx`.
 

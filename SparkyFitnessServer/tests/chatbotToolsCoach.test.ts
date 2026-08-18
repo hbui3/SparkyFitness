@@ -2,6 +2,7 @@ import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { todayInZone } from '@workspace/shared';
 import { buildCoachTools } from '../ai/tools/coachTools.js';
 import coachRepository from '../models/coachRepository.js';
+import coachProfileService from '../services/coachProfileService.js';
 
 vi.mock('../models/coachRepository', () => ({
   default: {
@@ -23,6 +24,19 @@ vi.mock('../models/coachRepository', () => ({
 vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
+vi.mock('../services/coachProfileService', () => ({
+  default: {
+    getCoachProfile: vi.fn(async () => ({
+      enabled: true,
+      calorieTarget: null,
+      proteinTargetG: null,
+    })),
+    validateMealSuggestion: vi.fn(async () => ({
+      allowed: true,
+      violations: [],
+    })),
+  },
+}));
 
 const opts = { toolCallId: 'tc-1', messages: [] };
 const DB_ERROR_TEXT =
@@ -32,6 +46,24 @@ let tools: ReturnType<typeof buildCoachTools>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(coachProfileService.getCoachProfile).mockResolvedValue({
+    enabled: true,
+    dietaryPattern: 'omnivore',
+    primaryGoal: null,
+    calorieTarget: null,
+    proteinTargetG: null,
+    waterTargetMl: null,
+    excludedIngredients: [],
+    preferredIngredients: [],
+    dislikedIngredients: [],
+    routines: [],
+    coachingNotes: null,
+    updatedAt: null,
+  });
+  vi.mocked(coachProfileService.validateMealSuggestion).mockResolvedValue({
+    allowed: true,
+    violations: [],
+  });
   tools = buildCoachTools('user-1', 'UTC');
 });
 

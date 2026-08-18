@@ -1,6 +1,6 @@
 # AGENTS.md
 
-*Last updated: 2026-08-07*
+*Last updated: 2026-08-18*
 
 This is the repo-root monorepo guide for SparkyFitness. Use it to choose the right package, understand shared repo-level rules, and find the next guide to read.
 
@@ -37,6 +37,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `shared/` - source-first TypeScript workspace package for `@workspace/shared` schemas, constants, and timezone/day helpers.
 - `docs/` - Nuxt / Docus docs site.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
+- The persistent AI coach profile spans `shared` contracts, the server's owner-only `coach_profiles` domain, chat context/tool enforcement, and the frontend Nutrition & Diet settings.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.
 - `docker/.env.example` - tracked env template commonly copied to repo-root `.env`.
@@ -138,4 +139,3 @@ npx expo prebuild --clean
 pnpm dev
 pnpm run build
 ```
-
