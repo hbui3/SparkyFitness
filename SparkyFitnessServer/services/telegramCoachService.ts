@@ -8,7 +8,7 @@ import {
 } from '@workspace/shared';
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import userRepository from '../models/userRepository.js';
-import chatService from './chatService.js';
+import chatService, { isImageFollowUpText } from './chatService.js';
 import { resolveChatToolCategoriesFromHistory } from './chatToolConfigurationService.js';
 import {
   downloadTelegramImage,
@@ -56,6 +56,7 @@ interface StoredChatMessage {
   message_type?: unknown;
   content?: unknown;
   metadata?: unknown;
+  parts?: unknown;
 }
 
 interface RuntimeChatMessagePart {
@@ -76,6 +77,38 @@ interface TelegramChatInput {
 }
 
 const userQueues = new Map<string, Promise<void>>();
+
+function storedRuntimeParts(
+  value: unknown
+): RuntimeChatMessagePart[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parts = value.flatMap<RuntimeChatMessagePart>((part) => {
+    if (!part || typeof part !== 'object') return [];
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === 'text' && typeof candidate.text === 'string') {
+      return [{ type: 'text', text: candidate.text }];
+    }
+    if (
+      candidate.type === 'image' &&
+      typeof candidate.image === 'string' &&
+      candidate.image.startsWith('data:image/')
+    ) {
+      return [{ type: 'image', image: candidate.image }];
+    }
+    return [];
+  });
+  return parts.length > 0 ? parts : undefined;
+}
+
+function nativeFoodImageCategories(
+  categories: readonly ChatToolCategorySlug[]
+): ChatToolCategorySlug[] {
+  const required = new Set<ChatToolCategorySlug>([
+    ...categories.filter((slug) => slug !== 'vision'),
+    'food',
+  ]);
+  return CHAT_TOOL_CATEGORY_SLUGS.filter((slug) => required.has(slug));
+}
 
 function hashLinkToken(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -199,14 +232,23 @@ async function answerTelegramChat(
         );
         return;
       }
-      const required = new Set<ChatToolCategorySlug>([
-        ...toolCategories,
-        'food',
-        'vision',
-      ]);
-      toolCategories = CHAT_TOOL_CATEGORY_SLUGS.filter((slug) =>
-        required.has(slug)
-      );
+      // Telegram already supplies the photo as native multimodal input. The
+      // vision tools require the model to repeat an image URL, which is both
+      // unnecessary here and can make it misclassify the attached data URL as
+      // an unsupported remote link. Keep the food tools, but let the model see
+      // and read the image directly.
+      toolCategories = nativeFoodImageCategories(toolCategories);
+    } else if (isImageFollowUpText(input.text)) {
+      const latestStoredUser = [...storedHistory]
+        .reverse()
+        .find((entry) => entry.message_type === 'user');
+      if (
+        storedRuntimeParts(latestStoredUser?.parts)?.some(
+          (part) => part.type === 'image'
+        )
+      ) {
+        toolCategories = nativeFoodImageCategories(toolCategories);
+      }
     }
     const messages: RuntimeChatMessage[] = storedHistory
       .slice(-MAX_TELEGRAM_HISTORY_MESSAGES)
@@ -216,10 +258,14 @@ async function answerTelegramChat(
             entry.message_type === 'assistant') &&
           typeof entry.content === 'string'
       )
-      .map((entry) => ({
-        role: String(entry.message_type),
-        content: String(entry.content),
-      }));
+      .map((entry) => {
+        const parts = storedRuntimeParts(entry.parts);
+        return {
+          role: String(entry.message_type),
+          content: String(entry.content),
+          ...(parts && { parts }),
+        };
+      });
     const currentMessage: RuntimeChatMessage = {
       role: 'user',
       content: input.text,
