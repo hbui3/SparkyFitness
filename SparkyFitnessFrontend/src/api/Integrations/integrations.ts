@@ -66,6 +66,18 @@ export const syncHevyData = async (
     body: JSON.stringify({ providerId, startDate, endDate }),
   });
 };
+
+export const syncSpeedianceData = async (
+  fullSync = false,
+  providerId?: string,
+  startDate?: string,
+  endDate?: string
+): Promise<void> => {
+  return apiCall('/integrations/speediance/sync', {
+    method: 'POST',
+    body: JSON.stringify({ fullSync, providerId, startDate, endDate }),
+  });
+};
 export interface GarminLoginPayload {
   email: string;
   password: string;

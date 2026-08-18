@@ -97,6 +97,7 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - Chat (Sparky) issue: `src/pages/Chat/`, `src/components/ai/`, `src/api/Chatbot/`.
 - Theme/preferences issue: `src/contexts/ThemeContext.tsx`, `src/contexts/PreferencesContext.tsx`, `src/services/preferenceService.ts`, `src/utils/userPreferences.ts`.
 - Persistent AI coach inherited goals, dietary constraints, proactive schedules, or Telegram pairing: `src/pages/Settings/CoachProfileSettings.tsx`, `src/hooks/Settings/useCoachProfile.ts`, and `src/api/Settings/coachProfile.ts`. Instance-wide encrypted Telegram bot configuration is in `src/pages/Admin/TelegramCoachSettings.tsx`, `src/hooks/Admin/useTelegramCoachSettings.ts`, and `src/api/Admin/telegramCoachService.ts`.
+- External-provider setup and manual sync (including Speediance region/credentials): `src/pages/Settings/ProviderSpecificFields.tsx`, `EditProviderForm.tsx`, `ProviderCard.tsx`, `src/api/Integrations/integrations.ts`, and `src/hooks/Integrations/useIntegrations.ts`.
 - Missing/wrong UI text: the i18n key in `public/locales/en/translation.json` and the `t('...')` call site.
 - Chart issue: Recharts usage in the domain page plus `src/components/ExerciseCharts/` or `ZoomableChart.tsx`.
 

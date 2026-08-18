@@ -6,6 +6,7 @@ import {
   linkWithingsAccount,
   linkStravaAccount,
   syncHevyData,
+  syncSpeedianceData,
   loginGarmin,
   GarminLoginPayload,
 } from '@/api/Integrations/integrations';
@@ -186,6 +187,32 @@ export const useSyncHevyMutation = () => {
       errorMessage: t(
         'integrations.hevySyncError',
         'Hevy sync failed. Please check your API key in settings.'
+      ),
+    },
+  });
+};
+
+export const useSyncSpeedianceMutation = () => {
+  const { t } = useTranslation();
+  const invalidate = useDiaryInvalidation();
+
+  return useMutation({
+    mutationFn: ({
+      fullSync = false,
+      providerId,
+      startDate,
+      endDate,
+    }: SyncHevyVariables) =>
+      syncSpeedianceData(fullSync, providerId, startDate, endDate),
+    onSuccess: invalidate,
+    meta: {
+      successMessage: t(
+        'integrations.speedianceSyncSuccess',
+        'Speediance workouts synced successfully.'
+      ),
+      errorMessage: t(
+        'integrations.speedianceSyncError',
+        'Speediance sync failed. Check the email, password, and region.'
       ),
     },
   });

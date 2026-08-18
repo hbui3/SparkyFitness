@@ -16,6 +16,7 @@ SparkyFitness supports integration with the following health and fitness data pr
 - Withings
 - Polar Flow (partially tested)
 - Hevy (not tested)
+- Speediance (unofficial API; completed workout import)
 - OpenFoodFacts
 - USDA
 - Fatsecret
@@ -24,6 +25,12 @@ SparkyFitness supports integration with the following health and fitness data pr
 - Tandoor
 - Strava (partially tested)
 
+Speediance accounts are configured with an email, password, and account region
+(EU or Global). Credentials are encrypted in the SparkyFitness database and are
+used only when a manual or scheduled workout import signs in. Program and custom
+workouts include their exercise/set details; Free Lift and Quick sessions are
+imported as session summaries. Because this relies on an unofficial mobile API,
+it may need maintenance when Speediance changes its backend.
 
 ---
 

@@ -53,6 +53,9 @@ export interface ExternalDataProvider {
   polar_token_expires?: string | null;
   hevy_last_sync_at?: string | null;
   hevy_connect_status?: 'connected' | 'disconnected';
+  speediance_last_sync_at?: string | null;
+  speediance_connect_status?: 'connected' | 'disconnected';
+  speediance_region?: 'EU' | 'Global' | null;
   strava_last_sync_at?: string | null;
   strava_token_expires?: string | null;
   googlehealth_last_sync_at?: string | null;

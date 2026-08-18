@@ -4566,6 +4566,8 @@
     "polarSuccess": "Your Polar account has been successfully linked.",
     "stravaError": "Failed to link Strava account. Please try again.",
     "stravaSuccess": "Your Strava account has been successfully linked.",
+    "speedianceSyncError": "Speediance sync failed. Check the email, password, and region.",
+    "speedianceSyncSuccess": "Speediance workouts synced successfully.",
     "withingsError": "Failed to link Withings account. Please try again.",
     "withingsSuccess": "Your Withings account has been successfully linked."
   },

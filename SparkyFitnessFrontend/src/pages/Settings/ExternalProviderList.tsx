@@ -236,7 +236,8 @@ const ExternalProviderList = ({
         editData.provider_type === 'tandoor' ||
         editData.provider_type === 'norish' ||
         editData.provider_type === 'free-exercise-db' ||
-        editData.provider_type === 'openfoodfacts'
+        editData.provider_type === 'openfoodfacts' ||
+        editData.provider_type === 'speediance'
           ? editData.base_url || null
           : null,
       withings_last_sync_at:
@@ -280,6 +281,7 @@ const ExternalProviderList = ({
         editData.provider_type === 'oura' ||
         editData.provider_type === 'googlehealth' ||
         editData.provider_type === 'hevy' ||
+        editData.provider_type === 'speediance' ||
         editData.provider_type === 'strava' ||
         editData.provider_type === 'polar'
           ? editData.sync_frequency

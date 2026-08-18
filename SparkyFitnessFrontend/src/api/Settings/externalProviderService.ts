@@ -61,6 +61,7 @@ export const createExternalProvider = async (
         'free-exercise-db',
         'yazio',
         'norish',
+        'speediance',
       ].includes(payload.provider_type)
         ? payload.base_url || null
         : null,
@@ -72,6 +73,8 @@ export const createExternalProvider = async (
         'googlehealth',
         'strava',
         'polar',
+        'hevy',
+        'speediance',
       ].includes(payload.provider_type)
         ? payload.sync_frequency
         : null,
@@ -468,6 +471,21 @@ export const fetchHevyStatus = async (): Promise<HevyStatusResponse> => {
   return apiCall('/integrations/hevy/status');
 };
 
+export interface SpeedianceStatusResponse {
+  connected: boolean;
+  active: boolean;
+  region: 'EU' | 'Global' | null;
+  lastSyncAt: string | null;
+}
+
+export const fetchSpeedianceStatus = async (
+  providerId: string
+): Promise<SpeedianceStatusResponse> => {
+  return apiCall('/integrations/speediance/status', {
+    params: { providerId },
+  });
+};
+
 export const fetchStravaStatus = async (): Promise<OAuthStatusResponse> => {
   return apiCall('/integrations/strava/status');
 };
@@ -537,6 +555,15 @@ export const getEnrichedProviders = async (): Promise<
             enriched.hevy_last_sync_at = status.lastSyncAt;
             break;
           }
+          case 'speediance': {
+            const status = await fetchSpeedianceStatus(provider.id);
+            enriched.speediance_connect_status = status.connected
+              ? 'connected'
+              : 'disconnected';
+            enriched.speediance_last_sync_at = status.lastSyncAt;
+            enriched.speediance_region = status.region;
+            break;
+          }
           case 'strava': {
             if (provider.has_token) {
               const status = await fetchStravaStatus();
@@ -560,6 +587,9 @@ export const getEnrichedProviders = async (): Promise<
         }
         if (provider.provider_type === 'hevy') {
           enriched.hevy_connect_status = 'disconnected';
+        }
+        if (provider.provider_type === 'speediance') {
+          enriched.speediance_connect_status = 'disconnected';
         }
       }
 

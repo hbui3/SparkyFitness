@@ -89,6 +89,26 @@ describe('validateProvider', () => {
       })
     ).toBeNull();
   });
+
+  it('requires Speediance email and password', () => {
+    const baseInput: Partial<ExternalDataProvider> = {
+      provider_name: 'My Speediance',
+      provider_type: 'speediance',
+    };
+    expect(validateProvider(baseInput)).toBe(
+      'Please provide Speediance email for speediance'
+    );
+    expect(
+      validateProvider({ ...baseInput, app_id: 'local-test@example.com' })
+    ).toBe('Please provide Speediance password for speediance');
+    expect(
+      validateProvider({
+        ...baseInput,
+        app_id: 'local-test@example.com',
+        app_key: 'local-test-password',
+      })
+    ).toBeNull();
+  });
 });
 
 describe('resolveProviderCredentialPayload', () => {
@@ -130,6 +150,7 @@ describe('resolveProviderCredentialPayload', () => {
       'mealie',
       'tandoor',
       'norish',
+      'speediance',
     ])(
       'returns undefined app_key for %s when the secret field is left blank',
       (providerType) => {

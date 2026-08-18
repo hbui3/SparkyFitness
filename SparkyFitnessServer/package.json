@@ -7,6 +7,7 @@
     "set-version": "pnpm -w run set-version",
     "start": "nodemon SparkyFitnessServer.ts",
     "test:migrations": "tsx tests/migrate.script.ts",
+    "test:speediance-live": "tsx tests/speedianceLiveSmoke.script.ts",
     "validate": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

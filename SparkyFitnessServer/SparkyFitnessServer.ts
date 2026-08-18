@@ -58,6 +58,7 @@ import googleHealthRoutes from './routes/googleHealthRoutes.js';
 import polarRoutes from './routes/polarRoutes.js';
 import stravaRoutes from './routes/stravaRoutes.js';
 import hevyRoutes from './routes/hevyRoutes.js';
+import speedianceRoutes from './routes/speedianceRoutes.js';
 import moodRoutes from './routes/moodRoutes.js';
 import fastingRoutes from './routes/fastingRoutes.js';
 import adaptiveTdeeRoutes from './routes/adaptiveTdeeRoutes.js';
@@ -96,6 +97,7 @@ import googleHealthService from './services/googleHealthService.js';
 import polarService from './services/polarService.js';
 import stravaService from './services/stravaService.js';
 import hevyService from './integrations/hevy/hevyService.js';
+import speedianceService from './integrations/speediance/speedianceService.js';
 // @ts-expect-error TS1192
 import dailySummaryRoutes from './routes/dailySummaryRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
@@ -544,6 +546,7 @@ app.use('/api/integrations/googlehealth', googleHealthRoutes);
 app.use('/api/integrations/polar', polarRoutes);
 app.use('/api/integrations/strava', stravaRoutes);
 app.use('/api/integrations/hevy', hevyRoutes);
+app.use('/api/integrations/speediance', speedianceRoutes);
 app.use('/api/mood', moodRoutes);
 app.use('/api/fasting', fastingRoutes);
 app.use('/api/admin/telegram-coach', telegramAdminRoutes);
@@ -843,6 +846,45 @@ const scheduleHevySyncs = async () => {
     }
   });
 };
+const scheduleSpeedianceSyncs = () => {
+  cron.schedule('0 * * * *', async () => {
+    try {
+      const providers =
+        await externalProviderRepository.getProvidersByType('speediance');
+      for (const provider of providers) {
+        if (!provider.is_active || provider.sync_frequency === 'manual')
+          continue;
+        const lastSync = provider.last_sync_at
+          ? new Date(provider.last_sync_at)
+          : null;
+        if (
+          provider.sync_frequency === 'daily' &&
+          lastSync &&
+          Date.now() - lastSync.getTime() < 20 * 60 * 60 * 1000
+        ) {
+          continue;
+        }
+        try {
+          await speedianceService.syncSpeedianceData(
+            provider.user_id,
+            provider.user_id,
+            { providerId: provider.id, fullSync: false }
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          log(
+            'error',
+            `[CRON] Speediance sync failed for user ${provider.user_id}: ${message}`
+          );
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log('error', `[CRON] Speediance scheduler failed: ${message}`);
+    }
+  });
+};
 applyMigrations()
   .then(applyRlsPolicies)
   .then(async () => {
@@ -872,6 +914,7 @@ applyMigrations()
     scheduleStravaSyncs();
     scheduleGoogleHealthSyncs();
     scheduleHevySyncs();
+    scheduleSpeedianceSyncs();
     if (process.env.SPARKY_FITNESS_ADMIN_EMAIL) {
       const adminUser = await userRepository.findUserByEmail(
         process.env.SPARKY_FITNESS_ADMIN_EMAIL
