@@ -3,6 +3,7 @@ import telegramCoachService from '../services/telegramCoachService.js';
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import chatService from '../services/chatService.js';
 import {
+  downloadTelegramImage,
   getTelegramBotUsername,
   sendTelegramMessage,
 } from '../services/telegramApiService.js';
@@ -30,6 +31,7 @@ vi.mock('../services/chatService.js', () => ({
   },
 }));
 vi.mock('../services/telegramApiService.js', () => ({
+  downloadTelegramImage: vi.fn(),
   getTelegramBotUsername: vi.fn(),
   isTelegramConfigured: vi.fn(() => true),
   sendTelegramMessage: vi.fn(),
@@ -43,6 +45,10 @@ describe('telegramCoachService', () => {
     vi.mocked(getTelegramBotUsername).mockResolvedValue('sparky_bot');
     vi.mocked(coachTelegramRepository.storeLinkToken).mockResolvedValue();
     vi.mocked(sendTelegramMessage).mockResolvedValue();
+    vi.mocked(downloadTelegramImage).mockResolvedValue({
+      dataUrl: 'data:image/jpeg;base64,/9j/',
+      mimeType: 'image/jpeg',
+    });
   });
 
   it('creates a short-lived link without storing its plaintext token', async () => {
@@ -174,6 +180,75 @@ describe('telegramCoachService', () => {
         'user-1',
         false,
         ['reports', 'coaching']
+      );
+    });
+  });
+
+  it('downloads a Telegram photo with its caption and enables food vision tools', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([
+      {
+        message_type: 'user',
+        content: 'Zeige meine Trends',
+        metadata: {
+          chatToolConfiguration: {
+            version: 1,
+            serviceConfigId: 'ai-1',
+            toolCategories: ['reports'],
+          },
+        },
+      },
+      { message_type: 'assistant', content: 'Hier sind deine Trends.' },
+    ] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(chatService.processChatMessage).mockResolvedValue({
+      content: 'Ich habe zwei Stück eingetragen.',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 13,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        caption: 'Dazu noch 2 Stück davon',
+        photo: [
+          { file_id: 'small', width: 100, height: 100, file_size: 1_000 },
+          { file_id: 'large', width: 1_000, height: 1_000, file_size: 5_000 },
+        ],
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(downloadTelegramImage).toHaveBeenCalledWith('large');
+      expect(chatService.processChatMessage).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: 'Dazu noch 2 Stück davon',
+            parts: [
+              { type: 'text', text: 'Dazu noch 2 Stück davon' },
+              {
+                type: 'image',
+                image: 'data:image/jpeg;base64,/9j/',
+              },
+            ],
+          }),
+        ]),
+        'ai-1',
+        'user-1',
+        'user-1',
+        false,
+        ['food', 'reports', 'vision']
+      );
+      expect(sendTelegramMessage).toHaveBeenCalledWith(
+        '12345',
+        'Ich habe zwei Stück eingetragen.'
       );
     });
   });

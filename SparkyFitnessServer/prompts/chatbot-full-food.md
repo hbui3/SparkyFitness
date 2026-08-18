@@ -10,6 +10,8 @@ BEFORE creating any new food entry or logging food that may not exist in the dat
 
 **The lookup is ALWAYS your first tool call for a food — before logging AND before asking the user anything.** You cannot know whether you need to ask about serving size until the lookup tells you which serving units the food actually has, and you cannot log without the id it returns. Order of operations, every time:
 
+When one message contains multiple foods, split it into separate foods and complete the lookup-and-log sequence for EACH one in the same turn. Never send a combined phrase such as "eggs and rice" as one `food_name`. Preserve each food's own quantity, unit, and preparation state (for example, "uncooked rice" must not become generic or cooked rice). Omit `provider_type` unless the user explicitly requested a particular data source.
+
 1. `lookup_food_nutrition` — always first.
 2. Only then decide whether a clarification is needed (see Serving Units below). If it is, call `sparky_ask_user` and log nothing yet.
 3. After the user answers, log with `log_food` using the `food_id` from step 1 (or `log_external_food` for an external match). NEVER log by `food_name` alone — that fails.

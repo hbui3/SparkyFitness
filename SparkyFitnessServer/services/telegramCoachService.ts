@@ -1,14 +1,17 @@
 import { createHash, randomBytes } from 'crypto';
-import type {
-  CoachTelegramConnectionStatus,
-  CoachTelegramDisconnectResponse,
-  CoachTelegramLinkResponse,
+import {
+  CHAT_TOOL_CATEGORY_SLUGS,
+  type ChatToolCategorySlug,
+  type CoachTelegramConnectionStatus,
+  type CoachTelegramDisconnectResponse,
+  type CoachTelegramLinkResponse,
 } from '@workspace/shared';
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import userRepository from '../models/userRepository.js';
 import chatService from './chatService.js';
 import { resolveChatToolCategoriesFromHistory } from './chatToolConfigurationService.js';
 import {
+  downloadTelegramImage,
   getTelegramBotUsername,
   isTelegramConfigured,
   sendTelegramMessage,
@@ -29,10 +32,19 @@ interface TelegramChat {
   type?: string;
 }
 
+interface TelegramPhotoSize {
+  file_id: string;
+  file_size?: number;
+  width?: number;
+  height?: number;
+}
+
 interface TelegramMessage {
   chat: TelegramChat;
   from?: TelegramUser;
   text?: string;
+  caption?: string;
+  photo?: TelegramPhotoSize[];
 }
 
 export interface TelegramUpdate {
@@ -44,6 +56,23 @@ interface StoredChatMessage {
   message_type?: unknown;
   content?: unknown;
   metadata?: unknown;
+}
+
+interface RuntimeChatMessagePart {
+  type: 'text' | 'image';
+  text?: string;
+  image?: string;
+}
+
+interface RuntimeChatMessage {
+  role: string;
+  content: string;
+  parts?: RuntimeChatMessagePart[];
+}
+
+interface TelegramChatInput {
+  text: string;
+  imageFileId?: string;
 }
 
 const userQueues = new Map<string, Promise<void>>();
@@ -131,7 +160,7 @@ function enqueueForUser(userId: string, task: () => Promise<void>): void {
 async function answerTelegramChat(
   userId: string,
   telegramChatId: string,
-  text: string
+  input: TelegramChatInput
 ): Promise<void> {
   await sendTelegramTyping(telegramChatId).catch(() => undefined);
   try {
@@ -148,13 +177,38 @@ async function answerTelegramChat(
       return;
     }
     const storedHistory = history as StoredChatMessage[];
-    const toolCategories = resolveChatToolCategoriesFromHistory(
+    let toolCategories = resolveChatToolCategoriesFromHistory(
       storedHistory,
       String(activeSetting.id),
       String(activeSetting.service_type ?? ''),
       activeSetting.chat_tool_profile
     );
-    const messages = storedHistory
+    let imageDataUrl: string | undefined;
+    if (input.imageFileId) {
+      try {
+        imageDataUrl = (await downloadTelegramImage(input.imageFileId)).dataUrl;
+      } catch (error) {
+        log(
+          'error',
+          `Telegram image download failed for user ${userId}:`,
+          error
+        );
+        await sendTelegramMessage(
+          telegramChatId,
+          'Ich konnte das Foto nicht laden. Bitte sende es noch einmal als normales Bild und nicht als Datei.'
+        );
+        return;
+      }
+      const required = new Set<ChatToolCategorySlug>([
+        ...toolCategories,
+        'food',
+        'vision',
+      ]);
+      toolCategories = CHAT_TOOL_CATEGORY_SLUGS.filter((slug) =>
+        required.has(slug)
+      );
+    }
+    const messages: RuntimeChatMessage[] = storedHistory
       .slice(-MAX_TELEGRAM_HISTORY_MESSAGES)
       .filter(
         (entry) =>
@@ -166,7 +220,17 @@ async function answerTelegramChat(
         role: String(entry.message_type),
         content: String(entry.content),
       }));
-    messages.push({ role: 'user', content: text });
+    const currentMessage: RuntimeChatMessage = {
+      role: 'user',
+      content: input.text,
+    };
+    if (imageDataUrl) {
+      currentMessage.parts = [
+        { type: 'text', text: input.text },
+        { type: 'image', image: imageDataUrl },
+      ];
+    }
+    messages.push(currentMessage);
     const result = await chatService.processChatMessage(
       messages,
       String(activeSetting.id),
@@ -183,6 +247,20 @@ async function answerTelegramChat(
       'Der Coach konnte diese Nachricht gerade nicht verarbeiten. Bitte versuche es später noch einmal.'
     );
   }
+}
+
+function selectLargestPhoto(
+  photos: readonly TelegramPhotoSize[] | undefined
+): TelegramPhotoSize | undefined {
+  return photos
+    ?.filter((photo) => Boolean(photo.file_id))
+    .reduce<TelegramPhotoSize | undefined>((largest, photo) => {
+      if (!largest) return photo;
+      const score = photo.file_size ?? (photo.width ?? 0) * (photo.height ?? 0);
+      const largestScore =
+        largest.file_size ?? (largest.width ?? 0) * (largest.height ?? 0);
+      return score >= largestScore ? photo : largest;
+    }, undefined);
 }
 
 async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
@@ -204,15 +282,17 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
     return;
   }
   const text = message.text?.trim();
-  if (!text) {
+  const caption = message.caption?.trim();
+  const photo = selectLargestPhoto(message.photo);
+  if (!text && !photo) {
     await sendTelegramMessage(
       telegramChatId,
-      'Ich kann momentan Textnachrichten verarbeiten. Fotos und Sprachnachrichten folgen später.'
+      'Ich kann Textnachrichten und Fotos verarbeiten. Sprachnachrichten folgen später.'
     );
     return;
   }
 
-  const startMatch = text.match(/^\/start(?:@\w+)?(?:\s+([A-Za-z0-9_-]+))?$/i);
+  const startMatch = text?.match(/^\/start(?:@\w+)?(?:\s+([A-Za-z0-9_-]+))?$/i);
   if (startMatch) {
     const token = startMatch[1];
     if (!token) {
@@ -252,7 +332,7 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
   if (!connection.claimed) return;
   const { userId } = connection;
 
-  if (/^\/(stop|disconnect)(?:@\w+)?$/i.test(text)) {
+  if (text && /^\/(stop|disconnect)(?:@\w+)?$/i.test(text)) {
     await coachTelegramRepository.disconnectChat(telegramChatId);
     await sendTelegramMessage(
       telegramChatId,
@@ -262,7 +342,13 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
   }
 
   enqueueForUser(userId, () =>
-    answerTelegramChat(userId, telegramChatId, text)
+    answerTelegramChat(userId, telegramChatId, {
+      text:
+        text ||
+        caption ||
+        'Analysiere dieses Foto und füge das erkennbare Lebensmittel oder Gericht meinem heutigen Ernährungstagebuch hinzu.',
+      imageFileId: photo?.file_id,
+    })
   );
 }
 
