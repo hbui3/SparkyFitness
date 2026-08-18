@@ -7,6 +7,7 @@ import type {
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import userRepository from '../models/userRepository.js';
 import chatService from './chatService.js';
+import { resolveChatToolCategoriesFromHistory } from './chatToolConfigurationService.js';
 import {
   getTelegramBotUsername,
   isTelegramConfigured,
@@ -16,7 +17,7 @@ import {
 import { log } from '../config/logging.js';
 
 const LINK_LIFETIME_MS = 15 * 60_000;
-const MAX_TELEGRAM_HISTORY_MESSAGES = 30;
+const MAX_TELEGRAM_HISTORY_MESSAGES = 50;
 
 interface TelegramUser {
   id?: number;
@@ -42,6 +43,7 @@ export interface TelegramUpdate {
 interface StoredChatMessage {
   message_type?: unknown;
   content?: unknown;
+  metadata?: unknown;
 }
 
 const userQueues = new Map<string, Promise<void>>();
@@ -145,7 +147,14 @@ async function answerTelegramChat(
       );
       return;
     }
-    const messages = (history as StoredChatMessage[])
+    const storedHistory = history as StoredChatMessage[];
+    const toolCategories = resolveChatToolCategoriesFromHistory(
+      storedHistory,
+      String(activeSetting.id),
+      String(activeSetting.service_type ?? ''),
+      activeSetting.chat_tool_profile
+    );
+    const messages = storedHistory
       .slice(-MAX_TELEGRAM_HISTORY_MESSAGES)
       .filter(
         (entry) =>
@@ -163,7 +172,8 @@ async function answerTelegramChat(
       String(activeSetting.id),
       userId,
       userId,
-      user?.role === 'admin'
+      user?.role === 'admin',
+      toolCategories
     );
     await sendTelegramMessage(telegramChatId, result.content);
   } catch (error) {

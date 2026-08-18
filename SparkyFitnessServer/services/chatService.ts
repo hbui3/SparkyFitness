@@ -13,6 +13,10 @@ import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import { TtlCache } from '../utils/ttlCache.js';
 import coachProfileService from './coachProfileService.js';
 import {
+  buildChatToolConfigurationMetadata,
+  resolveEffectiveChatToolProfile,
+} from './chatToolConfigurationService.js';
+import {
   assertOutboundUrlShapeAndLiteralAllowed,
   createGuardedFetch,
   deriveAiNetworkPolicy,
@@ -525,10 +529,10 @@ async function prepareChatContext(
   // trim it. The default stays 'full' everywhere: openai_compatible/custom can
   // point at powerful endpoints, and silently dropping 15 tools would degrade
   // answer quality for those users.
-  const toolProfile: ChatToolProfile =
-    requiresUserSuppliedAiUrl(serviceType) && chatToolProfile === 'core'
-      ? 'core'
-      : 'full';
+  const toolProfile = resolveEffectiveChatToolProfile(
+    serviceType,
+    chatToolProfile
+  );
 
   const selectedCategories = resolveCategories(toolProfile, toolCategories);
 
@@ -1409,6 +1413,11 @@ async function processChatMessage(
       categoriesAreManual,
       aiService.system_prompt
     );
+    const chatToolMetadata = buildChatToolConfigurationMetadata(
+      serviceConfigId,
+      toolProfile,
+      toolCategories
+    );
 
     const chatProviderOptions = buildChatProviderOptions(
       aiService.service_type,
@@ -1500,6 +1509,7 @@ async function processChatMessage(
         user_id: userId,
         content: userMessageContent,
         messageType: 'user',
+        metadata: chatToolMetadata,
         parts: userMessageParts,
       })
       .catch((err: unknown) =>
@@ -1942,6 +1952,11 @@ async function processChatMessageStream(
       categoriesAreManual,
       aiService.system_prompt
     );
+    const chatToolMetadata = buildChatToolConfigurationMetadata(
+      serviceConfigId,
+      toolProfile,
+      toolCategories
+    );
 
     const chatProviderOptions = buildChatProviderOptions(
       aiService.service_type,
@@ -2033,6 +2048,7 @@ async function processChatMessageStream(
             user_id: userId,
             content: userMessageContent,
             messageType: 'user',
+            metadata: chatToolMetadata,
             parts: userMessageParts,
           })
           .catch((err: unknown) =>
