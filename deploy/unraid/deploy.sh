@@ -60,7 +60,7 @@ compose() {
 
 show_failure_context() {
   compose ps >&2 || true
-  compose logs --tail 120 sparkyfitness-server sparkyfitness-frontend >&2 || true
+  compose logs --tail 120 sparkyfitness-db sparkyfitness-server sparkyfitness-frontend >&2 || true
 }
 
 rollback_application() {
@@ -104,8 +104,14 @@ flock -n 9 || fail "another SparkyFitness deployment is already running"
 APPDATA_ROOT="$(read_env_value UNRAID_APPDATA_ROOT)"
 [[ "${APPDATA_ROOT}" == /mnt/user/appdata/* ]] || fail "UNRAID_APPDATA_ROOT must be below /mnt/user/appdata"
 
+POSTGRESQL_ROOT="${APPDATA_ROOT}/postgresql"
 BACKUP_DIR="${APPDATA_ROOT}/predeploy-backups"
-mkdir -p "${BACKUP_DIR}"
+mkdir -p "${POSTGRESQL_ROOT}" "${BACKUP_DIR}"
+
+# Keep the bind-mount root compatible with the official PostgreSQL 18 image,
+# which initializes its versioned PGDATA as the unprivileged postgres user.
+chmod 1777 "${POSTGRESQL_ROOT}"
+
 umask 077
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
