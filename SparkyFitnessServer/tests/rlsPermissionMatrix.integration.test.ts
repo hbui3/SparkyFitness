@@ -165,6 +165,9 @@ describe.runIf(RUN)('RLS permission matrix', () => {
   const DOMAIN: Record<string, Domain> = {
     // owner-only (no delegation)
     api_key: 'owner',
+    coach_action_receipts: 'owner',
+    coach_delivery_outbox: 'owner',
+    coach_memories: 'owner',
     coach_profiles: 'owner',
     coach_telegram_connections: 'owner',
     sparky_chat_history: 'owner',
@@ -262,6 +265,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     passkey_registration_tickets: 'custom',
     // system-only secret: RLS with no policies is intentional default-deny.
     telegram_coach_settings: 'system',
+    telegram_update_inbox: 'system',
   };
 
   // Expected helper substrings for the generic-policy domains.
