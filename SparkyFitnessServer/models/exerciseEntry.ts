@@ -1289,6 +1289,8 @@ async function getExerciseProgressData(
          ee.exercise_preset_entry_id,
          epe.name AS exercise_preset_entry_name,
          e.category,
+         activity_window.activity_started_at,
+         activity_window.activity_ended_at,
          (
            ee.avg_heart_rate IS NOT NULL
            OR ee.max_heart_rate IS NOT NULL
@@ -1316,6 +1318,37 @@ async function getExerciseProgressData(
        FROM exercise_entries ee
        LEFT JOIN exercise_preset_entries epe ON epe.id = ee.exercise_preset_entry_id
        LEFT JOIN exercises e ON e.id = ee.exercise_id
+       LEFT JOIN LATERAL (
+         SELECT
+           CASE
+             WHEN ee.source = 'Speediance'
+              AND (detail.detail_data #>> '{training,startTimestamp}') ~ '^[0-9]+([.][0-9]+)?$'
+             THEN to_char(
+               to_timestamp((detail.detail_data #>> '{training,startTimestamp}')::double precision)
+                 AT TIME ZONE 'UTC',
+               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+             )
+             WHEN detail.detail_data ? 'startTime'
+             THEN detail.detail_data ->> 'startTime'
+             ELSE NULL
+           END AS activity_started_at,
+           CASE
+             WHEN ee.source = 'Speediance'
+              AND (detail.detail_data #>> '{training,endTimestamp}') ~ '^[0-9]+([.][0-9]+)?$'
+             THEN to_char(
+               to_timestamp((detail.detail_data #>> '{training,endTimestamp}')::double precision)
+                 AT TIME ZONE 'UTC',
+               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+             )
+             WHEN detail.detail_data ? 'endTime'
+             THEN detail.detail_data ->> 'endTime'
+             ELSE NULL
+           END AS activity_ended_at
+         FROM exercise_entry_activity_details detail
+         WHERE detail.exercise_entry_id = ee.id
+         ORDER BY detail.created_at DESC
+         LIMIT 1
+       ) activity_window ON TRUE
        WHERE ee.user_id = $1
          AND ee.exercise_id = $2
          AND ee.entry_date BETWEEN $3 AND $4

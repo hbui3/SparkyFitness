@@ -29,8 +29,15 @@ export interface SpeedianceExerciseDetail {
   isLeftRight: boolean;
   totalCapacity: number;
   maxWeight: number | null;
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
   finishedReps: SpeedianceFinishedSet[];
   raw: Record<string, unknown>;
+}
+
+export interface SpeedianceExerciseMetadata {
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
 }
 
 export interface SparkySpeedianceSet {
@@ -69,6 +76,59 @@ function numberArray(value: unknown): number[] {
 function unixSeconds(value: unknown): number {
   const numeric = numberValue(value);
   return numeric > 10_000_000_000 ? Math.round(numeric / 1000) : numeric;
+}
+
+const SPEEDIANCE_MUSCLE_NAMES: Record<string, string> = {
+  abs: 'abdominals',
+  'back extensors': 'lower back',
+  pecs: 'chest',
+  quads: 'quadriceps',
+  'front delts': 'shoulders',
+  'rear delts': 'shoulders',
+  'side delts': 'shoulders',
+};
+
+function canonicalMuscleName(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const normalized = value.trim().toLowerCase();
+  return SPEEDIANCE_MUSCLE_NAMES[normalized] ?? normalized;
+}
+
+function muscleNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value.flatMap((item) => {
+        if (!isRecord(item)) return [];
+        const name = canonicalMuscleName(item.muscleGroupName);
+        return name ? [name] : [];
+      })
+    )
+  );
+}
+
+/**
+ * Converts the action-library metadata used by the Speediance app into the
+ * canonical muscle vocabulary already used by SparkyFitness' body map.
+ */
+export function parseSpeedianceExerciseMetadata(
+  payload: unknown
+): SpeedianceExerciseMetadata {
+  if (!isRecord(payload)) {
+    return { primaryMuscles: [], secondaryMuscles: [] };
+  }
+
+  const primaryMuscles = muscleNames(payload.mainMuscleGroupList);
+  if (primaryMuscles.length === 0) {
+    const primary = canonicalMuscleName(payload.mainMuscleGroupName);
+    if (primary) primaryMuscles.push(primary);
+  }
+  const primarySet = new Set(primaryMuscles);
+  const secondaryMuscles = muscleNames(payload.auxiliaryMuscleGroupList).filter(
+    (muscle) => !primarySet.has(muscle)
+  );
+
+  return { primaryMuscles, secondaryMuscles };
 }
 
 export function parseSpeedianceTrainingRecords(
@@ -213,6 +273,8 @@ function parseFreeTrainingActions(
           )
         ),
         maxWeight,
+        primaryMuscles: [],
+        secondaryMuscles: [],
         finishedReps,
         raw: item,
       },
@@ -275,6 +337,8 @@ export function parseSpeedianceTrainingDetail(
         isLeftRight: numberValue(item.isLeftRight) === 1,
         totalCapacity: Math.max(0, numberValue(item.totalCapacity)),
         maxWeight: nullableNumber(item.maxWeight),
+        primaryMuscles: [],
+        secondaryMuscles: [],
         finishedReps,
         raw: item,
       },

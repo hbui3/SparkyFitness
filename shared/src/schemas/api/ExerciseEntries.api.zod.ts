@@ -362,6 +362,8 @@ export const exerciseProgressResponseSchema = z.object({
   exercise_preset_entry_id: z.string().nullable().optional(),
   exercise_preset_entry_name: z.string().nullable().optional(),
   has_telemetry: z.boolean().nullable().optional(),
+  activity_started_at: z.string().nullable().optional(),
+  activity_ended_at: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   sets: z.array(exerciseEntrySetRequestSchema),
 });

@@ -18,9 +18,11 @@ import {
   updateSpeedianceLastSync,
 } from './speedianceRepository.js';
 import {
+  parseSpeedianceExerciseMetadata,
   parseSpeedianceTrainingDetail,
   parseSpeedianceTrainingRecords,
   type SpeedianceExerciseDetail,
+  type SpeedianceExerciseMetadata,
 } from './speedianceMapper.js';
 import {
   processSpeedianceWorkouts,
@@ -89,6 +91,32 @@ export async function syncSpeedianceData(
   const rawRecords = await api.getTrainingRecords(startDate, endDate);
   const records = parseSpeedianceTrainingRecords(rawRecords);
   const bundles: SpeedianceWorkoutBundle[] = [];
+  const metadataByActionGroup = new Map<
+    string,
+    Promise<SpeedianceExerciseMetadata | null>
+  >();
+
+  const loadExerciseMetadata = (
+    actionLibraryGroupId: string
+  ): Promise<SpeedianceExerciseMetadata | null> => {
+    const existing = metadataByActionGroup.get(actionLibraryGroupId);
+    if (existing) return existing;
+
+    const request = api
+      .getActionLibraryGroup(actionLibraryGroupId)
+      .then(parseSpeedianceExerciseMetadata)
+      .catch((error: unknown) => {
+        if (error instanceof SpeedianceAuthenticationError) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        log(
+          'warn',
+          `[speedianceService] Muscle metadata for action group ${actionLibraryGroupId} was unavailable: ${message}`
+        );
+        return null;
+      });
+    metadataByActionGroup.set(actionLibraryGroupId, request);
+    return request;
+  };
 
   for (const record of records) {
     let exercises: SpeedianceExerciseDetail[] = [];
@@ -121,6 +149,15 @@ export async function syncSpeedianceData(
             ? rawInfo
             : await api.getTrainingDetail(record.trainingId, record.type);
         exercises = parseSpeedianceTrainingDetail(rawDetail);
+        exercises = await Promise.all(
+          exercises.map(async (exercise) => {
+            if (!exercise.actionLibraryGroupId) return exercise;
+            const metadata = await loadExerciseMetadata(
+              exercise.actionLibraryGroupId
+            );
+            return metadata ? { ...exercise, ...metadata } : exercise;
+          })
+        );
       } catch (error) {
         if (error instanceof SpeedianceAuthenticationError) throw error;
         const message = error instanceof Error ? error.message : String(error);

@@ -401,6 +401,44 @@ if (type9Sample) {
   focusedResults.type9AiCourseDetailKeyPaths = Array.from(
     collectKeyPaths(data, '$', 0, new Set<string>(), 10)
   ).sort();
+  const firstExercise = Array.isArray(data) ? data.find(isRecord) : null;
+  const actionLibraryGroupId = isRecord(firstExercise)
+    ? stringIdentifier(firstExercise.actionLibraryGroupId)
+    : null;
+  focusedResults.type9ExerciseIdentity = isRecord(firstExercise)
+    ? {
+        actionLibraryGroupId: firstExercise.actionLibraryGroupId,
+        actionLibraryName: firstExercise.actionLibraryName,
+        trainingPartId2: firstExercise.trainingPartId2,
+        categoryId: firstExercise.categoryId,
+      }
+    : null;
+  if (actionLibraryGroupId) {
+    const actionGroupData = await fetchData(
+      `/api/app/actionLibraryGroup/${encodeURIComponent(actionLibraryGroupId)}?isDisplay=1`
+    );
+    focusedResults.type9ActionLibraryGroupKeyPaths = Array.from(
+      collectKeyPaths(actionGroupData, '$', 0, new Set<string>(), 10)
+    ).sort();
+    focusedResults.type9ActionLibraryGroup = isRecord(actionGroupData)
+      ? {
+          title: actionGroupData.title,
+          trainingPartId2: actionGroupData.trainingPartId2,
+          mainMuscles: Array.isArray(actionGroupData.mainMuscleGroupList)
+            ? actionGroupData.mainMuscleGroupList.map((muscle) =>
+                isRecord(muscle) ? muscle.muscleGroupName : null
+              )
+            : [],
+          auxiliaryMuscles: Array.isArray(
+            actionGroupData.auxiliaryMuscleGroupList
+          )
+            ? actionGroupData.auxiliaryMuscleGroupList.map((muscle) =>
+                isRecord(muscle) ? muscle.muscleGroupName : null
+              )
+            : [],
+        }
+      : null;
+  }
 }
 
 const muscleDetailData = await fetchData(
