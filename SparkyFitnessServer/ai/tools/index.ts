@@ -16,7 +16,7 @@ import { buildFoodTools } from './foodTools.js';
 import { buildGoalTools } from './goalTools.js';
 import { buildHabitTools } from './habitTools.js';
 import { buildMedicationTools } from './medicationTools.js';
-import { buildMemoryTools } from './memoryTools.js';
+import { buildMemoryTools, COACH_MEMORY_TOOL_NAME } from './memoryTools.js';
 import { buildMealSafetyTools } from './mealSafetyTools.js';
 import { ENABLE_TOOLS_TOOL_NAME, buildMetaTools } from './metaTools.js';
 import { buildProfileTools } from './profileTools.js';
@@ -55,7 +55,6 @@ const CATEGORY_BUILDERS: Record<
     (u, tz) => buildCoachTools(u, tz),
     (u, tz) => buildEngagementTools(u, tz),
     (u) => buildWizardTools(u),
-    (u) => buildMemoryTools(u),
   ],
   vision: [(u) => buildVisionTools(u)],
   profile: [(u) => buildProfileTools(u), (u, tz) => buildHabitTools(u, tz)],
@@ -113,6 +112,10 @@ function composeTools(
       Object.assign(tools, build(userId, tz));
     }
   }
+  // Long-term memory is a cross-cutting chat capability, not a health-data
+  // domain. Keep it available even when automatic or manual category
+  // selection narrows the rest of the tool surface.
+  Object.assign(tools, buildMemoryTools(userId));
   return tools;
 }
 
@@ -137,6 +140,9 @@ function composeAllToolsWithIndex(
     }
     toolNamesByCategory[slug] = names;
   }
+  // Deliberately keep memory out of the category index. chatService activates
+  // it explicitly so food/exercise/profile classification cannot hide it.
+  Object.assign(tools, buildMemoryTools(userId));
   return { tools, toolNamesByCategory };
 }
 
@@ -333,4 +339,4 @@ export function buildChatToolSurface(
   return surface;
 }
 
-export { ENABLE_TOOLS_TOOL_NAME, ASK_USER_TOOL_NAME };
+export { ENABLE_TOOLS_TOOL_NAME, ASK_USER_TOOL_NAME, COACH_MEMORY_TOOL_NAME };

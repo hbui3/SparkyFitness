@@ -173,6 +173,18 @@ function CoachProfileForm({
         />
       </div>
 
+      <CoachLongTermMemorySection
+        memoryEnabled={form.memoryEnabled}
+        autoMemoryEnabled={form.autoMemoryEnabled}
+        onMemoryEnabledChange={(memoryEnabled) =>
+          setForm({ ...form, memoryEnabled })
+        }
+        onAutoMemoryEnabledChange={(autoMemoryEnabled) =>
+          setForm({ ...form, autoMemoryEnabled })
+        }
+        isSaving={updateProfile.isPending}
+      />
+
       <div className="grid gap-5 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="dietary-pattern">
@@ -574,51 +586,6 @@ function CoachProfileForm({
         </div>
       </div>
 
-      <div className="space-y-4 rounded-lg border p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="font-medium">
-              {t('settings.coachProfile.memoryTitle', 'Long-term coach memory')}
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              {t(
-                'settings.coachProfile.memoryDescription',
-                'Private, individually visible memories for preferences, routines, constraints, and goals.'
-              )}
-            </p>
-          </div>
-          <Switch
-            id="memory-enabled"
-            checked={form.memoryEnabled}
-            onCheckedChange={(memoryEnabled) =>
-              setForm({ ...form, memoryEnabled })
-            }
-          />
-        </div>
-        <div className="flex items-start justify-between gap-4 rounded-md bg-muted/30 p-3">
-          <div>
-            <Label htmlFor="auto-memory-enabled">
-              {t('settings.coachProfile.autoMemory', 'Remember automatically')}
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              {t(
-                'settings.coachProfile.autoMemoryDescription',
-                'When disabled, the coach asks for confirmation before creating a new memory.'
-              )}
-            </p>
-          </div>
-          <Switch
-            id="auto-memory-enabled"
-            checked={form.autoMemoryEnabled}
-            disabled={!form.memoryEnabled}
-            onCheckedChange={(autoMemoryEnabled) =>
-              setForm({ ...form, autoMemoryEnabled })
-            }
-          />
-        </div>
-        <CoachMemorySettings enabled={form.memoryEnabled} />
-      </div>
-
       <CoachTelegramSettings />
 
       <div className="flex items-center justify-between gap-4">
@@ -635,6 +602,80 @@ function CoachProfileForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function CoachLongTermMemorySection({
+  memoryEnabled,
+  autoMemoryEnabled,
+  onMemoryEnabledChange,
+  onAutoMemoryEnabledChange,
+  isSaving,
+}: {
+  memoryEnabled: boolean;
+  autoMemoryEnabled: boolean;
+  onMemoryEnabledChange: (enabled: boolean) => void;
+  onAutoMemoryEnabledChange: (enabled: boolean) => void;
+  isSaving: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-4 rounded-lg border p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="font-medium">
+            {t('settings.coachProfile.memoryTitle', 'Long-term coach memory')}
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'settings.coachProfile.memoryDescription',
+              'Active memories are private and automatically included in every Web and Telegram coach conversation.'
+            )}
+          </p>
+        </div>
+        <Switch
+          id="memory-enabled"
+          checked={memoryEnabled}
+          onCheckedChange={onMemoryEnabledChange}
+        />
+      </div>
+      <div className="flex items-start justify-between gap-4 rounded-md bg-muted/30 p-3">
+        <div>
+          <Label htmlFor="auto-memory-enabled">
+            {t(
+              'settings.coachProfile.autoMemory',
+              'Automatically learn stable facts'
+            )}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'settings.coachProfile.autoMemoryDescription',
+              'When enabled, the coach remembers future-relevant preferences, routines, constraints, goals, and achievements. Daily totals, secrets, and speculative diagnoses are never saved.'
+            )}
+          </p>
+        </div>
+        <Switch
+          id="auto-memory-enabled"
+          checked={autoMemoryEnabled}
+          disabled={!memoryEnabled}
+          onCheckedChange={onAutoMemoryEnabledChange}
+        />
+      </div>
+      <CoachMemorySettings enabled={memoryEnabled} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'settings.coachProfile.memorySaveNotice',
+            'Changes to the two switches take effect after saving.'
+          )}
+        </p>
+        <Button type="submit" size="sm" disabled={isSaving}>
+          {isSaving
+            ? t('settings.coachProfile.saving', 'Saving…')
+            : t('settings.coachProfile.memorySave', 'Save memory settings')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -666,6 +707,18 @@ function CoachMemorySettings({ enabled }: { enabled: boolean }) {
   }
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span className="font-medium">
+          {t('settings.coachProfile.memorySaved', 'Saved memories')}:{' '}
+          {memories.length}
+        </span>
+        <span className="text-muted-foreground">
+          {t(
+            'settings.coachProfile.memoryHowTo',
+            'You can also tell the coach: “Remember that …”'
+          )}
+        </span>
+      </div>
       <div className="grid gap-2 sm:grid-cols-[180px_1fr_auto]">
         <Select
           value={category}

@@ -601,6 +601,7 @@ describe('chatService', () => {
       expect(toolNames).not.toContain('sparky_manage_food');
       expect(toolNames).not.toContain('sparky_manage_goals');
       expect(toolNames).not.toContain('sparky_get_report');
+      expect(toolNames).toContain('sparky_manage_coach_memory');
       expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
         expect.objectContaining({
           messageType: 'user',
@@ -757,7 +758,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 22\/40 active tools for chatbot \(profile=core/
+          /Loaded 23\/40 active tools for chatbot \(profile=core/
         )
       );
       // The core profile is the mitigation, so no context-window warning.
@@ -830,8 +831,7 @@ describe('chatService', () => {
 
     it('never trims a non-Ollama service even with a stale core profile stored', async () => {
       // The profile gate keys on service_type, so a service that was Ollama+core
-      // and later switched to OpenAI still loads the full 39-tool surface
-      // (37 domain tools + sparky_enable_tools + sparky_ask_user).
+      // and later switched to OpenAI still loads the full surface.
       vi.mocked(chatRepository.getAiServiceSettingForBackend).mockResolvedValue(
         {
           ...aiServiceSetting,
@@ -968,6 +968,8 @@ describe('chatService', () => {
       // ...but quick replies survive: they belong to no category, so a manual
       // selection must not strip the model's ability to offer chips.
       expect(sentTools).toContain(ASK_USER_TOOL_NAME);
+      // Long-term memory is also cross-cutting and survives domain narrowing.
+      expect(sentTools).toContain('sparky_manage_coach_memory');
     });
 
     // Quick replies are full-profile only: the small local models the 'core'
@@ -991,6 +993,7 @@ describe('chatService', () => {
       );
 
       expect(modelToolNames(model)).not.toContain(ASK_USER_TOOL_NAME);
+      expect(modelToolNames(model)).toContain('sparky_manage_coach_memory');
     });
 
     // Tool parts are stripped from the LLM window, so an assistant turn that

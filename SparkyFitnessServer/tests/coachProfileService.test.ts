@@ -41,6 +41,8 @@ const storedProfile = {
   coaching_notes: 'Keep weekday recipes short.',
   adaptive_check_ins_enabled: true,
   adaptive_last_sent_slot: null,
+  memory_enabled: true,
+  auto_memory_enabled: false,
   daily_check_in_enabled: true,
   daily_check_in_time: '20:00:00',
   weekly_review_enabled: true,
@@ -165,8 +167,42 @@ describe('coachProfileService', () => {
     expect(context).toContain('Today so far: 1800 kcal consumed');
     expect(context).toContain('Last 30 days: weight development +0.8 kg');
     expect(context).toContain('Hard ingredient exclusions: tofu');
+    expect(context).toContain(
+      'Long-term coach memory: enabled; automatic capture: disabled.'
+    );
+    expect(context).toContain('Automatic long-term memory is disabled.');
     expect(context).toContain('Tracked allergens');
     expect(context).toContain('sparky_validate_meal_suggestion');
+  });
+
+  it('injects active memories and automatic capture rules into every chat turn', async () => {
+    vi.mocked(coachProfileRepository.getCoachProfile).mockResolvedValue({
+      ...storedProfile,
+      auto_memory_enabled: true,
+    } as never);
+    vi.mocked(coachMemoryService.listActiveMemories).mockResolvedValue([
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        category: 'routine',
+        content: 'Strength training is Tuesday and Thursday evening.',
+        source: 'coach',
+        active: true,
+        pinned: true,
+        createdAt: '2026-08-18T10:00:00.000Z',
+        updatedAt: '2026-08-18T10:00:00.000Z',
+      },
+    ]);
+
+    const context =
+      await coachProfileService.getPersistentChatContext('user-1');
+
+    expect(context).toContain('automatic capture: enabled');
+    expect(context).toContain(
+      '- [routine] Strength training is Tuesday and Thursday evening. (pinned)'
+    );
+    expect(context).toContain(
+      'During this turn, call sparky_manage_coach_memory'
+    );
   });
 
   it('skips nutrition and trend queries when the coach profile is disabled', async () => {

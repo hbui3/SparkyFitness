@@ -153,4 +153,30 @@ describe('CoachProfileSettings', () => {
       expect.objectContaining({ onSuccess: expect.any(Function) })
     );
   });
+
+  it('makes long-term memory status and automatic learning visible', () => {
+    render(<CoachProfileSettings />);
+
+    expect(screen.getByText('Long-term coach memory')).toBeInTheDocument();
+    expect(screen.getByText('Saved memories: 0')).toBeInTheDocument();
+    expect(
+      screen.getByText('Automatically learn stable facts')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('You can also tell the coach: “Remember that …”')
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'Automatically learn stable facts',
+      })
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save memory settings' })
+    );
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryEnabled: true, autoMemoryEnabled: true })
+    );
+  });
 });

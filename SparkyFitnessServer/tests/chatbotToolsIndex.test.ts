@@ -1,5 +1,9 @@
 import { vi, describe, expect, it } from 'vitest';
-import { buildChatbotTools, buildChatToolSurface } from '../ai/tools/index.js';
+import {
+  buildChatbotTools,
+  buildChatToolSurface,
+  COACH_MEMORY_TOOL_NAME,
+} from '../ai/tools/index.js';
 import { ENABLE_TOOLS_TOOL_NAME } from '../ai/tools/metaTools.js';
 import { ASK_USER_TOOL_NAME } from '@workspace/shared';
 
@@ -41,7 +45,7 @@ const EXPECTED_TOOLS = [
   'sparky_list_exercises',
   'sparky_list_foods',
   'sparky_manage_checkin',
-  'sparky_manage_coach_memory',
+  COACH_MEMORY_TOOL_NAME,
   'sparky_manage_exercise',
   'sparky_manage_food',
   'sparky_manage_goals',
@@ -75,6 +79,7 @@ const EXPECTED_CORE_TOOLS = [
   'sparky_list_exercises',
   'sparky_list_foods',
   'sparky_manage_checkin',
+  COACH_MEMORY_TOOL_NAME,
   'sparky_manage_exercise',
   'sparky_manage_food',
   'sparky_manage_goals',
@@ -228,6 +233,7 @@ describe('buildChatbotTools', () => {
       const names = Object.keys(tools);
       expect(names).toContain('sparky_manage_food');
       expect(names).toContain('sparky_search_foods');
+      expect(names).toContain(COACH_MEMORY_TOOL_NAME);
       // No other domain leaks in.
       expect(names.some((n) => n.includes('exercise'))).toBe(false);
       expect(names).not.toContain('sparky_manage_goals');
@@ -349,13 +355,15 @@ describe('buildChatToolSurface', () => {
     }
   });
 
-  it('indexes every composed tool name under exactly one category', () => {
+  it('indexes domain tools once and keeps cross-cutting memory outside categories', () => {
     const { toolNamesByCategory } = buildChatToolSurface('surface-user', 'UTC');
     const indexed = Object.values(toolNamesByCategory).flat();
-    // Every domain tool (i.e. every tool except the escalation tool) is
-    // indexed exactly once.
-    expect(indexed.sort()).toEqual(EXPECTED_TOOLS.slice().sort());
+    const domainTools = EXPECTED_TOOLS.filter(
+      (name) => name !== COACH_MEMORY_TOOL_NAME
+    );
+    expect(indexed.sort()).toEqual(domainTools.sort());
     expect(new Set(indexed).size).toBe(indexed.length);
+    expect(indexed).not.toContain(COACH_MEMORY_TOOL_NAME);
   });
 
   it('memoizes per user/tz and returns a fresh surface for a different key', () => {

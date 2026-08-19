@@ -16,6 +16,8 @@ const categorySchema = z.enum([
   'context',
 ]);
 
+export const COACH_MEMORY_TOOL_NAME = 'sparky_manage_coach_memory';
+
 const memoryActionSchema = z.discriminatedUnion('action', [
   z
     .object({
@@ -51,7 +53,7 @@ const memoryActionSchema = z.discriminatedUnion('action', [
 
 export function buildMemoryTools(userId: string) {
   return {
-    sparky_manage_coach_memory: tool({
+    [COACH_MEMORY_TOOL_NAME]: tool({
       description:
         'List, remember, edit, or forget owner-controlled long-term coach memories. Only remember a fact when the user explicitly asks, unless automatic memory is enabled in the coach profile.',
       inputSchema: memoryActionSchema,
