@@ -62,4 +62,10 @@ describe('canonical sleep selection', () => {
     expect(canonicalSleepSeconds(durationOnly)).toBe(8 * 3600);
     expect(canonicalSleepScore(durationOnly)).toBeNull();
   });
+
+  it('ignores Withings as a canonical sleep source', () => {
+    const withings = candidate({ source: 'Withings' });
+
+    expect(selectCanonicalSleepEntry([withings])).toBeNull();
+  });
 });

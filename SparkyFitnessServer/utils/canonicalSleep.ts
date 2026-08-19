@@ -1,5 +1,6 @@
 const MIN_FULL_SLEEP_SECONDS = 3 * 60 * 60;
 const MAX_PLAUSIBLE_SLEEP_SECONDS = 16 * 60 * 60;
+const IGNORED_SLEEP_SOURCES = new Set(['withings']);
 
 export interface CanonicalSleepCandidate {
   entry_date: Date | string;
@@ -70,18 +71,23 @@ export function selectCanonicalSleepEntry(
   candidates: CanonicalSleepCandidate[]
 ): CanonicalSleepCandidate | null {
   return (
-    [...candidates].sort((first, second) => {
-      const qualityDifference = qualityScore(second) - qualityScore(first);
-      if (qualityDifference !== 0) return qualityDifference;
-      const dateDifference =
-        timestamp(second.entry_date) - timestamp(first.entry_date);
-      if (dateDifference !== 0) return dateDifference;
-      const durationDifference =
-        (canonicalSleepSeconds(second) ?? 0) -
-        (canonicalSleepSeconds(first) ?? 0);
-      if (durationDifference !== 0) return durationDifference;
-      return timestamp(second.updated_at) - timestamp(first.updated_at);
-    })[0] ?? null
+    candidates
+      .filter(
+        (candidate) =>
+          !IGNORED_SLEEP_SOURCES.has(candidate.source?.toLowerCase() ?? '')
+      )
+      .sort((first, second) => {
+        const qualityDifference = qualityScore(second) - qualityScore(first);
+        if (qualityDifference !== 0) return qualityDifference;
+        const dateDifference =
+          timestamp(second.entry_date) - timestamp(first.entry_date);
+        if (dateDifference !== 0) return dateDifference;
+        const durationDifference =
+          (canonicalSleepSeconds(second) ?? 0) -
+          (canonicalSleepSeconds(first) ?? 0);
+        if (durationDifference !== 0) return durationDifference;
+        return timestamp(second.updated_at) - timestamp(first.updated_at);
+      })[0] ?? null
   );
 }
 
