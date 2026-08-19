@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { LayoutDashboard, Dumbbell, Activity } from 'lucide-react';
 import WorkoutHeatmap from './WorkoutHeatmap';
-import MuscleGroupRecoveryTracker from './MuscleGroupRecoveryTracker';
+import AdaptiveTrainingDashboard from './AdaptiveTrainingDashboard';
 import { PrProgressionChart } from './PrProgressionChart';
 import ExerciseVarietyScore from './ExerciseVarietyScore';
 import SetPerformanceAnalysisChart from './SetPerformanceAnalysisChart';
@@ -61,7 +61,6 @@ const DEFAULT_LAYOUT = [
   'keyStats',
   'heatmap',
   'filtersAggregation',
-  'muscleGroupRecovery',
   'prProgression',
   'exerciseVariety',
   'volumeTrend',
@@ -81,7 +80,6 @@ const STRENGTH_LAYOUT = [
   'maxWeightTrend',
   'estimated1RMTrend',
   'heatmap',
-  'muscleGroupRecovery',
   'prProgression',
   'exerciseVariety',
   'bestSetRepRange',
@@ -313,15 +311,6 @@ const ExerciseReportsDashboard = ({
             availableExercises={availableExercises}
           />
         );
-      case 'muscleGroupRecovery': {
-        const recoveryData = exerciseDashboardData?.recoveryData;
-        return recoveryData && Object.keys(recoveryData).length > 0 ? (
-          <MuscleGroupRecoveryTracker
-            key="muscleGroupRecovery"
-            recoveryData={recoveryData}
-          />
-        ) : null;
-      }
       case 'prProgression':
         return selectedExercisesForChart.map((exerciseId) => {
           const prProgressionData =
@@ -709,6 +698,10 @@ const ExerciseReportsDashboard = ({
       </div>
 
       {/* Tier 3: Domain Analytics Sections */}
+
+      {viewMode !== 'cardio' && (
+        <AdaptiveTrainingDashboard userId={activeUserId ?? undefined} />
+      )}
 
       {/* 3A: ALL WORKOUTS VIEW */}
       {viewMode === 'all' && (

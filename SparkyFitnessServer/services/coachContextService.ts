@@ -2,6 +2,7 @@ import {
   addDays,
   localDateToDay,
   todayInZone,
+  type AdaptiveTrainingRecommendation,
   type CoachTodayStatusResponse,
 } from '@workspace/shared';
 import onboardingRepository from '../models/onboardingRepository.js';
@@ -13,6 +14,7 @@ import workoutDeduplicationService from './workoutDeduplicationService.js';
 import goalService from './goalService.js';
 import { getDailySummary } from './dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import adaptiveTrainingService from './adaptiveTrainingService.js';
 
 export interface CanonicalCoachGoals {
   primaryGoal: string | null;
@@ -58,7 +60,7 @@ export interface CoachWeightTrend {
 
 export interface CoachMuscleLoad {
   muscle: string;
-  lastTrainedOn: string;
+  lastTrainedOn: string | null;
   weightedLoad: number;
 }
 
@@ -87,6 +89,7 @@ export interface CoachContextSnapshot {
   longTerm: CoachPeriodProgress;
   weight30Days: CoachWeightTrend;
   recovery: CoachRecoveryContext;
+  adaptiveTraining: AdaptiveTrainingRecommendation;
 }
 
 interface GoalRecord {
@@ -127,23 +130,6 @@ const trendCache = new Map<
   { expiresAt: number; value: Promise<TrendContext> }
 >();
 
-function parseMuscles(value: unknown): string[] {
-  if (Array.isArray(value))
-    return value.filter((item): item is string => typeof item === 'string');
-  if (typeof value !== 'string' || !value.trim()) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : [];
-  } catch {
-    return value
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-}
-
 function latestHrvRmssd(value: unknown): number | null {
   if (!Array.isArray(value)) return null;
   for (let index = value.length - 1; index >= 0; index -= 1) {
@@ -156,36 +142,16 @@ function latestHrvRmssd(value: unknown): number | null {
 }
 
 function buildRecoveryContext(
-  rows: TrendContext['recoveryRows']
+  rows: TrendContext['recoveryRows'],
+  adaptiveMuscleLoad: Array<{
+    muscle: string;
+    lastTrainedOn: string | null;
+    loadScore: number;
+  }>
 ): CoachRecoveryContext {
   const health = (rows.health ?? {}) as Record<string, unknown>;
   const sleep = (rows.sleep ?? {}) as Record<string, unknown>;
   const hrv = (rows.hrv ?? {}) as Record<string, unknown>;
-  const muscleMap = new Map<string, CoachMuscleLoad>();
-  for (const raw of rows.muscles as Array<Record<string, unknown>>) {
-    const date = dayString(raw.entry_date as Date | string);
-    const volume = finiteNumber(raw.volume_kg) ?? 0;
-    const duration = finiteNumber(raw.duration_minutes) ?? 0;
-    const primary = parseMuscles(raw.primary_muscles);
-    const secondary = parseMuscles(raw.secondary_muscles);
-    for (const [muscle, weight] of [
-      ...primary.map((name) => [name, 1] as const),
-      ...secondary.map((name) => [name, 0.5] as const),
-    ]) {
-      const previous = muscleMap.get(muscle);
-      const weightedLoad = Math.round(
-        (volume > 0 ? volume : duration * 10) * weight
-      );
-      muscleMap.set(muscle, {
-        muscle,
-        lastTrainedOn:
-          previous && previous.lastTrainedOn > date
-            ? previous.lastTrainedOn
-            : date,
-        weightedLoad: (previous?.weightedLoad ?? 0) + weightedLoad,
-      });
-    }
-  }
   return {
     observedOn:
       health.entry_date || sleep.entry_date || hrv.entry_date
@@ -214,7 +180,12 @@ function buildRecoveryContext(
     stressLevel: rounded(finiteNumber(health.avg_stress_level)),
     bodyBatteryHighest: rounded(finiteNumber(health.body_battery_highest)),
     bodyBatteryLowest: rounded(finiteNumber(health.body_battery_lowest)),
-    recentMuscleLoad: [...muscleMap.values()]
+    recentMuscleLoad: adaptiveMuscleLoad
+      .map((item) => ({
+        muscle: item.muscle,
+        lastTrainedOn: item.lastTrainedOn,
+        weightedLoad: item.loadScore,
+      }))
       .sort((a, b) => b.weightedLoad - a.weightedLoad)
       .slice(0, 8),
   };
@@ -412,16 +383,22 @@ export async function getCoachContextSnapshot(
   const longDates = buildDateRange(longStart, today);
   const weekDates = longDates.slice(-7);
 
-  const [canonicalGoals, dailySummary, trend] = await Promise.all([
-    getCanonicalCoachGoals(userId, tz),
-    getDailySummary({
-      actorUserId: userId,
-      targetUserId: userId,
-      date: today,
-      includeCheckin: true,
-    }),
-    getTrendContext(userId, today, weekStart, longStart, longDates),
-  ]);
+  const [canonicalGoals, dailySummary, trend, adaptiveTraining] =
+    await Promise.all([
+      getCanonicalCoachGoals(userId, tz),
+      getDailySummary({
+        actorUserId: userId,
+        targetUserId: userId,
+        date: today,
+        includeCheckin: true,
+      }),
+      getTrendContext(userId, today, weekStart, longStart, longDates),
+      adaptiveTrainingService.getAdaptiveTrainingDashboard(
+        userId,
+        userId,
+        today
+      ),
+    ]);
 
   const {
     nutritionRows,
@@ -527,7 +504,8 @@ export async function getCoachContextSnapshot(
           ? null
           : Math.round((latestWeight - firstWeight) * 100) / 100,
     },
-    recovery: buildRecoveryContext(recoveryRows),
+    recovery: buildRecoveryContext(recoveryRows, adaptiveTraining.muscleLoad),
+    adaptiveTraining: adaptiveTraining.recommendation,
   };
 }
 
@@ -536,7 +514,8 @@ function valueOrUnknown(value: number | null, suffix: string): string {
 }
 
 export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
-  const { today, week, longTerm, weight30Days, recovery } = snapshot;
+  const { today, week, longTerm, weight30Days, recovery, adaptiveTraining } =
+    snapshot;
   const lines = [
     `Canonical primary goal: ${today.primaryGoal ?? 'not set'}`,
     `Canonical targets for ${today.date}: ${valueOrUnknown(today.calorieTarget, ' kcal')}, ${valueOrUnknown(today.proteinTargetG, ' g protein')}, ${valueOrUnknown(today.waterTargetMl, ' ml water')}`,
@@ -582,6 +561,11 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
         .join(', ')}`
     );
   }
+  lines.push(
+    adaptiveTraining.kind === 'workout'
+      ? `Adaptive training recommendation for ${adaptiveTraining.date}: ${adaptiveTraining.presetName ?? 'workout'} (fit score ${adaptiveTraining.score}/100, volume factor ${adaptiveTraining.volumeFactor}). Treat this as the canonical training recommendation in web and Telegram.`
+      : `Adaptive training recommendation for ${adaptiveTraining.date}: recovery day (readiness/fit score ${adaptiveTraining.score}/100). Treat this as the canonical training recommendation in web and Telegram.`
+  );
   return lines;
 }
 

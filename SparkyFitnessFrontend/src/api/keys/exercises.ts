@@ -33,6 +33,12 @@ export const presetKeys = {
     [...presetKeys.lists(), 'search', { searchTerm, userId, limit }] as const,
 };
 
+export const adaptiveTrainingKeys = {
+  all: ['adaptiveTraining'] as const,
+  dashboard: (userId?: string, date?: string) =>
+    [...adaptiveTrainingKeys.all, 'dashboard', { userId, date }] as const,
+};
+
 export const exerciseSearchKeys = {
   all: ['exerciseSearch'] as const,
   providers: ['exerciseSearch', 'providers'] as const,

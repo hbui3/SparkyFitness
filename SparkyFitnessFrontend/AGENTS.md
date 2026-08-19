@@ -55,6 +55,7 @@ Features are organized by domain, and the same domain folder name appears in `sr
 - `src/api/<Domain>/` - per-domain API clients built on `apiCall`.
 - `src/hooks/<Domain>/` and `src/hooks/use*.ts(x)` - TanStack Query hooks and shared UI hooks (`use-toast`, `useDebounce`, `useAuth`, ...).
 - `src/components/` - shared components; `ui/` holds the shadcn-style primitives (~37 files); domain component folders include `Foods/`, `FoodSearch/`, `FoodUnitSelector/`, `Onboarding/`, `ExerciseCharts/`, `ai/` (assistant-ui chat pieces).
+- Adaptive training uses `src/pages/Reports/AdaptiveTrainingDashboard.tsx`, `src/api/Exercises/adaptiveTraining.ts`, `src/hooks/Exercises/useAdaptiveTraining.ts`, and the reusable `src/components/ExerciseCharts/MuscleBodyMap.tsx` shared with workout-session details.
 - `src/contexts/` - `ActiveUserContext` (family-access acting-user switching), `PreferencesContext`, `ThemeContext`, `WaterContainerContext`, `ChatbotVisibilityContext`, `ChatToolCategoriesContext` (runtime chat tool-category selection, localStorage-backed and sent on every web turn so the server can reuse it for Telegram).
 - `src/layouts/` - `MainLayout.tsx` and `AddComp.tsx`.
 - `src/lib/` - `auth-client.ts` (Better Auth React client), `utils.ts` (`cn`), scanner engines, sleep helpers.
@@ -101,6 +102,7 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - Missing/wrong UI text: the i18n key in `public/locales/en/translation.json` and the `t('...')` call site.
 - Chart issue: Recharts usage in the domain page plus `src/components/ExerciseCharts/` or `ZoomableChart.tsx`.
 - Report source/provenance display or mirrored-workout issue: `src/pages/Reports/ReportsTables.tsx`, `src/utils/sourceLabels.ts`, `src/utils/reportUtil.ts`, `NutritionPeriodSummary.tsx`, and the server report/canonical-workout services. Body measurement sources are per metric; do not reimplement provider overlap rules in the component.
+- Adaptive training or muscle-load map issue: `src/pages/Reports/AdaptiveTrainingDashboard.tsx`, `src/components/ExerciseCharts/MuscleBodyMap.tsx`, `src/hooks/Exercises/useAdaptiveTraining.ts`, and the server adaptive-training service; keep scoring and duplicate suppression on the server.
 
 ## Priority Rule
 
