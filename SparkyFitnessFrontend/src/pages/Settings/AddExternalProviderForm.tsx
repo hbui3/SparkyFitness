@@ -22,6 +22,7 @@ import {
   useLoginGarminMutation,
   useSyncHevyMutation,
   useSyncSpeedianceMutation,
+  useSyncIGPSportMutation,
 } from '@/hooks/Integrations/useIntegrations';
 import {
   useCreateExternalProviderMutation,
@@ -58,6 +59,8 @@ const AddExternalProviderForm = ({
     useSyncHevyMutation();
   const { mutateAsync: syncSpeedianceData, isPending: isSyncingSpeediance } =
     useSyncSpeedianceMutation();
+  const { mutateAsync: syncIGPSportData, isPending: isSyncingIGPSport } =
+    useSyncIGPSportMutation();
   const { mutateAsync: loginGarmin, isPending: isLoggingInGarmin } =
     useLoginGarminMutation();
   const { mutateAsync: createExternalProvider, isPending: isCreatingProvider } =
@@ -81,6 +84,7 @@ const AddExternalProviderForm = ({
   const isAnyIntegrationPending =
     isSyncingHevy ||
     isSyncingSpeediance ||
+    isSyncingIGPSport ||
     isLoggingInGarmin ||
     isCreatingProvider ||
     isCreatingGlobal ||
@@ -224,6 +228,16 @@ const AddExternalProviderForm = ({
           if (error instanceof Error) console.error(error);
         }
       }
+      if (newProvider.provider_type === 'igpsport' && newProvider.is_active) {
+        try {
+          await syncIGPSportData({
+            fullSync: fullSyncOnConnect,
+            providerId: createdProvider.id,
+          });
+        } catch (error: unknown) {
+          if (error instanceof Error) console.error(error);
+        }
+      }
 
       toast({
         title: 'Success',
@@ -311,7 +325,9 @@ const AddExternalProviderForm = ({
                     base_url:
                       value === 'speediance'
                         ? 'https://euapi.speediance.com'
-                        : '',
+                        : value === 'igpsport'
+                          ? 'https://prod.en.igpsport.com'
+                          : '',
                     garmin_connect_status: 'disconnected',
                     garmin_last_status_check: '',
                     garmin_token_expires: '',

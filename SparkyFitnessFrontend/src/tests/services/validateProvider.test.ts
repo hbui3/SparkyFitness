@@ -109,6 +109,26 @@ describe('validateProvider', () => {
       })
     ).toBeNull();
   });
+
+  it('requires an iGPSPORT account and password', () => {
+    const baseInput: Partial<ExternalDataProvider> = {
+      provider_name: 'My iGPSPORT',
+      provider_type: 'igpsport',
+    };
+    expect(validateProvider(baseInput)).toBe(
+      'Please provide iGPSPORT email or phone for igpsport'
+    );
+    expect(validateProvider({ ...baseInput, app_id: '+41790000000' })).toBe(
+      'Please provide iGPSPORT password for igpsport'
+    );
+    expect(
+      validateProvider({
+        ...baseInput,
+        app_id: '+41790000000',
+        app_key: 'local-test-password',
+      })
+    ).toBeNull();
+  });
 });
 
 describe('resolveProviderCredentialPayload', () => {
@@ -151,6 +171,7 @@ describe('resolveProviderCredentialPayload', () => {
       'tandoor',
       'norish',
       'speediance',
+      'igpsport',
     ])(
       'returns undefined app_key for %s when the secret field is left blank',
       (providerType) => {

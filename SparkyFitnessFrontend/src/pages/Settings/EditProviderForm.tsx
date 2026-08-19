@@ -70,7 +70,11 @@ export const EditProviderForm = ({
                 app_id: '',
                 app_key: '',
                 base_url:
-                  value === 'speediance' ? 'https://euapi.speediance.com' : '',
+                  value === 'speediance'
+                    ? 'https://euapi.speediance.com'
+                    : value === 'igpsport'
+                      ? 'https://prod.en.igpsport.com'
+                      : '',
                 garmin_connect_status: 'disconnected',
                 garmin_last_status_check: '',
                 garmin_token_expires: '',
@@ -942,6 +946,85 @@ export const EditProviderForm = ({
           </p>
         </>
       )}
+      {editData.provider_type === 'igpsport' && (
+        <>
+          <div>
+            <Label htmlFor="edit-igpsport-account">
+              iGPSPORT Email or Phone
+            </Label>
+            <Input
+              id="edit-igpsport-account"
+              type="text"
+              value={editData.app_id || ''}
+              onChange={(e) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  app_id: e.target.value,
+                }))
+              }
+              placeholder="Enter iGPSPORT email or phone"
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-igpsport-password">iGPSPORT Password</Label>
+            <Input
+              id="edit-igpsport-password"
+              type="password"
+              value={editData.app_key || ''}
+              onChange={(e) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  app_key: e.target.value,
+                }))
+              }
+              placeholder="Leave blank to keep the stored password"
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-igpsport-region">Account Region</Label>
+            <Select
+              value={
+                editData.base_url === 'https://prod.zh.igpsport.com'
+                  ? 'China'
+                  : 'Global'
+              }
+              onValueChange={(region) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  base_url:
+                    region === 'China'
+                      ? 'https://prod.zh.igpsport.com'
+                      : 'https://prod.en.igpsport.com',
+                }))
+              }
+            >
+              <SelectTrigger id="edit-igpsport-region">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Global">Global</SelectItem>
+                <SelectItem value="China">China</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-sm text-muted-foreground col-span-2">
+            Credentials are encrypted in the SparkyFitness database. The
+            importer uses the unofficial iGPSPORT web API to download original
+            FIT activities documented by{' '}
+            <a
+              href="https://github.com/yihong0618/running_page/blob/master/run_page/igpsport_sync.py"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline font-medium"
+            >
+              running_page
+            </a>
+            .
+          </p>
+        </>
+      )}
       {(editData.provider_type === 'withings' ||
         editData.provider_type === 'garmin' ||
         editData.provider_type === 'fitbit' ||
@@ -950,7 +1033,8 @@ export const EditProviderForm = ({
         editData.provider_type === 'strava' ||
         editData.provider_type === 'polar' ||
         editData.provider_type === 'hevy' ||
-        editData.provider_type === 'speediance') && (
+        editData.provider_type === 'speediance' ||
+        editData.provider_type === 'igpsport') && (
         <div>
           <Label htmlFor="edit_sync_frequency">Sync Frequency</Label>
           <Select

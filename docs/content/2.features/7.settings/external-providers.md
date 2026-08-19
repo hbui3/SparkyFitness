@@ -17,6 +17,7 @@ SparkyFitness supports integration with the following health and fitness data pr
 - Polar Flow (partially tested)
 - Hevy (not tested)
 - Speediance (unofficial API; completed workout import)
+- iGPSPORT (unofficial web API; original FIT activity import)
 - OpenFoodFacts
 - USDA
 - Fatsecret
@@ -31,6 +32,16 @@ used only when a manual or scheduled workout import signs in. Program and custom
 workouts include their exercise/set details; Free Lift and Quick sessions are
 imported as session summaries. Because this relies on an unofficial mobile API,
 it may need maintenance when Speediance changes its backend.
+
+iGPSPORT accounts are configured with an email address or phone number,
+password, and account region (Global or China). SparkyFitness encrypts these
+credentials and uses them only for manual or scheduled imports. The importer
+downloads the original FIT file for each activity, so supported FIT fields such
+as GPS tracks, heart rate, power, cadence, elevation, laps, duration, distance,
+calories, and time-series detail flow through the existing native FIT pipeline.
+When the same workout also arrives through Apple Health, the richer iGPSPORT
+record takes priority in activity reports. The integration uses an unofficial
+web API and may require maintenance when iGPSPORT changes its backend.
 
 ---
 

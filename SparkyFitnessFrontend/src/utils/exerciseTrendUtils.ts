@@ -302,6 +302,7 @@ export const extractTelemetryActivityEntries = (
     'healthkit',
     'health connect',
     'speediance',
+    'igpsport',
   ]);
 
   // Mobile sync writes a row for every workout the phone knows about, including
@@ -312,29 +313,32 @@ export const extractTelemetryActivityEntries = (
   // has_telemetry — which is also why this compares to true explicitly: an
   // absent flag must fail closed here rather than pass as truthy.
   const REQUIRES_TELEMETRY_FLAG = new Set(['healthkit', 'health connect']);
-  const speedianceWindows =
+  const candidateEntries =
     selectedExercise === 'All'
-      ? Object.values(exerciseProgressData)
-          .flat()
-          .filter(
-            (entry) => entry.provider_name?.toLowerCase() === 'speediance'
-          )
-          .map(activityTimeWindow)
-          .filter((window): window is ActivityTimeWindow => window !== null)
-      : [];
+      ? Object.values(exerciseProgressData).flat()
+      : selectedExercise && exerciseProgressData[selectedExercise]
+        ? exerciseProgressData[selectedExercise]
+        : [];
+  const preferredRawProviderWindows = candidateEntries
+    .filter((entry) =>
+      ['speediance', 'igpsport'].includes(
+        entry.provider_name?.toLowerCase() ?? ''
+      )
+    )
+    .map(activityTimeWindow)
+    .filter((window): window is ActivityTimeWindow => window !== null);
 
   const processEntry = (entry: ExerciseProgressResponse) => {
     const source = entry.provider_name?.toLowerCase();
     const isMobileDuplicate =
-      selectedExercise === 'All' &&
       source !== undefined &&
       REQUIRES_TELEMETRY_FLAG.has(source) &&
       (() => {
         const mobileWindow = activityTimeWindow(entry);
         return (
           mobileWindow !== null &&
-          speedianceWindows.some((speedianceWindow) =>
-            substantiallyOverlaps(mobileWindow, speedianceWindow)
+          preferredRawProviderWindows.some((providerWindow) =>
+            substantiallyOverlaps(mobileWindow, providerWindow)
           )
         );
       })();
@@ -361,13 +365,7 @@ export const extractTelemetryActivityEntries = (
     }
   };
 
-  if (selectedExercise === 'All') {
-    Object.values(exerciseProgressData).forEach((dataArray) => {
-      dataArray.forEach(processEntry);
-    });
-  } else if (selectedExercise && exerciseProgressData[selectedExercise]) {
-    exerciseProgressData[selectedExercise].forEach(processEntry);
-  }
+  candidateEntries.forEach(processEntry);
 
   return allTelemetryActivityEntries.sort(
     (a, b) =>

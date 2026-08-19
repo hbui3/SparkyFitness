@@ -59,6 +59,7 @@ import polarRoutes from './routes/polarRoutes.js';
 import stravaRoutes from './routes/stravaRoutes.js';
 import hevyRoutes from './routes/hevyRoutes.js';
 import speedianceRoutes from './routes/speedianceRoutes.js';
+import igpsportRoutes from './routes/igpsportRoutes.js';
 import moodRoutes from './routes/moodRoutes.js';
 import fastingRoutes from './routes/fastingRoutes.js';
 import adaptiveTdeeRoutes from './routes/adaptiveTdeeRoutes.js';
@@ -98,6 +99,7 @@ import polarService from './services/polarService.js';
 import stravaService from './services/stravaService.js';
 import hevyService from './integrations/hevy/hevyService.js';
 import speedianceService from './integrations/speediance/speedianceService.js';
+import igpsportService from './integrations/igpsport/igpsportService.js';
 // @ts-expect-error TS1192
 import dailySummaryRoutes from './routes/dailySummaryRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
@@ -547,6 +549,7 @@ app.use('/api/integrations/polar', polarRoutes);
 app.use('/api/integrations/strava', stravaRoutes);
 app.use('/api/integrations/hevy', hevyRoutes);
 app.use('/api/integrations/speediance', speedianceRoutes);
+app.use('/api/integrations/igpsport', igpsportRoutes);
 app.use('/api/mood', moodRoutes);
 app.use('/api/fasting', fastingRoutes);
 app.use('/api/admin/telegram-coach', telegramAdminRoutes);
@@ -846,13 +849,29 @@ const scheduleHevySyncs = async () => {
     }
   });
 };
-const scheduleSpeedianceSyncs = () => {
+interface ScheduledCredentialProvider {
+  id: string;
+  user_id: string;
+  is_active: boolean;
+  sync_frequency: string | null;
+  last_sync_at: Date | string | null;
+}
+
+const scheduleCredentialProviderSyncs = (
+  providerType: string,
+  displayName: string,
+  sync: (userId: string, providerId: string) => Promise<unknown>
+) => {
   cron.schedule('0 * * * *', async () => {
     try {
-      const providers =
-        await externalProviderRepository.getProvidersByType('speediance');
+      const providers = (await externalProviderRepository.getProvidersByType(
+        providerType
+      )) as ScheduledCredentialProvider[];
       for (const provider of providers) {
-        if (!provider.is_active || provider.sync_frequency === 'manual')
+        if (
+          !provider.is_active ||
+          !['hourly', 'daily'].includes(provider.sync_frequency ?? '')
+        )
           continue;
         const lastSync = provider.last_sync_at
           ? new Date(provider.last_sync_at)
@@ -865,23 +884,19 @@ const scheduleSpeedianceSyncs = () => {
           continue;
         }
         try {
-          await speedianceService.syncSpeedianceData(
-            provider.user_id,
-            provider.user_id,
-            { providerId: provider.id, fullSync: false }
-          );
+          await sync(provider.user_id, provider.id);
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);
           log(
             'error',
-            `[CRON] Speediance sync failed for user ${provider.user_id}: ${message}`
+            `[CRON] ${displayName} sync failed for user ${provider.user_id}: ${message}`
           );
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log('error', `[CRON] Speediance scheduler failed: ${message}`);
+      log('error', `[CRON] ${displayName} scheduler failed: ${message}`);
     }
   });
 };
@@ -914,7 +929,24 @@ applyMigrations()
     scheduleStravaSyncs();
     scheduleGoogleHealthSyncs();
     scheduleHevySyncs();
-    scheduleSpeedianceSyncs();
+    scheduleCredentialProviderSyncs(
+      'speediance',
+      'Speediance',
+      (userId, providerId) =>
+        speedianceService.syncSpeedianceData(userId, userId, {
+          providerId,
+          fullSync: false,
+        })
+    );
+    scheduleCredentialProviderSyncs(
+      'igpsport',
+      'iGPSPORT',
+      (userId, providerId) =>
+        igpsportService.syncIGPSportData(userId, userId, {
+          providerId,
+          fullSync: false,
+        })
+    );
     if (process.env.SPARKY_FITNESS_ADMIN_EMAIL) {
       const adminUser = await userRepository.findUserByEmail(
         process.env.SPARKY_FITNESS_ADMIN_EMAIL

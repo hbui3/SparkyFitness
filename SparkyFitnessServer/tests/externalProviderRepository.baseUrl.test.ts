@@ -1,9 +1,11 @@
 import { vi, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  getExternalDataProviders,
   updateExternalDataProvider,
   updateGlobalExternalDataProvider,
 } from '../models/externalProviderRepository.js';
 import { getClient, getSystemClient } from '../db/poolManager.js';
+import { decrypt } from '../security/encryption.js';
 
 vi.mock('../db/poolManager', () => ({
   getClient: vi.fn(),
@@ -89,5 +91,40 @@ describe('externalProviderRepository base_url clearing', () => {
     const [, params] = mockClient.query.mock.calls[0];
     expect(params[3]).toBe('http://sparkyfitness-foodfacts:8080');
     expect(params[14]).toBe(false);
+  });
+});
+
+describe('externalProviderRepository password redaction', () => {
+  it('never returns a decrypted iGPSPORT password to the settings UI', async () => {
+    const mockClient = {
+      query: vi.fn().mockResolvedValue({
+        rows: [
+          {
+            id: 'provider-1',
+            provider_type: 'igpsport',
+            encrypted_app_id: 'encrypted-account',
+            app_id_iv: 'account-iv',
+            app_id_tag: 'account-tag',
+            encrypted_app_key: 'encrypted-password',
+            app_key_iv: 'password-iv',
+            app_key_tag: 'password-tag',
+          },
+        ],
+      }),
+      release: vi.fn(),
+    };
+    vi.mocked(getClient).mockResolvedValue(mockClient as never);
+    vi.mocked(decrypt)
+      .mockResolvedValueOnce('rider@example.com')
+      .mockResolvedValueOnce('local-password');
+
+    const providers = await getExternalDataProviders('user-1');
+
+    expect(providers[0]).toMatchObject({
+      provider_type: 'igpsport',
+      app_id: 'rider@example.com',
+      app_key: null,
+    });
+    expect(mockClient.release).toHaveBeenCalled();
   });
 });

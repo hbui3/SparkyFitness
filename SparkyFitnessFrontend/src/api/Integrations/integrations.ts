@@ -78,6 +78,18 @@ export const syncSpeedianceData = async (
     body: JSON.stringify({ fullSync, providerId, startDate, endDate }),
   });
 };
+
+export const syncIGPSportData = async (
+  fullSync = false,
+  providerId?: string,
+  startDate?: string,
+  endDate?: string
+): Promise<void> => {
+  return apiCall('/integrations/igpsport/sync', {
+    method: 'POST',
+    body: JSON.stringify({ fullSync, providerId, startDate, endDate }),
+  });
+};
 export interface GarminLoginPayload {
   email: string;
   password: string;

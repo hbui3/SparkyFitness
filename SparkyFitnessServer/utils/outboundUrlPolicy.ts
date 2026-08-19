@@ -51,6 +51,11 @@ export const PUBLIC_ONLY_AI_NETWORK_POLICY: AiNetworkPolicy = {
   reason: 'public-only',
 };
 
+// Generic alias for non-AI integrations that download provider-controlled
+// public URLs while reusing the same DNS-rebinding and private-address guard.
+export const PUBLIC_ONLY_OUTBOUND_NETWORK_POLICY =
+  PUBLIC_ONLY_AI_NETWORK_POLICY;
+
 export function requiresUserSuppliedAiUrl(serviceType: string): boolean {
   return (
     serviceType === 'ollama' ||

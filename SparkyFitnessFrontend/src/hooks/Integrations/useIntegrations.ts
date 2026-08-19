@@ -7,6 +7,7 @@ import {
   linkStravaAccount,
   syncHevyData,
   syncSpeedianceData,
+  syncIGPSportData,
   loginGarmin,
   GarminLoginPayload,
 } from '@/api/Integrations/integrations';
@@ -161,7 +162,7 @@ export const usePolarFlowMutation = () => {
   });
 };
 
-interface SyncHevyVariables {
+interface WorkoutProviderSyncVariables {
   fullSync?: boolean;
   providerId?: string;
   startDate?: string;
@@ -177,7 +178,7 @@ export const useSyncHevyMutation = () => {
       providerId,
       startDate,
       endDate,
-    }: SyncHevyVariables) =>
+    }: WorkoutProviderSyncVariables) =>
       syncHevyData(fullSync, providerId, startDate, endDate),
     meta: {
       successMessage: t(
@@ -202,7 +203,7 @@ export const useSyncSpeedianceMutation = () => {
       providerId,
       startDate,
       endDate,
-    }: SyncHevyVariables) =>
+    }: WorkoutProviderSyncVariables) =>
       syncSpeedianceData(fullSync, providerId, startDate, endDate),
     onSuccess: invalidate,
     meta: {
@@ -213,6 +214,32 @@ export const useSyncSpeedianceMutation = () => {
       errorMessage: t(
         'integrations.speedianceSyncError',
         'Speediance sync failed. Check the email, password, and region.'
+      ),
+    },
+  });
+};
+
+export const useSyncIGPSportMutation = () => {
+  const { t } = useTranslation();
+  const invalidate = useDiaryInvalidation();
+
+  return useMutation({
+    mutationFn: ({
+      fullSync = false,
+      providerId,
+      startDate,
+      endDate,
+    }: WorkoutProviderSyncVariables) =>
+      syncIGPSportData(fullSync, providerId, startDate, endDate),
+    onSuccess: invalidate,
+    meta: {
+      successMessage: t(
+        'integrations.igpsportSyncSuccess',
+        'iGPSPORT activities synced successfully.'
+      ),
+      errorMessage: t(
+        'integrations.igpsportSyncError',
+        'iGPSPORT sync failed. Check the account, password, and region.'
       ),
     },
   });

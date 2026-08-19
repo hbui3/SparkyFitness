@@ -503,6 +503,106 @@ export const ProviderSpecificFields = ({
         </>
       )}
 
+      {provider.provider_type === 'igpsport' && (
+        <>
+          <div>
+            <Label htmlFor="add-igpsport-account">
+              iGPSPORT Email or Phone
+            </Label>
+            <Input
+              id="add-igpsport-account"
+              type="text"
+              value={provider.app_id || ''}
+              onChange={(e) =>
+                setProvider((prev) => ({ ...prev, app_id: e.target.value }))
+              }
+              placeholder="Enter iGPSPORT email or phone"
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <Label htmlFor="add-igpsport-password">iGPSPORT Password</Label>
+            <Input
+              id="add-igpsport-password"
+              type="password"
+              value={provider.app_key || ''}
+              onChange={(e) =>
+                setProvider((prev) => ({ ...prev, app_key: e.target.value }))
+              }
+              placeholder="Enter iGPSPORT password"
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
+            <Label htmlFor="add-igpsport-region">Account Region</Label>
+            <Select
+              value={
+                provider.base_url === 'https://prod.zh.igpsport.com'
+                  ? 'China'
+                  : 'Global'
+              }
+              onValueChange={(region) =>
+                setProvider((prev) => ({
+                  ...prev,
+                  base_url:
+                    region === 'China'
+                      ? 'https://prod.zh.igpsport.com'
+                      : 'https://prod.en.igpsport.com',
+                }))
+              }
+            >
+              <SelectTrigger id="add-igpsport-region">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Global">Global</SelectItem>
+                <SelectItem value="China">China</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="add-igpsport-sync-frequency">Sync Frequency</Label>
+            <Select
+              value={provider.sync_frequency || 'manual'}
+              onValueChange={(value) =>
+                setProvider((prev) => ({
+                  ...prev,
+                  sync_frequency: value as 'hourly' | 'daily' | 'manual',
+                }))
+              }
+            >
+              <SelectTrigger id="add-igpsport-sync-frequency">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="manual">Manual</SelectItem>
+                <SelectItem value="hourly">Hourly</SelectItem>
+                <SelectItem value="daily">Daily</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="col-span-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 space-y-1.5">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              Unofficial iGPSPORT API
+            </p>
+            <p className="text-sm text-amber-800 dark:text-amber-300">
+              SparkyFitness stores the account and password encrypted, signs in
+              only for imports, and downloads the original FIT files. This
+              community-documented API may stop working if iGPSPORT changes its
+              web service.{' '}
+              <a
+                href="https://github.com/yihong0618/running_page/blob/master/run_page/igpsport_sync.py"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline font-medium"
+              >
+                API reference
+              </a>
+            </p>
+          </div>
+        </>
+      )}
+
       {['withings', 'fitbit', 'oura', 'googlehealth', 'polar'].includes(
         provider.provider_type || ''
       ) && (
@@ -629,7 +729,7 @@ export const ProviderSpecificFields = ({
         </p>
       )}
 
-      {['hevy', 'polar', 'speediance'].includes(
+      {['hevy', 'polar', 'speediance', 'igpsport'].includes(
         provider.provider_type || ''
       ) && (
         <div className="flex items-center space-x-2 col-span-2">
