@@ -10,6 +10,7 @@ describe('Speediance workout mapping', () => {
   it('maps Speediance primary and auxiliary muscles to Sparky vocabulary', () => {
     expect(
       parseSpeedianceExerciseMetadata({
+        groupId: 44,
         mainMuscleGroupList: [
           { muscleGroupName: 'Pecs' },
           { muscleGroupName: 'Front Delts' },
@@ -21,6 +22,7 @@ describe('Speediance workout mapping', () => {
         ],
       })
     ).toEqual({
+      actionLibraryGroupId: '44',
       primaryMuscles: ['chest', 'shoulders'],
       secondaryMuscles: ['triceps', 'lower back'],
     });
@@ -158,6 +160,7 @@ describe('Speediance workout mapping', () => {
     expect(exercises).toHaveLength(1);
     expect(exercises[0]).toMatchObject({
       actionLibraryName: 'Speediance Free Lift',
+      actionLibraryId: null,
       actionLibraryGroupId: null,
       totalCapacity: 240,
       maxWeight: 40,
@@ -177,5 +180,24 @@ describe('Speediance workout mapping', () => {
       exercises[0]!.isLeftRight
     );
     expect(mapped).toMatchObject({ weight: 40, reps: 6, duration: null });
+  });
+
+  it('keeps the Free Lift action identity separate from its group identity', () => {
+    const [exercise] = parseSpeedianceTrainingDetail({
+      actionList: [
+        {
+          actionLibraryId: 789077895708672,
+          actionSource: 'manual',
+          actionLibraryName: 'Standing Dual-Handle Biceps Curl',
+          setList: [],
+        },
+      ],
+    });
+
+    expect(exercise).toMatchObject({
+      actionLibraryName: 'Standing Dual-Handle Biceps Curl',
+      actionLibraryId: '789077895708672',
+      actionLibraryGroupId: null,
+    });
   });
 });

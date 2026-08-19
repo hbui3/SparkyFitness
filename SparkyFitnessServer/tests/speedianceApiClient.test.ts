@@ -150,7 +150,37 @@ describe('SpeedianceApiClient', () => {
     expect(get).toHaveBeenCalledWith(
       '/api/app/actionLibraryGroup/group%2Fid%201',
       expect.objectContaining({
-        params: { isDisplay: 1 },
+        params: { isDisplay: 0 },
+        headers: expect.objectContaining({ Token: 'token-1' }),
+      })
+    );
+  });
+
+  it('loads Free Lift action metadata so its group and muscles can be resolved', async () => {
+    post
+      .mockResolvedValueOnce({
+        data: { data: { isExist: true, hasPwd: true } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { token: 'token-1', appUserId: 'user-1' } },
+      });
+    get.mockResolvedValueOnce({
+      data: { data: { groupId: 199, mainMuscleGroupName: 'Biceps' } },
+    });
+    const client = new SpeedianceApiClient({
+      region: 'EU',
+      timezone: 'Europe/Berlin',
+      httpClient,
+    });
+    await client.login('local-test@example.com', 'local-test-password');
+
+    await expect(client.getActionLibrary('action/id 1')).resolves.toEqual({
+      groupId: 199,
+      mainMuscleGroupName: 'Biceps',
+    });
+    expect(get).toHaveBeenCalledWith(
+      '/api/app/actionLibrary/action%2Fid%201',
+      expect.objectContaining({
         headers: expect.objectContaining({ Token: 'token-1' }),
       })
     );

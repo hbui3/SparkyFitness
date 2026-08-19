@@ -224,7 +224,7 @@ for (const [type, record] of samples) {
     typeof actionLibraryId === 'number'
   ) {
     const encodedActionId = encodeURIComponent(String(actionLibraryId));
-    candidates.actionLibraryGroup = `/api/app/actionLibraryGroup/${encodedActionId}?isDisplay=1`;
+    candidates.actionLibraryGroup = `/api/app/actionLibraryGroup/${encodedActionId}?isDisplay=0`;
     candidates.actionLibrary = `/api/app/actionLibrary/${encodedActionId}`;
     candidates.actionLibraryGroupList = `/api/app/actionLibraryGroup/list?ids=${encodedActionId}`;
     candidates.actionStats = `/api/app/actionLibraryGroup/userActionStatPage?id=${encodedActionId}&pageNo=1&pageSize=100`;
@@ -237,7 +237,7 @@ for (const [type, record] of samples) {
       : null;
     if (actionGroupId) {
       const encodedGroupId = encodeURIComponent(actionGroupId);
-      candidates.resolvedActionLibraryGroup = `/api/app/actionLibraryGroup/${encodedGroupId}?isDisplay=1`;
+      candidates.resolvedActionLibraryGroup = `/api/app/actionLibraryGroup/${encodedGroupId}?isDisplay=0`;
       candidates.resolvedActionStats = `/api/app/actionLibraryGroup/userActionStatPage?id=${encodedGroupId}&pageNo=1&pageSize=100`;
     }
   }
@@ -415,7 +415,7 @@ if (type9Sample) {
     : null;
   if (actionLibraryGroupId) {
     const actionGroupData = await fetchData(
-      `/api/app/actionLibraryGroup/${encodeURIComponent(actionLibraryGroupId)}?isDisplay=1`
+      `/api/app/actionLibraryGroup/${encodeURIComponent(actionLibraryGroupId)}?isDisplay=0`
     );
     focusedResults.type9ActionLibraryGroupKeyPaths = Array.from(
       collectKeyPaths(actionGroupData, '$', 0, new Set<string>(), 10)

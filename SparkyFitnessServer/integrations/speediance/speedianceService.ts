@@ -33,9 +33,14 @@ const INITIAL_SYNC_DAYS = 30;
 const INCREMENTAL_OVERLAP_DAYS = 7;
 const SPEEDIANCE_EARLIEST_DAY = '2018-01-01';
 const DETAILED_TRAINING_TYPES = new Set([1, 2, 5, 7, 9]);
+const EMPTY_DETAIL_RETRY_DELAY_MS = 250;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function resolveSyncRange(
@@ -95,6 +100,10 @@ export async function syncSpeedianceData(
     string,
     Promise<SpeedianceExerciseMetadata | null>
   >();
+  const metadataByAction = new Map<
+    string,
+    Promise<SpeedianceExerciseMetadata | null>
+  >();
 
   const loadExerciseMetadata = (
     actionLibraryGroupId: string
@@ -115,6 +124,28 @@ export async function syncSpeedianceData(
         return null;
       });
     metadataByActionGroup.set(actionLibraryGroupId, request);
+    return request;
+  };
+
+  const loadActionMetadata = (
+    actionLibraryId: string
+  ): Promise<SpeedianceExerciseMetadata | null> => {
+    const existing = metadataByAction.get(actionLibraryId);
+    if (existing) return existing;
+
+    const request = api
+      .getActionLibrary(actionLibraryId)
+      .then(parseSpeedianceExerciseMetadata)
+      .catch((error: unknown) => {
+        if (error instanceof SpeedianceAuthenticationError) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        log(
+          'warn',
+          `[speedianceService] Muscle metadata for action ${actionLibraryId} was unavailable: ${message}`
+        );
+        return null;
+      });
+    metadataByAction.set(actionLibraryId, request);
     return request;
   };
 
@@ -144,20 +175,17 @@ export async function syncSpeedianceData(
       }
 
       try {
-        const rawDetail =
+        const loadRawDetail = (): Promise<unknown> =>
           record.type === 1
-            ? rawInfo
-            : await api.getTrainingDetail(record.trainingId, record.type);
+            ? api.getTrainingInfo(record.trainingId, record.type)
+            : api.getTrainingDetail(record.trainingId, record.type);
+        let rawDetail = record.type === 1 ? rawInfo : await loadRawDetail();
         exercises = parseSpeedianceTrainingDetail(rawDetail);
-        exercises = await Promise.all(
-          exercises.map(async (exercise) => {
-            if (!exercise.actionLibraryGroupId) return exercise;
-            const metadata = await loadExerciseMetadata(
-              exercise.actionLibraryGroupId
-            );
-            return metadata ? { ...exercise, ...metadata } : exercise;
-          })
-        );
+        if (exercises.length === 0) {
+          await wait(EMPTY_DETAIL_RETRY_DELAY_MS);
+          rawDetail = await loadRawDetail();
+          exercises = parseSpeedianceTrainingDetail(rawDetail);
+        }
       } catch (error) {
         if (error instanceof SpeedianceAuthenticationError) throw error;
         const message = error instanceof Error ? error.message : String(error);
@@ -168,6 +196,28 @@ export async function syncSpeedianceData(
       }
     }
     bundles.push({ record: enrichedRecord, exercises });
+  }
+
+  // Resolve exercise metadata only after every workout detail has been read.
+  // This keeps the much larger metadata request set from rate-limiting later
+  // history-detail calls and turning otherwise detailed sessions into summaries.
+  for (const bundle of bundles) {
+    bundle.exercises = await Promise.all(
+      bundle.exercises.map(async (exercise) => {
+        const metadata = exercise.actionLibraryGroupId
+          ? await loadExerciseMetadata(exercise.actionLibraryGroupId)
+          : exercise.actionLibraryId
+            ? await loadActionMetadata(exercise.actionLibraryId)
+            : null;
+        if (!metadata) return exercise;
+        return {
+          ...exercise,
+          ...metadata,
+          actionLibraryGroupId:
+            metadata.actionLibraryGroupId ?? exercise.actionLibraryGroupId,
+        };
+      })
+    );
   }
 
   const result = await processSpeedianceWorkouts(

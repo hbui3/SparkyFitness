@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getTrainingInfo: vi.fn(),
   getTrainingDetail: vi.fn(),
   getActionLibraryGroup: vi.fn(),
+  getActionLibrary: vi.fn(),
   getCredentials: vi.fn(),
   updateLastSync: vi.fn(),
   processWorkouts: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('../integrations/speediance/speedianceApiClient.js', () => ({
       getTrainingInfo: mocks.getTrainingInfo,
       getTrainingDetail: mocks.getTrainingDetail,
       getActionLibraryGroup: mocks.getActionLibraryGroup,
+      getActionLibrary: mocks.getActionLibrary,
     };
   }),
   SpeedianceAuthenticationError: class SpeedianceAuthenticationError extends Error {},
@@ -86,6 +88,10 @@ beforeEach(() => {
     mainMuscleGroupList: [{ muscleGroupName: 'Pecs' }],
     auxiliaryMuscleGroupList: [{ muscleGroupName: 'Triceps' }],
   });
+  mocks.getActionLibrary.mockResolvedValue({
+    groupId: 'resolved-group-1',
+    mainMuscleGroupName: 'Biceps',
+  });
   mocks.processWorkouts.mockResolvedValue({
     importedWorkouts: 2,
     importedExercises: 2,
@@ -102,6 +108,9 @@ describe('syncSpeedianceData', () => {
 
     expect(mocks.getActionLibraryGroup).toHaveBeenCalledTimes(1);
     expect(mocks.getActionLibraryGroup).toHaveBeenCalledWith('group-1');
+    expect(
+      mocks.getTrainingDetail.mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(mocks.getActionLibraryGroup.mock.invocationCallOrder[0]!);
     expect(mocks.processWorkouts).toHaveBeenCalledWith(
       'user-1',
       'user-1',
@@ -115,6 +124,94 @@ describe('syncSpeedianceData', () => {
           ],
         }),
       ]),
+      '2018-01-01',
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      'Europe/Berlin'
+    );
+  });
+
+  it('resolves Free Lift action IDs to muscle metadata and their group IDs', async () => {
+    mocks.getTrainingRecords.mockResolvedValueOnce([
+      {
+        trainingId: 'free-lift-1',
+        title: 'Free Lift',
+        type: 1,
+        startTimestamp: 1_776_500_000,
+        trainingTime: 300,
+      },
+    ]);
+    mocks.getTrainingInfo.mockResolvedValueOnce({
+      actionList: [
+        {
+          actionLibraryId: 789077895708672,
+          actionLibraryName: 'Standing Dual-Handle Biceps Curl',
+          setList: [],
+        },
+      ],
+    });
+
+    await syncSpeedianceData('user-1', 'user-1', {
+      providerId: 'provider-1',
+      fullSync: true,
+    });
+
+    expect(mocks.getActionLibrary).toHaveBeenCalledWith('789077895708672');
+    expect(mocks.processWorkouts).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      [
+        expect.objectContaining({
+          exercises: [
+            expect.objectContaining({
+              actionLibraryGroupId: 'resolved-group-1',
+              primaryMuscles: ['biceps'],
+            }),
+          ],
+        }),
+      ],
+      '2018-01-01',
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      'Europe/Berlin'
+    );
+  });
+
+  it('retries an unexpectedly empty workout detail before importing a summary', async () => {
+    mocks.getTrainingRecords.mockResolvedValueOnce([
+      {
+        trainingId: 'training-retry',
+        title: 'Retry Workout',
+        type: 5,
+        startTimestamp: 1_776_500_000,
+        trainingTime: 300,
+      },
+    ]);
+    mocks.getTrainingDetail.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        actionLibraryName: 'Recovered Row',
+        actionLibraryGroupId: 'group-1',
+        finishedReps: [],
+      },
+    ]);
+
+    await syncSpeedianceData('user-1', 'user-1', {
+      providerId: 'provider-1',
+      fullSync: true,
+    });
+
+    expect(mocks.getTrainingDetail).toHaveBeenCalledTimes(2);
+    expect(mocks.processWorkouts).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      [
+        expect.objectContaining({
+          exercises: [
+            expect.objectContaining({
+              actionLibraryName: 'Recovered Row',
+              primaryMuscles: ['chest'],
+            }),
+          ],
+        }),
+      ],
       '2018-01-01',
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
       'Europe/Berlin'

@@ -235,12 +235,26 @@ export class SpeedianceApiClient {
         `/api/app/actionLibraryGroup/${encodeURIComponent(actionLibraryGroupId)}`,
         {
           headers: this.authenticatedHeaders(),
-          params: { isDisplay: 1 },
+          // Legacy groups return no muscle data with isDisplay=1, while both
+          // legacy and current groups expose it with isDisplay=0.
+          params: { isDisplay: 0 },
         }
       );
       return this.unwrap(response.data);
     } catch (error) {
       this.rethrowReadError(error, 'exercise metadata');
+    }
+  }
+
+  async getActionLibrary(actionLibraryId: string): Promise<unknown> {
+    try {
+      const response = await this.http.get(
+        `/api/app/actionLibrary/${encodeURIComponent(actionLibraryId)}`,
+        { headers: this.authenticatedHeaders() }
+      );
+      return this.unwrap(response.data);
+    } catch (error) {
+      this.rethrowReadError(error, 'exercise action metadata');
     }
   }
 
