@@ -1,0 +1,354 @@
+name: Review Upstream Changes
+
+on:
+  schedule:
+    # Daily; exact UTC time is intentionally off the busy top-of-hour window.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: sparkyfitness-upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: CodeWithCJ/SparkyFitness
+  UPSTREAM_BRANCH: main
+  SYNC_BRANCH: automation/upstream-sync
+
+jobs:
+  propose:
+    name: Propose upstream merge for review
+    if: github.repository == 'hbui3/SparkyFitness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Prepare review labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create upstream-sync \
+            --color "1D76DB" \
+            --description "Automated proposal containing official SparkyFitness upstream changes" \
+            --force
+          gh label create upstream-routine \
+            --color "C2E0C6" \
+            --description "No configured high-risk or overlapping paths detected" \
+            --force
+          gh label create upstream-review-required \
+            --color "FBCA04" \
+            --description "Touches fork-specific, sensitive, overlapping, or unusually large areas" \
+            --force
+          gh label create upstream-conflict \
+            --color "D93F0B" \
+            --description "The official upstream branch cannot be merged automatically" \
+            --force
+
+      - name: Analyze, merge, and open review pull request
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git" 2>/dev/null ||
+            git remote set-url upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+
+          BASE_SHA="$(git rev-parse HEAD)"
+          UPSTREAM_REF="upstream/${UPSTREAM_BRANCH}"
+          echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
+
+          if git merge-base --is-ancestor "${UPSTREAM_REF}" "${BASE_SHA}"; then
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+            echo "Fork main already contains every upstream commit." >> "${GITHUB_STEP_SUMMARY}"
+
+            CONFLICT_ISSUE="$(gh issue list \
+              --state open \
+              --label upstream-conflict \
+              --json number \
+              --jq '.[0].number // empty')"
+            if [[ -n "${CONFLICT_ISSUE}" ]]; then
+              gh issue close "${CONFLICT_ISSUE}" \
+                --comment "The conflict is no longer present; fork main now contains the available upstream commits."
+            fi
+            exit 0
+          fi
+
+          COMMON_BASE="$(git merge-base "${BASE_SHA}" "${UPSTREAM_REF}")"
+          INCOMING_FILE_LIST="${RUNNER_TEMP}/upstream-incoming-files.txt"
+          FORK_FILE_LIST="${RUNNER_TEMP}/fork-only-files.txt"
+          OVERLAP_FILE_LIST="${RUNNER_TEMP}/upstream-overlap-files.txt"
+          CRITICAL_FILE_LIST="${RUNNER_TEMP}/upstream-critical-files.txt"
+
+          git diff --name-only "${COMMON_BASE}..${UPSTREAM_REF}" |
+            sed '/^$/d' |
+            sort -u > "${INCOMING_FILE_LIST}"
+          git diff --name-only "${COMMON_BASE}..${BASE_SHA}" |
+            sed '/^$/d' |
+            sort -u > "${FORK_FILE_LIST}"
+          comm -12 "${INCOMING_FILE_LIST}" "${FORK_FILE_LIST}" > "${OVERLAP_FILE_LIST}"
+
+          grep -Ei \
+            '(^|/)(coach|telegram|speediance|auth)|^SparkyFitnessServer/db/migrations/|^SparkyFitnessServer/db/rls_policies\.sql$|^SparkyFitnessMobile/|^deploy/|^docker/|^\.github/workflows/|(^|/)(package\.json|pnpm-lock\.yaml)$' \
+            "${INCOMING_FILE_LIST}" > "${CRITICAL_FILE_LIST}" || true
+
+          INCOMING_COMMITS="$(git rev-list --count "${BASE_SHA}..${UPSTREAM_REF}")"
+          CHANGED_FILES="$(wc -l < "${INCOMING_FILE_LIST}" | tr -d ' ')"
+          OVERLAP_FILES="$(wc -l < "${OVERLAP_FILE_LIST}" | tr -d ' ')"
+          CRITICAL_FILES="$(wc -l < "${CRITICAL_FILE_LIST}" | tr -d ' ')"
+          CHANGED_LINES="$(
+            git diff --numstat "${COMMON_BASE}..${UPSTREAM_REF}" |
+              awk '
+                $1 ~ /^[0-9]+$/ { added += $1 }
+                $2 ~ /^[0-9]+$/ { deleted += $2 }
+                END { print added + deleted + 0 }
+              '
+          )"
+
+          LARGE_CHANGE=false
+          if (( INCOMING_COMMITS >= 20 || CHANGED_FILES >= 50 || CHANGED_LINES >= 1500 )); then
+            LARGE_CHANGE=true
+          fi
+
+          REVIEW_REQUIRED=false
+          if (( OVERLAP_FILES > 0 || CRITICAL_FILES > 0 )) || [[ "${LARGE_CHANGE}" == "true" ]]; then
+            REVIEW_REQUIRED=true
+          fi
+
+          DOCS_CHANGED=false
+          if grep -Eq '^docs/' "${INCOMING_FILE_LIST}"; then
+            DOCS_CHANGED=true
+          fi
+
+          echo "docs_changed=${DOCS_CHANGED}" >> "${GITHUB_OUTPUT}"
+          echo "review_required=${REVIEW_REQUIRED}" >> "${GITHUB_OUTPUT}"
+
+          git switch -C "${SYNC_BRANCH}" "${BASE_SHA}"
+
+          if ! git merge \
+            --no-ff \
+            -m "chore: merge ${UPSTREAM_REPOSITORY}@${UPSTREAM_BRANCH}" \
+            "${UPSTREAM_REF}"; then
+            CONFLICT_FILE_LIST="${RUNNER_TEMP}/upstream-conflict-files.txt"
+            git diff --name-only --diff-filter=U | sort -u > "${CONFLICT_FILE_LIST}"
+            git merge --abort
+
+            CONFLICT_BODY="${RUNNER_TEMP}/upstream-conflict.md"
+            {
+              printf '## Upstream sync is blocked\n\n'
+              printf 'The scheduled merge of `%s/%s` into fork `main` has conflicts. Nothing was merged or deployed.\n\n' \
+                "${UPSTREAM_REPOSITORY}" "${UPSTREAM_BRANCH}"
+              printf -- '- Fork base: `%s`\n' "${BASE_SHA}"
+              printf -- '- Upstream head: `%s`\n' "$(git rev-parse "${UPSTREAM_REF}")"
+              printf -- '- Incoming commits: **%s**\n\n' "${INCOMING_COMMITS}"
+              printf '### Conflicting files\n\n'
+              while IFS= read -r file; do
+                printf -- '- `%s`\n' "${file}"
+              done < "${CONFLICT_FILE_LIST}"
+              printf '\nA human must decide how the fork-specific behavior and the upstream version should be combined.\n'
+            } > "${CONFLICT_BODY}"
+
+            CONFLICT_ISSUE="$(gh issue list \
+              --state open \
+              --label upstream-conflict \
+              --json number \
+              --jq '.[0].number // empty')"
+            if [[ -n "${CONFLICT_ISSUE}" ]]; then
+              gh issue edit "${CONFLICT_ISSUE}" \
+                --title "Upstream sync requires a conflict decision" \
+                --body-file "${CONFLICT_BODY}" \
+                --add-label upstream-sync \
+                --add-label upstream-conflict
+            else
+              gh issue create \
+                --title "Upstream sync requires a conflict decision" \
+                --body-file "${CONFLICT_BODY}" \
+                --label upstream-sync \
+                --label upstream-conflict
+            fi
+
+            OPEN_PR="$(gh pr list \
+              --base main \
+              --head "${SYNC_BRANCH}" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty')"
+            if [[ -n "${OPEN_PR}" ]]; then
+              gh pr ready "${OPEN_PR}" --undo || true
+              gh pr edit "${OPEN_PR}" --add-label upstream-conflict
+              gh pr comment "${OPEN_PR}" \
+                --body "A newer upstream update has merge conflicts. The PR was returned to draft and was not updated; see the open `upstream-conflict` issue."
+            fi
+
+            echo "::error::Upstream merge conflict requires a manual decision."
+            exit 1
+          fi
+
+          git fetch origin "${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}" 2>/dev/null || true
+          git push --force-with-lease origin "HEAD:refs/heads/${SYNC_BRANCH}"
+
+          PR_BODY="${RUNNER_TEMP}/upstream-sync-pr.md"
+          {
+            printf '## Description\n\n'
+            printf 'This pull request mechanically merges the latest changes from [`%s`](https://github.com/%s) into this fork. It is never merged automatically.\n\n' \
+              "${UPSTREAM_REPOSITORY}" "${UPSTREAM_REPOSITORY}"
+            printf -- '- Fork base: `%s`\n' "${BASE_SHA}"
+            printf -- '- Upstream head: [`%s`](https://github.com/%s/commit/%s)\n' \
+              "$(git rev-parse --short "${UPSTREAM_REF}")" \
+              "${UPSTREAM_REPOSITORY}" \
+              "$(git rev-parse "${UPSTREAM_REF}")"
+            printf -- '- Incoming commits: **%s**\n' "${INCOMING_COMMITS}"
+            printf -- '- Changed files: **%s**\n' "${CHANGED_FILES}"
+            printf -- '- Added/deleted lines: **%s**\n\n' "${CHANGED_LINES}"
+
+            printf '## Review classification\n\n'
+            if [[ "${REVIEW_REQUIRED}" == "true" ]]; then
+              printf '> [!WARNING]\n'
+              printf '> **Focused manual review required.** The update touches sensitive or fork-modified files, or exceeds the configured size threshold.\n\n'
+            else
+              printf '> [!NOTE]\n'
+              printf '> No configured sensitive or overlapping paths were detected. A manual merge decision is still required.\n\n'
+            fi
+
+            if (( OVERLAP_FILES > 0 )); then
+              printf '### Files changed both upstream and in this fork\n\n'
+              while IFS= read -r file; do
+                printf -- '- `%s`\n' "${file}"
+              done < "${OVERLAP_FILE_LIST}"
+              printf '\n'
+            fi
+
+            if (( CRITICAL_FILES > 0 )); then
+              printf '### Sensitive areas touched upstream\n\n'
+              while IFS= read -r file; do
+                printf -- '- `%s`\n' "${file}"
+              done < "${CRITICAL_FILE_LIST}"
+              printf '\n'
+            fi
+
+            if [[ "${LARGE_CHANGE}" == "true" ]]; then
+              printf '### Large-change threshold reached\n\n'
+              printf 'At least one threshold was reached: 20 commits, 50 files, or 1,500 changed lines.\n\n'
+            fi
+
+            printf '## Incoming commits\n\n'
+            COMMIT_INDEX=0
+            while IFS= read -r commit_line; do
+              COMMIT_INDEX=$((COMMIT_INDEX + 1))
+              if (( COMMIT_INDEX <= 80 )); then
+                printf -- '- %s\n' "${commit_line}"
+              fi
+            done < <(
+              git log \
+                --format="[\`%h\`](https://github.com/${UPSTREAM_REPOSITORY}/commit/%H) %s" \
+                "${BASE_SHA}..${UPSTREAM_REF}"
+            )
+            if (( COMMIT_INDEX > 80 )); then
+              printf -- '- …and %s more commits\n' "$((COMMIT_INDEX - 80))"
+            fi
+            printf '\n'
+
+            printf '<details>\n<summary>All incoming files</summary>\n\n'
+            while IFS= read -r file; do
+              printf -- '- `%s`\n' "${file}"
+            done < "${INCOMING_FILE_LIST}"
+            printf '\n</details>\n\n'
+
+            printf '## How to review and deploy\n\n'
+            printf '1. Inspect the overlap and sensitive-area sections above.\n'
+            printf '2. Wait for the explicitly dispatched CI and documentation checks.\n'
+            printf '3. Mark this draft ready and merge only when the behavior is accepted.\n'
+            printf '4. The existing Unraid deployment runs only after the merged `main` commit passes CI.\n\n'
+            printf '_Generated by `.github/workflows/upstream-sync.yml`._\n'
+          } > "${PR_BODY}"
+
+          PR_NUMBER="$(gh pr list \
+            --base main \
+            --head "${SYNC_BRANCH}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "${PR_NUMBER}" ]]; then
+            gh pr edit "${PR_NUMBER}" \
+              --title "chore: review latest SparkyFitness upstream changes" \
+              --body-file "${PR_BODY}"
+            gh pr ready "${PR_NUMBER}" --undo || true
+          else
+            gh pr create \
+              --base main \
+              --head "${SYNC_BRANCH}" \
+              --draft \
+              --title "chore: review latest SparkyFitness upstream changes" \
+              --body-file "${PR_BODY}"
+            PR_NUMBER="$(gh pr list \
+              --base main \
+              --head "${SYNC_BRANCH}" \
+              --state open \
+              --json number \
+              --jq '.[0].number')"
+          fi
+
+          gh pr edit "${PR_NUMBER}" --add-label upstream-sync
+          gh pr edit "${PR_NUMBER}" --remove-label upstream-conflict || true
+
+          if [[ "${REVIEW_REQUIRED}" == "true" ]]; then
+            gh pr edit "${PR_NUMBER}" --add-label upstream-review-required
+            gh pr edit "${PR_NUMBER}" --remove-label upstream-routine || true
+          else
+            gh pr edit "${PR_NUMBER}" --add-label upstream-routine
+            gh pr edit "${PR_NUMBER}" --remove-label upstream-review-required || true
+          fi
+
+          CONFLICT_ISSUE="$(gh issue list \
+            --state open \
+            --label upstream-conflict \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [[ -n "${CONFLICT_ISSUE}" ]]; then
+            gh issue close "${CONFLICT_ISSUE}" \
+              --comment "The newest upstream state now merges cleanly and is available in PR #${PR_NUMBER}."
+          fi
+
+          echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+          echo "pr_number=${PR_NUMBER}" >> "${GITHUB_OUTPUT}"
+          {
+            printf 'Upstream review PR: #%s\n\n' "${PR_NUMBER}"
+            printf -- '- Incoming commits: %s\n' "${INCOMING_COMMITS}"
+            printf -- '- Changed files: %s\n' "${CHANGED_FILES}"
+            printf -- '- Fork/upstream overlaps: %s\n' "${OVERLAP_FILES}"
+            printf -- '- Sensitive files: %s\n' "${CRITICAL_FILES}"
+            printf -- '- Focused review required: %s\n' "${REVIEW_REQUIRED}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Dispatch code and container checks
+        if: steps.sync.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.sync.outputs.base_sha }}
+        run: |
+          gh workflow run ci-tests.yml \
+            --ref "${SYNC_BRANCH}" \
+            --field "base_sha=${BASE_SHA}"
+
+      - name: Dispatch documentation build
+        if: steps.sync.outputs.has_changes == 'true' && steps.sync.outputs.docs_changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs-test.yml --ref "${SYNC_BRANCH}"
