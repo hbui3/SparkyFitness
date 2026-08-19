@@ -100,7 +100,7 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - External-provider setup and manual sync (including Speediance and iGPSPORT regions/credentials): `src/pages/Settings/ProviderSpecificFields.tsx`, `EditProviderForm.tsx`, `ProviderCard.tsx`, `src/api/Integrations/integrations.ts`, and `src/hooks/Integrations/useIntegrations.ts`.
 - Missing/wrong UI text: the i18n key in `public/locales/en/translation.json` and the `t('...')` call site.
 - Chart issue: Recharts usage in the domain page plus `src/components/ExerciseCharts/` or `ZoomableChart.tsx`.
-- Report workout source or mirrored-provider display issue: `src/pages/Reports/ReportsTables.tsx`, `NutritionPeriodSummary.tsx`, and the server's canonical workout service; do not reimplement provider overlap rules in the component.
+- Report source/provenance display or mirrored-workout issue: `src/pages/Reports/ReportsTables.tsx`, `src/utils/sourceLabels.ts`, `src/utils/reportUtil.ts`, `NutritionPeriodSummary.tsx`, and the server report/canonical-workout services. Body measurement sources are per metric; do not reimplement provider overlap rules in the component.
 
 ## Priority Rule
 

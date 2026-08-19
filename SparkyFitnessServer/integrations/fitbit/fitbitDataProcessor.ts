@@ -54,7 +54,8 @@ async function processFitbitProfile(
     userId,
     createdByUserId,
     syncDate,
-    { height }
+    { height },
+    'Fitbit'
   );
   log(
     'info',
@@ -129,7 +130,8 @@ async function processFitbitSteps(
         userId,
         createdByUserId,
         steps,
-        entryDate
+        entryDate,
+        'Fitbit'
       );
       log('info', `Upserted Fitbit steps for user ${userId} on ${entryDate}.`);
     }
@@ -158,7 +160,8 @@ async function processFitbitWeight(
       userId,
       createdByUserId,
       entryDate,
-      { weight }
+      { weight },
+      'Fitbit'
     );
     log(
       'info',
@@ -187,7 +190,8 @@ async function processFitbitBodyFat(
         userId,
         createdByUserId,
         entryDate,
-        { body_fat_percentage: fat }
+        { body_fat_percentage: fat },
+        'Fitbit'
       );
       log(
         'info',
@@ -591,7 +595,7 @@ async function processFitbitActivities(
   startDate = null
 ) {
   if (!data || !data.activities || data.activities.length === 0) return;
-  const stepsPerDay = {};
+  const stepsPerDay: Record<string, number> = {};
   for (const activity of data.activities) {
     const entryDate = activity.startTime.substring(0, 10);
     // Safety filter to prevent processing very old data
@@ -605,7 +609,6 @@ async function processFitbitActivities(
     // Accumulate steps for fallback logic
     const activitySteps = activity.steps || 0;
     if (activitySteps > 0) {
-      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       stepsPerDay[entryDate] = (stepsPerDay[entryDate] || 0) + activitySteps;
     }
     const exerciseName = activity.activityName || 'Fitbit Activity';
@@ -672,9 +675,16 @@ async function processFitbitActivities(
         endDateRange
       );
     // Map existing measurements by date for O(1) lookups
-    const measurementsByDate = {};
+    const measurementsByDate: Record<
+      string,
+      { entry_date: string | Date; steps?: string | number | null }
+    > = {};
     if (existingMeasurements && Array.isArray(existingMeasurements)) {
-      existingMeasurements.forEach((m) => {
+      const rows = existingMeasurements as Array<{
+        entry_date: string | Date;
+        steps?: string | number | null;
+      }>;
+      rows.forEach((m) => {
         let dateKey = m.entry_date;
         // Handle different possible types for entry_date (Date object or string)
         if (dateKey instanceof Date) {
@@ -682,21 +692,20 @@ async function processFitbitActivities(
         } else if (typeof dateKey === 'string' && dateKey.includes('T')) {
           dateKey = dateKey.split('T')[0];
         }
-        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
-        measurementsByDate[dateKey] = m;
+        measurementsByDate[String(dateKey)] = m;
       });
     }
     for (const [date, totalActivitySteps] of Object.entries(stepsPerDay)) {
-      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       const existing = measurementsByDate[date];
       const currentSteps =
-        existing && existing.steps ? parseInt(existing.steps, 10) : 0;
+        existing?.steps !== null && existing?.steps !== undefined
+          ? parseInt(String(existing.steps), 10)
+          : 0;
       log(
         'debug',
         `[fitbitDataProcessor] Date: ${date}, Activity Steps: ${totalActivitySteps}, Current Steps: ${currentSteps}`
       );
       // Only upsert if our activity total is higher
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       if (totalActivitySteps > currentSteps) {
         log(
           'info',
@@ -706,7 +715,8 @@ async function processFitbitActivities(
           userId,
           createdByUserId,
           totalActivitySteps,
-          date
+          date,
+          'Fitbit'
         );
       }
     }

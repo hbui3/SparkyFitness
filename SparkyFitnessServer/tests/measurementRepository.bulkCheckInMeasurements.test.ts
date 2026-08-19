@@ -52,8 +52,17 @@ describe('measurementRepository.bulkUpsertCheckInMeasurements', () => {
       'user-1',
       'acting-1',
       [
-        { entryDate: '2025-02-01', measurements: { steps: 5000 } },
-        { entryDate: '2025-02-01', measurements: { weight: 70.5 } },
+        {
+          entryDate: '2025-02-01',
+          measurements: { steps: 5000 },
+          source: 'HealthKit',
+        },
+        {
+          entryDate: '2025-02-01',
+          measurements: { weight: 70.5 },
+          source: 'Withings',
+          sourceId: 'scale-1',
+        },
       ]
     );
 
@@ -67,6 +76,10 @@ describe('measurementRepository.bulkUpsertCheckInMeasurements', () => {
     // user in created_by/updated_by.
     expect(insert!.text).toContain('steps, weight');
     expect(insert!.text).toContain("('user-1', '2025-02-01', '5000', '70.5'");
+    expect(insert!.text).toContain('"steps":{"source":"HealthKit"}');
+    expect(insert!.text).toContain(
+      '"weight":{"source":"Withings","source_id":"scale-1"}'
+    );
     expect(insert!.text).toContain("'acting-1', 'acting-1'");
     expect((insert!.text.match(/\('user-1'/g) ?? []).length).toBe(1);
     // Both input entries share the merged written row.
@@ -88,14 +101,23 @@ describe('measurementRepository.bulkUpsertCheckInMeasurements', () => {
       'user-1',
       'acting-1',
       [
-        { entryDate: '2025-02-01', measurements: { weight: 70.5 } },
-        { entryDate: '2025-02-01', measurements: { weight: 71 } },
+        {
+          entryDate: '2025-02-01',
+          measurements: { weight: 70.5 },
+          source: 'HealthKit',
+        },
+        {
+          entryDate: '2025-02-01',
+          measurements: { weight: 71 },
+          source: 'Withings',
+        },
       ]
     );
 
     const insert = findCall('INSERT INTO check_in_measurements');
     expect(insert!.text).toContain("'71'");
     expect(insert!.text).not.toContain("'70.5'");
+    expect(insert!.text).toContain('"weight":{"source":"Withings"}');
   });
 
   it('updates existing dates and inserts new ones in one transaction', async () => {
@@ -135,6 +157,10 @@ describe('measurementRepository.bulkUpsertCheckInMeasurements', () => {
     expect(update!.values![0]).toBe('acting-1');
     expect(update!.values![1]).toEqual(['ci-existing']);
     expect(update!.text).toContain('updated_by_user_id = $1');
+    expect(update!.text).toContain('source_provenance =');
+    expect(update!.values!.at(-1)).toEqual([
+      JSON.stringify({ weight: { source: 'manual' } }),
+    ]);
     const insert = findCall('INSERT INTO check_in_measurements');
     expect(insert!.text).toContain("'2025-02-02'");
     expect(result).toEqual([updatedRow, insertedRow]);
@@ -171,6 +197,7 @@ describe('measurementRepository.bulkUpsertCheckInMeasurements', () => {
     expect(update!.text).toContain('steps = GREATEST(u.steps, cm.steps)');
     expect(update!.text).toContain('weight = COALESCE(u.weight, cm.weight)');
     expect(update!.text).not.toContain('steps = COALESCE');
+    expect(update!.text).toContain("u.source_provenance - 'steps'");
   });
 
   it('filters unauthorized measurement keys and skips entries left empty', async () => {

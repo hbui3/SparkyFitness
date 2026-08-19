@@ -96,13 +96,24 @@ describe('measurementRepository.upsertStepData', () => {
       'user-1',
       'acting-1',
       4252,
-      '2026-07-07'
+      '2026-07-07',
+      'HealthKit',
+      'watch-steps-1'
     );
 
     const update = findQuery('UPDATE check_in_measurements');
     expect(update).toBeDefined();
     expect(update.text).toContain('steps = GREATEST($1::integer, steps)');
-    expect(update.values).toEqual([4252, 'acting-1', '2026-07-07', 'user-1']);
+    expect(update.values).toEqual([
+      4252,
+      'acting-1',
+      '2026-07-07',
+      'user-1',
+      JSON.stringify({
+        steps: { source: 'HealthKit', source_id: 'watch-steps-1' },
+      }),
+    ]);
+    expect(update.text).toContain('source_provenance = CASE');
   });
 
   it('inserts the incoming value verbatim when no row exists for the day', async () => {
@@ -123,6 +134,12 @@ describe('measurementRepository.upsertStepData', () => {
     expect(findQuery('UPDATE check_in_measurements')).toBeUndefined();
     const insert = findQuery('INSERT INTO check_in_measurements');
     expect(insert).toBeDefined();
-    expect(insert.values).toEqual(['user-1', '2026-07-07', 4252, 'acting-1']);
+    expect(insert.values).toEqual([
+      'user-1',
+      '2026-07-07',
+      4252,
+      'acting-1',
+      JSON.stringify({ steps: { source: 'manual' } }),
+    ]);
   });
 });

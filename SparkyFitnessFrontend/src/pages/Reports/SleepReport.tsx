@@ -11,6 +11,7 @@ import type {
   SleepStageEvent,
 } from '@/types';
 import { useTranslation } from 'react-i18next';
+import { prettifySourceList } from '@/utils/sourceLabels';
 import { toast as sonnerToast } from 'sonner';
 import { formatDateToYYYYMMDD } from '@/lib/utils';
 import {
@@ -90,7 +91,7 @@ const SleepReport = ({ startDate, endDate }: SleepReportProps) => {
           ? `${(sleepAnalyticsData.weight * 100).toFixed(0)}%`
           : '0%',
         sleepAnalyticsData.awakePeriods.toString(),
-        sleepEntry.source,
+        prettifySourceList(sleepEntry.source),
         insight,
       ];
     });

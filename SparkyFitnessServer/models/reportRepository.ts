@@ -157,13 +157,10 @@ async function getNutritionData(
   }
 }
 async function getTabularFoodData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any,
-  customNutrients = []
+  userId: string,
+  startDate: string,
+  endDate: string,
+  customNutrients: Array<{ name: string }> = []
 ) {
   const client = await getClient(userId); // User-specific operation
   try {
@@ -171,17 +168,14 @@ async function getTabularFoodData(
     const customNutrientsSelectCTE = customNutrients
       .map(
         (cn) =>
-          // @ts-expect-error TS(2339): Property 'name' does not exist on type 'never'.
           `(COALESCE(NULLIF(fe.custom_nutrients->>'${cn.name}', '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${cn.name}"`
       )
       .join(',\n          ');
     const customNutrientsSelectOuter = customNutrients
-      // @ts-expect-error TS(2339): Property 'name' does not exist on type 'never'.
       .map((cn) => `cfe."${cn.name}"`)
       .join(',\n        ');
     // Note: cfe_meal values already include scaled quantity, so do NOT multiply by fem.quantity
     const customNutrientsSelectMealAgg = customNutrients
-      // @ts-expect-error TS(2339): Property 'name' does not exist on type 'never'.
       .map((cn) => `SUM(cfe_meal."${cn.name}") AS "${cn.name}"`)
       .join(',\n        ');
     const result = await client.query(
@@ -198,6 +192,8 @@ async function getTabularFoodData(
           fe.user_id,
           fe.food_name,
           fe.brand_name,
+          COALESCE(fe.source, 'manual') AS source,
+          fe.source_id,
           (fe.calories * fe.quantity / fe.serving_size) AS calories,
           (fe.protein * fe.quantity / fe.serving_size) AS protein,
           (fe.carbs * fe.quantity / fe.serving_size) AS carbs,
@@ -238,6 +234,8 @@ async function getTabularFoodData(
         cfe.user_id,
         cfe.food_name,
         cfe.brand_name,
+        cfe.source,
+        cfe.source_id,
         cfe.calories,
         cfe.protein,
         cfe.carbs,
@@ -277,6 +275,14 @@ async function getTabularFoodData(
         fem.user_id,
         fem.name AS food_name, -- Meal name as food_name
         fem.description AS brand_name, -- Meal description as brand_name
+        string_agg(
+          DISTINCT COALESCE(cfe_meal.source, 'manual'),
+          ', ' ORDER BY COALESCE(cfe_meal.source, 'manual')
+        ) AS source,
+        string_agg(
+          DISTINCT cfe_meal.source_id,
+          ', ' ORDER BY cfe_meal.source_id
+        ) FILTER (WHERE cfe_meal.source_id IS NOT NULL) AS source_id,
         -- Note: cfe_meal values already include scaled quantity (fe.quantity is pre-scaled),
         -- so we should NOT multiply by fem.quantity again
         SUM(cfe_meal.calories) AS calories,
@@ -371,12 +377,21 @@ async function getTabularFoodData(
     client.release();
   }
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getMeasurementData(userId: any, startDate: any, endDate: any) {
+async function getMeasurementData(
+  userId: string,
+  startDate: string,
+  endDate: string
+) {
   const client = await getClient(userId); // User-specific operation
   try {
     const result = await client.query(
-      "SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS entry_date, weight, neck, waist, hips, steps, height, body_fat_percentage FROM check_in_measurements WHERE user_id = $1 AND entry_date BETWEEN $2 AND $3 ORDER BY entry_date",
+      `SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS entry_date,
+              weight, neck, waist, hips, steps, height,
+              body_fat_percentage, muscle_mass_kg, bone_mass_kg,
+              body_water_percentage, source_provenance
+       FROM check_in_measurements
+       WHERE user_id = $1 AND entry_date BETWEEN $2 AND $3
+       ORDER BY entry_date`,
       [userId, startDate, endDate]
     );
     return result.rows;
@@ -385,14 +400,10 @@ async function getMeasurementData(userId: any, startDate: any, endDate: any) {
   }
 }
 async function getCustomMeasurementsData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  categoryId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any
+  userId: string,
+  categoryId: string,
+  startDate: string,
+  endDate: string
 ) {
   const client = await getClient(userId); // User-specific operation
   try {
@@ -405,13 +416,13 @@ async function getCustomMeasurementsData(
       `WITH ranked AS (
            SELECT category_id,
                   TO_CHAR(entry_date, 'YYYY-MM-DD') AS entry_date,
-                  entry_hour, value, notes, entry_timestamp,
+                  entry_hour, value, notes, entry_timestamp, source,
                   row_number() OVER (ORDER BY entry_date, entry_timestamp) AS rn,
                   count(*) OVER () AS total
            FROM custom_measurements
            WHERE user_id = $1 AND category_id = $2 AND entry_date BETWEEN $3 AND $4
          )
-         SELECT category_id, entry_date, entry_hour, value, notes, entry_timestamp
+         SELECT category_id, entry_date, entry_hour, value, notes, entry_timestamp, source
          FROM ranked
          WHERE total <= $5 OR (rn - 1) % GREATEST(1, CEIL(total::float / $5)::bigint) = 0
          ORDER BY entry_date, entry_timestamp`,

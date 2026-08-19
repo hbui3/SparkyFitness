@@ -657,8 +657,9 @@ const checkInHandleBatch: HandleBatchFn = async (entries, ctx) => {
   const writes: Array<{
     index: number;
     entryDate: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    measurements: Record<string, any>;
+    measurements: Record<string, unknown>;
+    source: string;
+    sourceId: string | null;
   }> = [];
   for (let i = 0; i < entries.length; i++) {
     const prepared = prepareCheckInMeasurement(entries[i].entry);
@@ -670,6 +671,14 @@ const checkInHandleBatch: HandleBatchFn = async (entries, ctx) => {
       index: i,
       entryDate: entries[i].parsedDate,
       measurements: prepared.measurements,
+      source:
+        typeof entries[i].entry.source === 'string'
+          ? entries[i].entry.source
+          : 'manual',
+      sourceId:
+        typeof entries[i].entry.source_id === 'string'
+          ? entries[i].entry.source_id
+          : null,
     });
   }
   if (writes.length > 0) {
@@ -677,9 +686,11 @@ const checkInHandleBatch: HandleBatchFn = async (entries, ctx) => {
       const written = await measurementRepository.bulkUpsertCheckInMeasurements(
         ctx.userId,
         ctx.actingUserId,
-        writes.map(({ entryDate, measurements }) => ({
+        writes.map(({ entryDate, measurements, source, sourceId }) => ({
           entryDate,
           measurements,
+          source,
+          sourceId,
         }))
       );
       writes.forEach((write, position) => {

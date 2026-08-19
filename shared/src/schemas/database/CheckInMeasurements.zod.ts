@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+export const measurementSourceProvenanceEntrySchema = z.object({
+  source: z.string(),
+  source_id: z.string().nullable().optional(),
+});
+
+export const measurementSourceProvenanceSchema = z.record(
+  z.string(),
+  measurementSourceProvenanceEntrySchema,
+);
+
+export type MeasurementSourceProvenanceEntry = z.infer<
+  typeof measurementSourceProvenanceEntrySchema
+>;
+export type MeasurementSourceProvenance = z.infer<
+  typeof measurementSourceProvenanceSchema
+>;
+
 export const checkInMeasurementsSchema = z.object({
   id: z.string(),
   user_id: z.string(),
@@ -18,6 +35,7 @@ export const checkInMeasurementsSchema = z.object({
   muscle_mass_kg: z.number().nullable(),
   bone_mass_kg: z.number().nullable(),
   body_water_percentage: z.number().nullable(),
+  source_provenance: measurementSourceProvenanceSchema,
 });
 
 export const checkInMeasurementsInitializerSchema = z.object({
@@ -38,10 +56,18 @@ export const checkInMeasurementsInitializerSchema = z.object({
   muscle_mass_kg: z.number().optional().nullable(),
   bone_mass_kg: z.number().optional().nullable(),
   body_water_percentage: z.number().optional().nullable(),
+  source_provenance: measurementSourceProvenanceSchema.optional(),
 });
 
-export const checkInMeasurementsMutatorSchema = checkInMeasurementsInitializerSchema.partial();
+export const checkInMeasurementsMutatorSchema =
+  checkInMeasurementsInitializerSchema.partial();
 
-export type DatabaseCheckInMeasurements = z.infer<typeof checkInMeasurementsSchema>;
-export type DatabaseCheckInMeasurementsInitializer = z.infer<typeof checkInMeasurementsInitializerSchema>;
-export type DatabaseCheckInMeasurementsMutator = z.infer<typeof checkInMeasurementsMutatorSchema>;
+export type DatabaseCheckInMeasurements = z.infer<
+  typeof checkInMeasurementsSchema
+>;
+export type DatabaseCheckInMeasurementsInitializer = z.infer<
+  typeof checkInMeasurementsInitializerSchema
+>;
+export type DatabaseCheckInMeasurementsMutator = z.infer<
+  typeof checkInMeasurementsMutatorSchema
+>;

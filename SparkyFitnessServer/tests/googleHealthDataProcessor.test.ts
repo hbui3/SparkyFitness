@@ -105,7 +105,13 @@ describe('processGoogleWeight', () => {
     await processGoogleWeight(UID, CID, dataPoints(point));
     expect(
       measurementRepository.upsertCheckInMeasurements
-    ).toHaveBeenCalledWith(UID, CID, '2026-05-01', { weight: 70 });
+    ).toHaveBeenCalledWith(
+      UID,
+      CID,
+      '2026-05-01',
+      { weight: 70 },
+      'Google Health'
+    );
   });
 });
 

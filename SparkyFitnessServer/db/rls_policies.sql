@@ -615,6 +615,8 @@ CREATE POLICY admin_only_insert ON public.admin_activity_logs FOR INSERT TO PUBL
 WITH CHECK (admin_user_id = current_user_id() AND is_admin());
 
 -- Diary access tables
+-- Per-metric source_provenance is part of the same check-in row and therefore
+-- inherits the identical check-in/report delegation boundary.
 SELECT create_checkin_policy('check_in_measurements');
 SELECT create_checkin_policy('check_in_photos');
 -- Custom categories/measurements are surfaced through the check-in feature and

@@ -12,6 +12,7 @@ import { parseISO, subDays, subYears } from 'date-fns';
 import { formatDateToYYYYMMDD } from '@/lib/utils';
 import { getEnergyUnitString } from './nutritionCalculations';
 import { getNetCarbsValue } from './nutrientUtils';
+import { prettifySourceList } from './sourceLabels';
 import { UserCustomNutrient } from '@/types/customNutrient';
 import {
   DailyExerciseEntry,
@@ -333,6 +334,7 @@ export const exportFoodDiary = async ({
       i18n.t('reports.foodDiaryExportHeaders.meal', 'Meal'),
       i18n.t('reports.foodDiaryExportHeaders.food', 'Food'),
       i18n.t('reports.foodDiaryExportHeaders.brand', 'Brand'),
+      i18n.t('reports.foodDiaryExportHeaders.source', 'Source'),
       i18n.t('reports.foodDiaryExportHeaders.quantity', 'Quantity'),
       i18n.t('reports.foodDiaryExportHeaders.unit', 'Unit'),
       i18n.t('reports.foodDiaryExportHeaders.calories', 'Calories ({{unit}})', {
@@ -507,6 +509,7 @@ export const exportFoodDiary = async ({
             entry.meal_type,
             foodName,
             brandName,
+            prettifySourceList(entry.source),
             entry.quantity.toString(),
             entry.unit,
             Math.round(convertEnergy(calories, 'kcal', energyUnit)).toString(),
@@ -544,6 +547,7 @@ export const exportFoodDiary = async ({
         csvRows.push([
           formatDateInUserTimezone(date, 'MMM dd, yyyy'),
           i18n.t('reports.foodDiaryExportTotals.total', 'Total'),
+          '',
           '',
           '',
           '',
@@ -682,7 +686,7 @@ export const exportExerciseEntries = async ({
     const csvRows = exerciseEntries.map((entry) => [
       formatDateInUserTimezone(entry.entry_date, 'MMM dd, yyyy'),
       entry.exercises.name,
-      entry.source ?? entry.exercises.source ?? '',
+      prettifySourceList(entry.source ?? entry.exercises.source),
       entry.duration_minutes.toString(),
       Math.round(
         convertEnergy(entry.calories_burned, 'kcal', energyUnit)
@@ -775,6 +779,7 @@ export const exportBodyMeasurements = async ({
 
     const csvHeaders = [
       i18n.t('reports.bodyMeasurementsExportHeaders.date', 'Date'),
+      i18n.t('reports.bodyMeasurementsExportHeaders.source', 'Source'),
       i18n.t(
         'reports.bodyMeasurementsExportHeaders.weight',
         `Weight(${defaultWeightUnit})`
@@ -800,7 +805,46 @@ export const exportBodyMeasurements = async ({
         'reports.bodyMeasurementsExportHeaders.bodyFatPercentage',
         'Body Fat %'
       ),
+      i18n.t(
+        'reports.bodyMeasurementsExportHeaders.muscleMass',
+        'Muscle Mass ({{unit}})',
+        { unit: defaultWeightUnit }
+      ),
+      i18n.t(
+        'reports.bodyMeasurementsExportHeaders.boneMass',
+        'Bone Mass ({{unit}})',
+        { unit: defaultWeightUnit }
+      ),
+      i18n.t('reports.bodyMeasurementsExportHeaders.bodyWater', 'Body Water %'),
     ];
+
+    const sourceFields = [
+      {
+        key: 'weight',
+        label: i18n.t('reportsTables.weight', 'Weight'),
+      },
+      { key: 'neck', label: i18n.t('reportsTables.neck', 'Neck') },
+      { key: 'waist', label: i18n.t('reportsTables.waist', 'Waist') },
+      { key: 'hips', label: i18n.t('reportsTables.hips', 'Hips') },
+      { key: 'steps', label: i18n.t('reportsTables.steps', 'Steps') },
+      { key: 'height', label: i18n.t('reportsTables.height', 'Height') },
+      {
+        key: 'body_fat_percentage',
+        label: i18n.t('reportsTables.bodyFatPercentage', 'Body Fat %'),
+      },
+      {
+        key: 'muscle_mass_kg',
+        label: i18n.t('reportsTables.muscleMass', 'Muscle Mass'),
+      },
+      {
+        key: 'bone_mass_kg',
+        label: i18n.t('reportsTables.boneMass', 'Bone Mass'),
+      },
+      {
+        key: 'body_water_percentage',
+        label: i18n.t('reportsTables.bodyWater', 'Body Water %'),
+      },
+    ] as const;
 
     const csvRows = measurements
       .filter(
@@ -811,18 +855,37 @@ export const exportBodyMeasurements = async ({
           measurement.hips ||
           measurement.steps ||
           measurement.height ||
-          measurement.body_fat_percentage
+          measurement.body_fat_percentage ||
+          measurement.muscle_mass_kg ||
+          measurement.bone_mass_kg ||
+          measurement.body_water_percentage
       )
       .map((measurement) => [
         formatDateInUserTimezone(measurement.entry_date, 'MMM dd, yyyy'), // Format date for display
-        measurement.weight ? measurement.weight.toFixed(1) : '',
-        measurement.neck ? measurement.neck.toFixed(1) : '',
-        measurement.waist ? measurement.waist.toFixed(1) : '',
-        measurement.hips ? measurement.hips.toFixed(1) : '',
-        measurement.steps || '',
-        measurement.height ? measurement.height.toFixed(1) : '',
-        measurement.body_fat_percentage
+        sourceFields
+          .flatMap(({ key, label }) => {
+            const provenance = measurement.source_provenance?.[key];
+            if (measurement[key] == null || !provenance?.source) return [];
+            return [`${label}: ${prettifySourceList(provenance.source)}`];
+          })
+          .join('; '),
+        measurement.weight != null ? measurement.weight.toFixed(1) : '',
+        measurement.neck != null ? measurement.neck.toFixed(1) : '',
+        measurement.waist != null ? measurement.waist.toFixed(1) : '',
+        measurement.hips != null ? measurement.hips.toFixed(1) : '',
+        measurement.steps ?? '',
+        measurement.height != null ? measurement.height.toFixed(1) : '',
+        measurement.body_fat_percentage != null
           ? measurement.body_fat_percentage.toFixed(1)
+          : '',
+        measurement.muscle_mass_kg != null
+          ? measurement.muscle_mass_kg.toFixed(1)
+          : '',
+        measurement.bone_mass_kg != null
+          ? measurement.bone_mass_kg.toFixed(1)
+          : '',
+        measurement.body_water_percentage != null
+          ? measurement.body_water_percentage.toFixed(1)
           : '',
       ]);
 
@@ -916,6 +979,7 @@ export const exportCustomMeasurement = async ({
       i18n.t('reports.customMeasurementsExportHeaders.date', 'Date'),
       i18n.t('reports.customMeasurementsExportHeaders.time', 'Time'),
       i18n.t('reports.customMeasurementsExportHeaders.value', 'Value'),
+      i18n.t('reports.customMeasurementsExportHeaders.source', 'Source'),
     ];
     const csvRows = sortedMeasurements.map((measurement) => {
       let formattedHour: string = '';
@@ -936,6 +1000,7 @@ export const exportCustomMeasurement = async ({
           : '', // Format date for display
         formattedHour,
         measurement.value.toString(),
+        prettifySourceList(measurement.source),
       ];
     });
 

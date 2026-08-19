@@ -1,6 +1,7 @@
 import {
   checkInMeasurementsMutatorSchema,
   checkInMeasurementsSchema,
+  measurementSourceProvenanceSchema,
 } from "../database/CheckInMeasurements.zod.ts";
 import { z } from "zod";
 
@@ -21,6 +22,7 @@ export const checkInMeasurementsResponseSchema = checkInMeasurementsSchema
     muscle_mass_kg: z.number().nullish(),
     bone_mass_kg: z.number().nullish(),
     body_water_percentage: z.number().nullish(),
+    source_provenance: measurementSourceProvenanceSchema.optional(),
   })
   .omit({
     created_at: true,

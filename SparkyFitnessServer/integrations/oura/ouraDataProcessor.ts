@@ -351,7 +351,8 @@ async function processOuraDailyActivity(
         userId,
         createdByUserId,
         activity.steps,
-        entryDate
+        entryDate,
+        'Oura'
       );
       log(
         'info',

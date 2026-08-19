@@ -137,7 +137,12 @@ describe('processHealthData default units (#567)', () => {
       expect(
         measurementRepository.bulkUpsertCheckInMeasurements
       ).toHaveBeenCalledWith(userId, actingUserId, [
-        { entryDate: '2025-02-01', measurements: { height: expectedHeight } },
+        {
+          entryDate: '2025-02-01',
+          measurements: { height: expectedHeight },
+          source,
+          sourceId: null,
+        },
       ]);
       expect(measurementRepository.createCustomCategory).not.toHaveBeenCalled();
       expect(
@@ -202,6 +207,8 @@ describe('processHealthData default units (#567)', () => {
       {
         entryDate: '2025-02-01',
         measurements: { body_fat_percentage: 18.4 },
+        source: 'HealthConnect',
+        sourceId: null,
       },
     ]);
     expect(measurementRepository.createCustomCategory).not.toHaveBeenCalled();
@@ -240,8 +247,18 @@ describe('processHealthData default units (#567)', () => {
     expect(
       measurementRepository.bulkUpsertCheckInMeasurements
     ).toHaveBeenCalledWith(userId, actingUserId, [
-      { entryDate: '2025-02-01', measurements: { steps: 5000 } },
-      { entryDate: '2025-02-01', measurements: { weight: 70.5 } },
+      {
+        entryDate: '2025-02-01',
+        measurements: { steps: 5000 },
+        source: 'HealthKit',
+        sourceId: null,
+      },
+      {
+        entryDate: '2025-02-01',
+        measurements: { weight: 70.5 },
+        source: 'HealthKit',
+        sourceId: null,
+      },
     ]);
   });
 });

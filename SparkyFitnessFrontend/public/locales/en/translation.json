@@ -3163,6 +3163,7 @@
       "meal": "Meal",
       "food": "Food",
       "brand": "Brand",
+      "source": "Source",
       "quantity": "Quantity",
       "unit": "Unit",
       "calories": "Calories",
@@ -3202,18 +3203,23 @@
     },
     "bodyMeasurementsExportHeaders": {
       "date": "Date",
+      "source": "Source",
       "weight": "Weight ({{unit}})",
       "neck": "Neck ({{unit}})",
       "waist": "Waist ({{unit}})",
       "hips": "Hips ({{unit}})",
       "steps": "Steps",
       "height": "Height ({{unit}})",
-      "bodyFatPercentage": "Body Fat %"
+      "bodyFatPercentage": "Body Fat %",
+      "muscleMass": "Muscle Mass ({{unit}})",
+      "boneMass": "Bone Mass ({{unit}})",
+      "bodyWater": "Body Water %"
     },
     "customMeasurementsExportHeaders": {
       "date": "Date",
       "time": "Time",
-      "value": "Value"
+      "value": "Value",
+      "source": "Source"
     },
     "reportsControls": {
       "startDate": "Start Date",
@@ -3585,6 +3591,9 @@
     "steps": "Steps",
     "height": "Height",
     "bodyFatPercentage": "Body Fat %",
+    "muscleMass": "Muscle Mass",
+    "boneMass": "Bone Mass",
+    "bodyWater": "Body Water %",
     "meal": "Meal",
     "food": "Food",
     "quantity": "Quantity",

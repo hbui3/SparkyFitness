@@ -376,7 +376,9 @@ async function processWithingsMeasures(
         userId,
         createdByUserId,
         entryDate,
-        measurementsToUpsert
+        measurementsToUpsert,
+        'Withings',
+        group.grpid ? String(group.grpid) : null
       );
       log(
         'info',
@@ -833,7 +835,8 @@ async function processWithingsActivity(
         createdByUserId,
         // @ts-expect-error TS(2339): Property 'steps' does not exist on type 'never'.
         activity.steps,
-        entryDate
+        entryDate,
+        'Withings'
       );
       log(
         'info',
