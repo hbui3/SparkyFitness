@@ -120,7 +120,7 @@ export function MuscleBodyMap(props: MuscleBodyMapProps) {
           .sort(
             (first, second) => STATUS_PRIORITY[second] - STATUS_PRIORITY[first]
           )[0];
-        path.classList.add(status ? `map-${status}` : 'map-inactive');
+        path.classList.add(`map-${status ?? 'ready'}`);
       }
     }
   }, [
@@ -166,10 +166,6 @@ export function MuscleBodyMap(props: MuscleBodyMapProps) {
           <Legend
             color="bg-rose-600"
             label={t('adaptiveTraining.high', 'High load')}
-          />
-          <Legend
-            color="bg-slate-400"
-            label={t('adaptiveTraining.noRecentData', 'No recent data')}
           />
         </div>
       )}

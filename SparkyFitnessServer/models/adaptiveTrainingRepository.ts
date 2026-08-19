@@ -4,6 +4,12 @@ import type {
   UpdateAdaptiveTrainingRecommendationStatusRequest,
 } from '@workspace/shared';
 import { getClient } from '../db/poolManager.js';
+import {
+  canonicalSleepScore,
+  canonicalSleepSeconds,
+  selectCanonicalSleepEntry,
+  type CanonicalSleepCandidate,
+} from '../utils/canonicalSleep.js';
 
 export interface AdaptiveTrainingSettingsRow {
   user_id: string;
@@ -165,34 +171,38 @@ async function getReadiness(
 ): Promise<AdaptiveTrainingReadinessRow> {
   const client = await getClient(userId, authenticatedUserId);
   try {
-    const result = await client.query(
-      `SELECT
-         (SELECT duration_in_seconds::numeric / 3600
-            FROM sleep_entries
-           WHERE user_id = $1
-             AND entry_date BETWEEN $2::date - 1 AND $2::date
-           ORDER BY entry_date DESC, updated_at DESC NULLS LAST
-           LIMIT 1) AS sleep_hours,
-         (SELECT sleep_score::numeric
-            FROM sleep_entries
-           WHERE user_id = $1
-             AND entry_date BETWEEN $2::date - 1 AND $2::date
-           ORDER BY entry_date DESC, updated_at DESC NULLS LAST
-           LIMIT 1) AS sleep_score,
-         (SELECT training_readiness_score::numeric
-            FROM daily_health_metrics
-           WHERE user_id = $1 AND entry_date = $2::date
-           ORDER BY entry_date DESC, updated_at DESC NULLS LAST
-           LIMIT 1) AS training_readiness_score`,
-      [userId, date]
+    const [sleepResult, healthResult] = await Promise.all([
+      client.query(
+        `SELECT entry_date, duration_in_seconds, time_asleep_in_seconds,
+                sleep_score, source, updated_at
+         FROM sleep_entries
+         WHERE user_id = $1
+           AND entry_date BETWEEN $2::date - 1 AND $2::date`,
+        [userId, date]
+      ),
+      client.query(
+        `SELECT training_readiness_score::numeric
+         FROM daily_health_metrics
+         WHERE user_id = $1 AND entry_date = $2::date
+         ORDER BY
+           (training_readiness_score IS NOT NULL) DESC,
+           updated_at DESC NULLS LAST
+         LIMIT 1`,
+        [userId, date]
+      ),
+    ]);
+    const sleep = selectCanonicalSleepEntry(
+      sleepResult.rows as CanonicalSleepCandidate[]
     );
-    return (
-      (result.rows as AdaptiveTrainingReadinessRow[])[0] ?? {
-        sleep_hours: null,
-        sleep_score: null,
-        training_readiness_score: null,
-      }
-    );
+    const sleepSeconds = sleep ? canonicalSleepSeconds(sleep) : null;
+    const health = healthResult.rows[0] as
+      | { training_readiness_score: number | null }
+      | undefined;
+    return {
+      sleep_hours: sleepSeconds === null ? null : sleepSeconds / 3600,
+      sleep_score: sleep === null ? null : canonicalSleepScore(sleep),
+      training_readiness_score: health?.training_readiness_score ?? null,
+    };
   } finally {
     client.release();
   }
