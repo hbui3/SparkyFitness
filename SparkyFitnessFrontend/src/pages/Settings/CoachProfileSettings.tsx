@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   CoachDietaryPattern,
+  CoachMemoryResponse,
+  ProactiveCoachCategory,
   CoachProfileResponse,
   UpdateCoachProfileRequest,
 } from '@workspace/shared';
@@ -19,10 +21,14 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useCoachProfile,
+  useCoachMemories,
+  useCreateCoachMemory,
+  useDeleteCoachMemory,
   useCoachTelegram,
   useCreateCoachTelegramLink,
   useDisconnectCoachTelegram,
   useUpdateCoachProfile,
+  useUpdateCoachMemory,
 } from '@/hooks/Settings/useCoachProfile';
 
 const EMPTY_PROFILE: CoachProfileResponse = {
@@ -38,6 +44,12 @@ const EMPTY_PROFILE: CoachProfileResponse = {
   routines: [],
   coachingNotes: null,
   adaptiveCheckInsEnabled: false,
+  adaptiveStartTime: '07:00',
+  adaptiveEndTime: '20:00',
+  adaptiveIntervalMinutes: 120,
+  proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
+  memoryEnabled: true,
+  autoMemoryEnabled: false,
   dailyCheckInEnabled: false,
   dailyCheckInTime: '20:00',
   weeklyReviewEnabled: false,
@@ -85,7 +97,9 @@ export default function CoachProfileSettings() {
     );
   }
 
-  const initialProfile = data ?? EMPTY_PROFILE;
+  // Keep the settings usable during rolling updates if an older server or a
+  // cached response does not yet contain newly added optional controls.
+  const initialProfile: CoachProfileResponse = { ...EMPTY_PROFILE, ...data };
   return (
     <CoachProfileForm
       key={initialProfile.updatedAt ?? 'unsaved'}
@@ -102,6 +116,15 @@ function CoachProfileForm({
   const { t } = useTranslation();
   const updateProfile = useUpdateCoachProfile();
   const [form, setForm] = useState<CoachProfileResponse>(initialProfile);
+  const toggleCategory = (
+    category: ProactiveCoachCategory,
+    enabled: boolean
+  ) => {
+    const next = enabled
+      ? [...new Set([...form.proactiveCategories, category])]
+      : form.proactiveCategories.filter((item) => item !== category);
+    if (next.length > 0) setForm({ ...form, proactiveCategories: next });
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -114,6 +137,12 @@ function CoachProfileForm({
       routines: form.routines,
       coachingNotes: form.coachingNotes,
       adaptiveCheckInsEnabled: form.adaptiveCheckInsEnabled,
+      adaptiveStartTime: form.adaptiveStartTime,
+      adaptiveEndTime: form.adaptiveEndTime,
+      adaptiveIntervalMinutes: form.adaptiveIntervalMinutes,
+      proactiveCategories: form.proactiveCategories,
+      memoryEnabled: form.memoryEnabled,
+      autoMemoryEnabled: form.autoMemoryEnabled,
       dailyCheckInEnabled: form.dailyCheckInEnabled,
       dailyCheckInTime: form.dailyCheckInTime,
       weeklyReviewEnabled: form.weeklyReviewEnabled,
@@ -353,6 +382,84 @@ function CoachProfileForm({
                 }
               />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label htmlFor="adaptive-start-time">
+                  {t('settings.coachProfile.adaptiveStart', 'Start')}
+                </Label>
+                <Input
+                  id="adaptive-start-time"
+                  type="time"
+                  value={form.adaptiveStartTime}
+                  disabled={!form.adaptiveCheckInsEnabled}
+                  onChange={(event) =>
+                    setForm({ ...form, adaptiveStartTime: event.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="adaptive-end-time">
+                  {t('settings.coachProfile.adaptiveEnd', 'End')}
+                </Label>
+                <Input
+                  id="adaptive-end-time"
+                  type="time"
+                  value={form.adaptiveEndTime}
+                  disabled={!form.adaptiveCheckInsEnabled}
+                  onChange={(event) =>
+                    setForm({ ...form, adaptiveEndTime: event.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="adaptive-interval">
+                {t(
+                  'settings.coachProfile.adaptiveInterval',
+                  'Interval (minutes)'
+                )}
+              </Label>
+              <Input
+                id="adaptive-interval"
+                type="number"
+                min={30}
+                max={360}
+                step={30}
+                value={form.adaptiveIntervalMinutes}
+                disabled={!form.adaptiveCheckInsEnabled}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    adaptiveIntervalMinutes: Number(event.target.value),
+                  })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {(
+                [
+                  ['nutrition', 'Nutrition'],
+                  ['hydration', 'Hydration'],
+                  ['training', 'Training'],
+                  ['recovery', 'Recovery'],
+                ] as const
+              ).map(([category, label]) => (
+                <label key={category} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.proactiveCategories.includes(category)}
+                    disabled={!form.adaptiveCheckInsEnabled}
+                    onChange={(event) =>
+                      toggleCategory(category, event.target.checked)
+                    }
+                  />
+                  {t(
+                    `settings.coachProfile.proactiveCategories.${category}`,
+                    label
+                  )}
+                </label>
+              ))}
+            </div>
           </div>
 
           <div className="space-y-3 rounded-md bg-muted/30 p-4">
@@ -467,6 +574,51 @@ function CoachProfileForm({
         </div>
       </div>
 
+      <div className="space-y-4 rounded-lg border p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-medium">
+              {t('settings.coachProfile.memoryTitle', 'Long-term coach memory')}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'settings.coachProfile.memoryDescription',
+                'Private, individually visible memories for preferences, routines, constraints, and goals.'
+              )}
+            </p>
+          </div>
+          <Switch
+            id="memory-enabled"
+            checked={form.memoryEnabled}
+            onCheckedChange={(memoryEnabled) =>
+              setForm({ ...form, memoryEnabled })
+            }
+          />
+        </div>
+        <div className="flex items-start justify-between gap-4 rounded-md bg-muted/30 p-3">
+          <div>
+            <Label htmlFor="auto-memory-enabled">
+              {t('settings.coachProfile.autoMemory', 'Remember automatically')}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                'settings.coachProfile.autoMemoryDescription',
+                'When disabled, the coach asks for confirmation before creating a new memory.'
+              )}
+            </p>
+          </div>
+          <Switch
+            id="auto-memory-enabled"
+            checked={form.autoMemoryEnabled}
+            disabled={!form.memoryEnabled}
+            onCheckedChange={(autoMemoryEnabled) =>
+              setForm({ ...form, autoMemoryEnabled })
+            }
+          />
+        </div>
+        <CoachMemorySettings enabled={form.memoryEnabled} />
+      </div>
+
       <CoachTelegramSettings />
 
       <div className="flex items-center justify-between gap-4">
@@ -483,6 +635,152 @@ function CoachProfileForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function CoachMemorySettings({ enabled }: { enabled: boolean }) {
+  const { t } = useTranslation();
+  const { data: memories = [], isLoading } = useCoachMemories();
+  const createMemory = useCreateCoachMemory();
+  const updateMemory = useUpdateCoachMemory();
+  const deleteMemory = useDeleteCoachMemory();
+  const [category, setCategory] =
+    useState<CoachMemoryResponse['category']>('preference');
+  const [content, setContent] = useState('');
+
+  const addMemory = () => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    createMemory.mutate(
+      { category, content: trimmed, pinned: false },
+      { onSuccess: () => setContent('') }
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {t('settings.coachProfile.memoryLoading', 'Loading memories…')}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-[180px_1fr_auto]">
+        <Select
+          value={category}
+          disabled={!enabled}
+          onValueChange={(value) =>
+            setCategory(value as CoachMemoryResponse['category'])
+          }
+        >
+          <SelectTrigger
+            aria-label={t(
+              'settings.coachProfile.memoryCategory',
+              'Memory category'
+            )}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {[
+              'preference',
+              'routine',
+              'constraint',
+              'injury',
+              'goal',
+              'achievement',
+              'context',
+            ].map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(`settings.coachProfile.memoryCategories.${value}`, value)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
+          value={content}
+          maxLength={500}
+          disabled={!enabled}
+          placeholder={t(
+            'settings.coachProfile.memoryPlaceholder',
+            'e.g. I train on Tuesdays and Thursdays'
+          )}
+          onChange={(event) => setContent(event.target.value)}
+        />
+        <Button
+          type="button"
+          disabled={!enabled || !content.trim() || createMemory.isPending}
+          onClick={addMemory}
+        >
+          {t('settings.coachProfile.memoryAdd', 'Remember')}
+        </Button>
+      </div>
+      {memories.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'settings.coachProfile.memoryEmpty',
+            'No additional memories saved yet.'
+          )}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {memories.map((memory) => (
+            <div
+              key={memory.id}
+              className="flex flex-wrap items-center gap-2 rounded-md border p-3"
+            >
+              <span className="rounded bg-muted px-2 py-1 text-xs">
+                {memory.category}
+              </span>
+              <span
+                className={`min-w-0 flex-1 text-sm ${memory.active ? '' : 'line-through opacity-60'}`}
+              >
+                {memory.content}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  updateMemory.mutate({
+                    id: memory.id,
+                    memory: { pinned: !memory.pinned },
+                  })
+                }
+              >
+                {memory.pinned
+                  ? t('settings.coachProfile.memoryUnpin', 'Unpin')
+                  : t('settings.coachProfile.memoryPin', 'Pin')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  updateMemory.mutate({
+                    id: memory.id,
+                    memory: { active: !memory.active },
+                  })
+                }
+              >
+                {memory.active
+                  ? t('settings.coachProfile.memoryPause', 'Pause')
+                  : t('settings.coachProfile.memoryActivate', 'Activate')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                onClick={() => deleteMemory.mutate(memory.id)}
+              >
+                {t('settings.coachProfile.memoryDelete', 'Delete')}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

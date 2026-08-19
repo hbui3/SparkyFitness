@@ -93,6 +93,15 @@ export type DispatchResult =
       detail: string;
     };
 
+export type TranscriptionDispatchResult =
+  | { ok: true; text: string; language: string | null }
+  | {
+      ok: false;
+      category: DispatchErrorCategory;
+      status?: number;
+      detail: string;
+    };
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 const OLLAMA_DEFAULT_TIMEOUT_MS = 120_000;
 // On Claude Opus 5 and Sonnet 5, omitting the `thinking` parameter runs
@@ -1140,7 +1149,204 @@ export async function dispatchAiRequest(
   }
 }
 
+function transcriptionModel(serviceType: string): string {
+  const configured = process.env.SPARKY_FITNESS_TRANSCRIPTION_MODEL?.trim();
+  if (configured) return configured;
+  return serviceType === 'groq'
+    ? 'whisper-large-v3-turbo'
+    : 'gpt-4o-mini-transcribe';
+}
+
+function openAiTranscriptionUrl(provider: ProviderConfig): string | null {
+  if (provider.service_type === 'custom') return null;
+  const base = getOpenAiCompatibleBaseUrl(
+    provider.service_type,
+    provider.custom_url
+  );
+  return base ? `${base.replace(/\/$/, '')}/audio/transcriptions` : null;
+}
+
+/**
+ * Transcribe short user audio through the active, already-authorized provider.
+ * OpenAI-family providers use their standard multipart transcription endpoint;
+ * Google uses native inline audio. Unsupported providers fail explicitly so
+ * Telegram never pretends that an unprocessed voice note was understood.
+ */
+export async function dispatchAudioTranscription(input: {
+  provider: ProviderConfig;
+  audio: Buffer;
+  mimeType: string;
+  networkPolicy?: AiNetworkPolicy;
+  languageHint?: string;
+  timeoutMs?: number;
+}): Promise<TranscriptionDispatchResult> {
+  const { provider, audio, mimeType } = input;
+  if (audio.length === 0) {
+    return {
+      ok: false,
+      category: 'unsupported_media',
+      detail: 'The audio file is empty.',
+    };
+  }
+  if (requiresApiKey(provider.service_type) && !provider.api_key) {
+    return {
+      ok: false,
+      category: 'api_key_missing',
+      detail: `API key missing for AI service type '${provider.service_type}'.`,
+    };
+  }
+  const timeoutMs = input.timeoutMs ?? 60_000;
+
+  if (provider.service_type === 'google') {
+    const model = provider.model_name || getDefaultModel('google');
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': provider.api_key as string,
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    inline_data: {
+                      mime_type: mimeType,
+                      data: audio.toString('base64'),
+                    },
+                  },
+                  {
+                    text: `Transcribe this voice message verbatim. Return only the transcript${input.languageHint ? ` in ${input.languageHint}` : ''}.`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: { temperature: 0 },
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        }
+      );
+    } catch {
+      return {
+        ok: false,
+        category: 'upstream_error',
+        detail: 'Failed to reach the transcription service.',
+      };
+    }
+    if (!response.ok) {
+      return {
+        ok: false,
+        category: 'upstream_error',
+        status: response.status,
+        detail: `Transcription service returned status ${response.status}.`,
+      };
+    }
+    const data = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    return text
+      ? { ok: true, text, language: input.languageHint ?? null }
+      : {
+          ok: false,
+          category: 'no_content',
+          detail: 'Transcription service returned no transcript.',
+        };
+  }
+
+  const supportedOpenAiFamily = new Set([
+    'openai',
+    'openai_compatible',
+    'groq',
+  ]);
+  if (!supportedOpenAiFamily.has(provider.service_type)) {
+    return {
+      ok: false,
+      category: 'unsupported_provider',
+      detail: `AI service type '${provider.service_type}' does not provide a configured transcription endpoint.`,
+    };
+  }
+  const url = openAiTranscriptionUrl(provider);
+  if (!url) {
+    return {
+      ok: false,
+      category: 'custom_url_missing',
+      detail: 'A transcription base URL is required.',
+    };
+  }
+  const networkPolicy = requiresUserSuppliedAiUrl(provider.service_type)
+    ? (input.networkPolicy ?? PUBLIC_ONLY_AI_NETWORK_POLICY)
+    : undefined;
+  if (networkPolicy) {
+    try {
+      assertOutboundUrlShapeAndLiteralAllowed(url, networkPolicy);
+    } catch (error) {
+      const blocked = getOutboundUrlBlockedError(error);
+      return {
+        ok: false,
+        category: blocked ? 'private_network_forbidden' : 'upstream_error',
+        status: blocked ? 403 : undefined,
+        detail: blocked?.message ?? 'Invalid transcription service URL.',
+      };
+    }
+  }
+  const extension = mimeType.includes('ogg')
+    ? 'ogg'
+    : mimeType.includes('mpeg')
+      ? 'mp3'
+      : mimeType.includes('wav')
+        ? 'wav'
+        : 'm4a';
+  const form = new FormData();
+  form.append('model', transcriptionModel(provider.service_type));
+  if (input.languageHint) form.append('language', input.languageHint);
+  form.append(
+    'file',
+    new Blob([Uint8Array.from(audio)], { type: mimeType }),
+    `voice.${extension}`
+  );
+  const fetchImpl = networkPolicy ? createGuardedFetch(networkPolicy) : fetch;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${provider.api_key || 'no-key'}` },
+      body: form,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return {
+      ok: false,
+      category: 'upstream_error',
+      detail: 'Failed to reach the transcription service.',
+    };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      category: 'upstream_error',
+      status: response.status,
+      detail: `Transcription service returned status ${response.status}.`,
+    };
+  }
+  const data = (await response.json()) as { text?: string; language?: string };
+  const text = data.text?.trim();
+  return text
+    ? { ok: true, text, language: data.language ?? input.languageHint ?? null }
+    : {
+        ok: false,
+        category: 'no_content',
+        detail: 'Transcription service returned no transcript.',
+      };
+}
+
 export default {
   dispatchAiRequest,
+  dispatchAudioTranscription,
   toStrictJsonSchema,
 };

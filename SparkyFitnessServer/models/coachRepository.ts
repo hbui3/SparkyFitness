@@ -302,6 +302,63 @@ async function getFrequentHighProteinFoods(userId: string) {
   }
 }
 
+async function getRecoverySignals(userId: string, today: string) {
+  const client = await getClient(userId, userId);
+  try {
+    const [health, sleep, hrv, muscles] = await Promise.all([
+      client.query(
+        `SELECT entry_date, resting_heart_rate, vo2_max,
+                recovery_time_hours, training_readiness_score,
+                acute_training_load, chronic_training_load, acwr_ratio,
+                avg_stress_level, body_battery_highest, body_battery_lowest
+         FROM daily_health_metrics
+         WHERE user_id = $1 AND entry_date <= $2::date
+         ORDER BY entry_date DESC, updated_at DESC NULLS LAST
+         LIMIT 1`,
+        [userId, today]
+      ),
+      client.query(
+        `SELECT entry_date, duration_in_seconds, sleep_score
+         FROM sleep_entries
+         WHERE user_id = $1 AND entry_date <= $2::date
+         ORDER BY entry_date DESC, updated_at DESC NULLS LAST
+         LIMIT 1`,
+        [userId, today]
+      ),
+      client.query(
+        `SELECT entry_date, samples
+         FROM health_metric_samples
+         WHERE user_id = $1 AND metric = 'hrv' AND entry_date <= $2::date
+         ORDER BY entry_date DESC, updated_at DESC NULLS LAST
+         LIMIT 1`,
+        [userId, today]
+      ),
+      client.query(
+        `SELECT ee.entry_date,
+                ee.primary_muscles,
+                ee.secondary_muscles,
+                COALESCE(SUM(ees.weight * ees.reps), 0)::numeric AS volume_kg,
+                COALESCE(MAX(ee.duration_minutes), 0)::numeric AS duration_minutes
+         FROM exercise_entries ee
+         LEFT JOIN exercise_entry_sets ees ON ees.exercise_entry_id = ee.id
+         WHERE ee.user_id = $1
+           AND ee.entry_date BETWEEN ($2::date - 3) AND $2::date
+         GROUP BY ee.id, ee.entry_date, ee.primary_muscles, ee.secondary_muscles
+         ORDER BY ee.entry_date DESC`,
+        [userId, today]
+      ),
+    ]);
+    return {
+      health: health.rows[0] ?? null,
+      sleep: sleep.rows[0] ?? null,
+      hrv: hrv.rows[0] ?? null,
+      muscles: muscles.rows,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 export {
   getNutritionAggregates,
   getExerciseAggregates,
@@ -316,6 +373,7 @@ export {
   get30DayWeightSeries,
   getDailyCorrelationRows,
   getFrequentHighProteinFoods,
+  getRecoverySignals,
 };
 export default {
   getNutritionAggregates,
@@ -331,4 +389,5 @@ export default {
   get30DayWeightSeries,
   getDailyCorrelationRows,
   getFrequentHighProteinFoods,
+  getRecoverySignals,
 };

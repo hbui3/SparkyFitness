@@ -1,6 +1,7 @@
 import { vi, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   dispatchAiRequest,
+  dispatchAudioTranscription,
   toStrictJsonSchema,
   type DispatchRequest,
   type JsonSchemaNode,
@@ -1562,4 +1563,89 @@ describe('anthropic temperature compatibility', () => {
       expect(captured(m).body.temperature).toBe(0.7);
     }
   );
+});
+
+describe('dispatchAudioTranscription', () => {
+  it('uses the OpenAI-compatible multipart transcription endpoint', async () => {
+    const fetchMock = mockFetch({ text: 'Heute 500 Milliliter Wasser.' });
+
+    const result = await dispatchAudioTranscription({
+      provider: makeProvider(),
+      audio: Buffer.from('voice-bytes'),
+      mimeType: 'audio/ogg',
+      languageHint: 'de',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      text: 'Heute 500 Milliliter Wasser.',
+      language: 'de',
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.openai.com/v1/audio/transcriptions');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get('language')).toBe('de');
+    expect((init.body as FormData).get('model')).toBe('gpt-4o-mini-transcribe');
+  });
+
+  it('uses native inline audio for Google', async () => {
+    const fetchMock = mockFetch({
+      candidates: [{ content: { parts: [{ text: 'Transkript' }] } }],
+    });
+
+    const result = await dispatchAudioTranscription({
+      provider: makeProvider({ service_type: 'google', api_key: 'gem-key' }),
+      audio: Buffer.from('voice'),
+      mimeType: 'audio/ogg',
+      languageHint: 'de',
+    });
+
+    expect(result).toEqual({ ok: true, text: 'Transkript', language: 'de' });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as {
+      contents: Array<{ parts: Array<{ inline_data?: { data: string } }> }>;
+    };
+    expect(body.contents[0].parts[0].inline_data?.data).toBe(
+      Buffer.from('voice').toString('base64')
+    );
+  });
+
+  it('rejects unsupported providers without sending audio', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as typeof global.fetch;
+
+    const result = await dispatchAudioTranscription({
+      provider: makeProvider({ service_type: 'anthropic' }),
+      audio: Buffer.from('voice'),
+      mimeType: 'audio/ogg',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unsupported_provider',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks private OpenAI-compatible transcription URLs', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as typeof global.fetch;
+
+    const result = await dispatchAudioTranscription({
+      provider: makeProvider({
+        service_type: 'openai_compatible',
+        custom_url: 'http://127.0.0.1:11434/v1',
+      }),
+      audio: Buffer.from('voice'),
+      mimeType: 'audio/ogg',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'private_network_forbidden',
+      status: 403,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

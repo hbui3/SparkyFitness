@@ -672,6 +672,53 @@ describe('chatService', () => {
       );
     });
 
+    it('never turns a failed mutation into a success confirmation when the model returns no text', async () => {
+      vi.mocked(foodRepository.getFoodsWithPagination).mockResolvedValue([
+        {
+          ...eggsRow,
+          default_variant: {
+            ...eggsRow.default_variant,
+            serving_size: 1,
+            serving_unit: 'serving',
+          },
+        },
+      ]);
+      vi.mocked(foodRepository.getFoodVariantsByFoodId).mockResolvedValue([]);
+      vi.mocked(foodEntryService.createFoodEntry).mockRejectedValue(
+        new Error('database unavailable')
+      );
+      scriptModel([
+        toolCallStep({
+          action: 'log_food',
+          food_name: 'Eggs',
+          quantity: 2,
+          unit: 'serving',
+          meal_type: 'breakfast',
+          entry_date: '2026-06-10',
+        }),
+        textStep(''),
+      ]);
+
+      const result = await chatService.processChatMessage(
+        [{ role: 'user', content: 'log 2 eggs' }],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+
+      expect(result.content).toContain('Error [DB_ERROR]');
+      expect(result.content).not.toMatch(/logged|recorded/i);
+      expect(result.action).toBe('advice');
+      expect(result.toolOutcomes).toEqual([
+        expect.objectContaining({
+          name: 'sparky_manage_food',
+          action: 'log_food',
+          success: false,
+          mutationDomain: 'nutrition',
+        }),
+      ]);
+    });
+
     it('forwards a per-user OpenAI prompt cache key into the blocking model call', async () => {
       // The pure builder is unit-tested separately; this guards that the
       // blocking call site actually wires providerOptions into generateText.
@@ -710,7 +757,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 22\/39 active tools for chatbot \(profile=core/
+          /Loaded 22\/40 active tools for chatbot \(profile=core/
         )
       );
       // The core profile is the mitigation, so no context-window warning.
@@ -743,7 +790,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 39\/39 active tools for chatbot \(profile=full/
+          /Loaded 40\/40 active tools for chatbot \(profile=full/
         )
       );
       // Ollama + full profile is the risky combo, so warn about the 4096 default.
@@ -776,7 +823,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 39\/39 active tools for chatbot \(profile=full/
+          /Loaded 40\/40 active tools for chatbot \(profile=full/
         )
       );
     });
@@ -804,7 +851,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 39\/39 active tools for chatbot \(profile=full/
+          /Loaded 40\/40 active tools for chatbot \(profile=full/
         )
       );
       // The context-window warning is Ollama-only; cloud providers never see it.

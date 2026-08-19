@@ -27,6 +27,10 @@ BEGIN
     'check_in_photos',
     'coach_profiles',
     'coach_telegram_connections',
+    'coach_memories',
+    'coach_delivery_outbox',
+    'coach_action_receipts',
+    'telegram_update_inbox',
     'telegram_coach_settings',
     'custom_categories',
     'custom_measurements',
@@ -562,6 +566,9 @@ SELECT create_owner_policy('sparky_chat_history');
 -- schedules. Generated messages are written to the owner-only chat table.
 SELECT create_owner_policy('coach_profiles');
 SELECT create_owner_policy('coach_telegram_connections');
+SELECT create_owner_policy('coach_memories');
+SELECT create_owner_policy('coach_delivery_outbox');
+SELECT create_owner_policy('coach_action_receipts');
 
 -- Profiles: delegates can read (with any meaningful permission) but only owner can write.
 -- Delegates do not need to modify another user's profile to manage their diary.

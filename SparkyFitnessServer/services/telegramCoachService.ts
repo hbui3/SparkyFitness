@@ -10,13 +10,18 @@ import {
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import userRepository from '../models/userRepository.js';
 import chatService, { isImageFollowUpText } from './chatService.js';
-import {
-  buildChatToolConfigurationMetadata,
-  resolveChatToolCategoriesFromHistory,
-  resolveEffectiveChatToolProfile,
-} from './chatToolConfigurationService.js';
+import { resolveChatToolCategoriesFromHistory } from './chatToolConfigurationService.js';
 import measurementService from './measurementService.js';
+import coachContextService from './coachContextService.js';
+import coachEventService from './coachEventService.js';
+import telegramQueueService from './telegramQueueService.js';
+import coachActionRepository from '../models/coachActionRepository.js';
+import coachProfileRepository from '../models/coachProfileRepository.js';
+import { dispatchAudioTranscription } from '../ai/providerDispatch.js';
+import { deriveAiNetworkPolicy } from '../utils/outboundUrlPolicy.js';
 import {
+  answerTelegramCallbackQuery,
+  downloadTelegramAudio,
   downloadTelegramImage,
   getTelegramBotUsername,
   isTelegramConfigured,
@@ -46,17 +51,35 @@ interface TelegramPhotoSize {
   height?: number;
 }
 
+interface TelegramAudio {
+  file_id: string;
+  file_unique_id?: string;
+  file_size?: number;
+  duration?: number;
+  mime_type?: string;
+}
+
 interface TelegramMessage {
   chat: TelegramChat;
   from?: TelegramUser;
   text?: string;
   caption?: string;
   photo?: TelegramPhotoSize[];
+  voice?: TelegramAudio;
+  audio?: TelegramAudio;
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  from?: TelegramUser;
+  message?: TelegramMessage;
+  data?: string;
 }
 
 export interface TelegramUpdate {
   update_id?: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 }
 
 interface StoredChatMessage {
@@ -81,14 +104,13 @@ interface RuntimeChatMessage {
 interface TelegramChatInput {
   text: string;
   imageFileId?: string;
+  updateId: number;
 }
 
 export interface DirectWaterLogCommand {
   amountMl: number;
   language: 'de' | 'en';
 }
-
-const userQueues = new Map<string, Promise<void>>();
 
 const WATER_COMMAND_EXCLUSION =
   /(?:\?|\b(?:wie\s+viel|how\s+much|ziel|goal|verbleib|remaining|fehlt|left|brauche|need|soll|should|genug|enough|empfiehl|recommend|nicht|kein(?:e|en|er|es)?|not|no)\b)/i;
@@ -161,24 +183,38 @@ async function answerDirectWaterLog(
   telegramChatId: string,
   text: string,
   command: DirectWaterLogCommand,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  sourceId: string
 ): Promise<void> {
   let response: string;
   let writePersisted = false;
+  let receiptId: string | null = null;
   try {
     const timezone = await loadUserTimezone(userId);
     const entryDate = todayInZone(timezone);
     const before = waterTotalMl(
       await measurementService.getWaterIntake(userId, userId, entryDate)
     );
-    await measurementService.logWaterIntakeAmount(
+    const logEntry = await measurementService.logWaterIntakeAmount(
       userId,
       userId,
       entryDate,
       command.amountMl,
-      'manual'
+      'telegram',
+      sourceId
     );
     writePersisted = true;
+    if (!logEntry?.id) {
+      throw new Error('Water log did not return a stable entry ID.');
+    }
+    const receipt = await coachActionRepository.createReceipt({
+      userId,
+      actionType: 'log_water',
+      resourceType: 'water_log',
+      resourceId: String(logEntry.id),
+      payload: { amountMl: command.amountMl, entryDate },
+    });
+    receiptId = receipt.id;
     const after = waterTotalMl(
       await measurementService.getWaterIntake(userId, userId, entryDate)
     );
@@ -214,7 +250,20 @@ async function answerDirectWaterLog(
         error
       )
   );
-  await sendTelegramMessage(telegramChatId, response);
+  if (writePersisted) coachEventService.publish(userId, 'water');
+  await telegramQueueService.queueTelegramDelivery({
+    userId,
+    telegramChatId,
+    content: response,
+    buttons: receiptId
+      ? [
+          [
+            { text: '↩️ Rückgängig', callback_data: `undo:${receiptId}` },
+            { text: '📊 Heute', callback_data: 'today' },
+          ],
+        ]
+      : [[{ text: '📊 Heute', callback_data: 'today' }]],
+  });
 }
 
 function storedRuntimeParts(
@@ -311,22 +360,13 @@ async function sendProactiveCoachMessage(
   const telegramChatId =
     await coachTelegramRepository.getConnectedChatId(userId);
   if (!telegramChatId || !(await isTelegramConfigured())) return false;
-  await sendTelegramMessage(telegramChatId, content);
-  return true;
-}
-
-function enqueueForUser(userId: string, task: () => Promise<void>): void {
-  const previous = userQueues.get(userId) ?? Promise.resolve();
-  const current = previous
-    .catch(() => undefined)
-    .then(task)
-    .finally(() => {
-      if (userQueues.get(userId) === current) userQueues.delete(userId);
-    });
-  userQueues.set(userId, current);
-  void current.catch((error) => {
-    log('error', `Telegram coach task failed for user ${userId}:`, error);
-  });
+  return Boolean(
+    await telegramQueueService.queueTelegramDelivery({
+      userId,
+      telegramChatId,
+      content,
+    })
+  );
 }
 
 async function answerTelegramChat(
@@ -336,33 +376,6 @@ async function answerTelegramChat(
 ): Promise<void> {
   await sendTelegramTyping(telegramChatId).catch(() => undefined);
   try {
-    const [history, activeSetting, user] = await Promise.all([
-      chatService.getSparkyChatHistory(userId, userId),
-      chatService.getActiveAiServiceSetting(userId, userId),
-      userRepository.findUserById(userId),
-    ]);
-    if (!activeSetting?.id) {
-      await sendTelegramMessage(
-        telegramChatId,
-        'In SparkyFitness ist noch kein aktiver KI-Anbieter ausgewählt. Öffne die Web-Einstellungen, wähle einen Anbieter und schreibe mir dann erneut.'
-      );
-      return;
-    }
-    const storedHistory = history as StoredChatMessage[];
-    let toolCategories = resolveChatToolCategoriesFromHistory(
-      storedHistory,
-      String(activeSetting.id),
-      String(activeSetting.service_type ?? ''),
-      activeSetting.chat_tool_profile
-    );
-    const chatToolMetadata = buildChatToolConfigurationMetadata(
-      String(activeSetting.id),
-      resolveEffectiveChatToolProfile(
-        String(activeSetting.service_type ?? ''),
-        activeSetting.chat_tool_profile
-      ),
-      toolCategories
-    );
     const directWaterCommand = input.imageFileId
       ? null
       : parseDirectWaterLogCommand(input.text);
@@ -372,10 +385,32 @@ async function answerTelegramChat(
         telegramChatId,
         input.text,
         directWaterCommand,
-        chatToolMetadata
+        { source: 'telegram', deterministic: 'direct_water' },
+        `update:${input.updateId}`
       );
       return;
     }
+    const [history, activeSetting, user] = await Promise.all([
+      chatService.getSparkyChatHistory(userId, userId),
+      chatService.getActiveAiServiceSetting(userId, userId),
+      userRepository.findUserById(userId),
+    ]);
+    if (!activeSetting?.id) {
+      await telegramQueueService.queueTelegramDelivery({
+        userId,
+        telegramChatId,
+        content:
+          'In SparkyFitness ist noch kein aktiver KI-Anbieter ausgewählt. Öffne die Web-Einstellungen, wähle einen Anbieter und schreibe mir dann erneut.',
+      });
+      return;
+    }
+    const storedHistory = history as StoredChatMessage[];
+    let toolCategories = resolveChatToolCategoriesFromHistory(
+      storedHistory,
+      String(activeSetting.id),
+      String(activeSetting.service_type ?? ''),
+      activeSetting.chat_tool_profile
+    );
     let imageDataUrl: string | undefined;
     if (input.imageFileId) {
       try {
@@ -386,10 +421,12 @@ async function answerTelegramChat(
           `Telegram image download failed for user ${userId}:`,
           error
         );
-        await sendTelegramMessage(
+        await telegramQueueService.queueTelegramDelivery({
+          userId,
           telegramChatId,
-          'Ich konnte das Foto nicht laden. Bitte sende es noch einmal als normales Bild und nicht als Datei.'
-        );
+          content:
+            'Ich konnte das Foto nicht laden. Bitte sende es noch einmal als normales Bild und nicht als Datei.',
+        });
         return;
       }
       // Telegram already supplies the photo as native multimodal input. The
@@ -445,13 +482,26 @@ async function answerTelegramChat(
       user?.role === 'admin',
       toolCategories
     );
-    await sendTelegramMessage(telegramChatId, result.content);
+    await telegramQueueService.queueTelegramDelivery({
+      userId,
+      telegramChatId,
+      content: result.content,
+      buttons: [
+        [
+          { text: '💧 +250 ml', callback_data: 'water:250' },
+          { text: '💧 +500 ml', callback_data: 'water:500' },
+        ],
+        [{ text: '📊 Heute', callback_data: 'today' }],
+      ],
+    });
   } catch (error) {
     log('error', `Telegram chat processing failed for user ${userId}:`, error);
-    await sendTelegramMessage(
+    await telegramQueueService.queueTelegramDelivery({
+      userId,
       telegramChatId,
-      'Der Coach konnte diese Nachricht gerade nicht verarbeiten. Bitte versuche es später noch einmal.'
-    );
+      content:
+        'Der Coach konnte diese Nachricht gerade nicht verarbeiten. Bitte versuche es später noch einmal.',
+    });
   }
 }
 
@@ -469,7 +519,162 @@ function selectLargestPhoto(
     }, undefined);
 }
 
+const TODAY_BUTTONS = [
+  [
+    { text: '💧 +250 ml', callback_data: 'water:250' },
+    { text: '💧 +500 ml', callback_data: 'water:500' },
+  ],
+];
+
+async function answerTodayStatus(
+  userId: string,
+  telegramChatId: string,
+  sourceText = '/today'
+): Promise<void> {
+  const language = await coachProfileRepository.getCoachLanguage(userId);
+  const status = await coachContextService.getCoachTodayStatus(
+    userId,
+    language
+  );
+  const response = coachContextService.renderCoachTodayStatus(status, language);
+  await saveDeterministicChatTurn(userId, sourceText, response, {
+    source: 'telegram',
+    deterministic: 'today',
+  });
+  await telegramQueueService.queueTelegramDelivery({
+    userId,
+    telegramChatId,
+    content: response,
+    buttons: TODAY_BUTTONS,
+  });
+}
+
+async function transcribeTelegramVoice(
+  userId: string,
+  audio: TelegramAudio
+): Promise<string> {
+  const [setting, user, downloaded] = await Promise.all([
+    chatService.getActiveAiServiceSettingForBackend(userId, userId),
+    userRepository.findUserById(userId),
+    downloadTelegramAudio(audio.file_id),
+  ]);
+  if (!setting) {
+    throw new Error('No active AI service is configured for transcription.');
+  }
+  const result = await dispatchAudioTranscription({
+    provider: {
+      service_type: String(setting.service_type),
+      api_key:
+        typeof setting.api_key === 'string' ? setting.api_key : undefined,
+      model_name:
+        typeof setting.model_name === 'string' ? setting.model_name : undefined,
+      custom_url:
+        typeof setting.custom_url === 'string' ? setting.custom_url : undefined,
+    },
+    audio: downloaded.bytes,
+    mimeType: downloaded.mimeType,
+    languageHint: 'de',
+    networkPolicy: deriveAiNetworkPolicy(setting, user?.role === 'admin'),
+  });
+  if (!result.ok) {
+    throw new Error(`Voice transcription failed (${result.category}).`);
+  }
+  return result.text;
+}
+
+async function undoCoachAction(
+  userId: string,
+  telegramChatId: string,
+  receiptId: string
+): Promise<void> {
+  const receipt = await coachActionRepository.claimUndo(userId, receiptId);
+  if (!receipt) {
+    await telegramQueueService.queueTelegramDelivery({
+      userId,
+      telegramChatId,
+      content:
+        'Diese Aktion kann nicht mehr rückgängig gemacht werden oder wurde bereits zurückgenommen.',
+      buttons: [[{ text: '📊 Heute', callback_data: 'today' }]],
+    });
+    return;
+  }
+  try {
+    if (receipt.resourceType !== 'water_log' || !receipt.resourceId) {
+      throw new Error('Unsupported coach action receipt.');
+    }
+    await measurementService.deleteWaterIntakeLogEntry(
+      userId,
+      userId,
+      receipt.resourceId
+    );
+    coachEventService.publish(userId, 'water');
+    const language = await coachProfileRepository.getCoachLanguage(userId);
+    const status = await coachContextService.getCoachTodayStatus(
+      userId,
+      language
+    );
+    await telegramQueueService.queueTelegramDelivery({
+      userId,
+      telegramChatId,
+      content: `Rückgängig gemacht. Der Wasserstand für heute beträgt jetzt ${status.waterConsumedMl} ml.`,
+      buttons: TODAY_BUTTONS,
+    });
+  } catch (error) {
+    await coachActionRepository.restoreCompleted(userId, receiptId);
+    throw error;
+  }
+}
+
+async function handleCallbackQuery(
+  callback: TelegramCallbackQuery,
+  updateId: number
+): Promise<void> {
+  const message = callback.message;
+  const data = callback.data?.trim();
+  if (!message || !data) {
+    await answerTelegramCallbackQuery(callback.id);
+    return;
+  }
+  const telegramChatId = String(message.chat.id);
+  const connection =
+    await coachTelegramRepository.getConnectionByChatId(telegramChatId);
+  if (
+    !connection ||
+    (connection.telegramUserId &&
+      String(callback.from?.id ?? '') !== connection.telegramUserId)
+  ) {
+    await answerTelegramCallbackQuery(callback.id, 'Nicht autorisiert.');
+    return;
+  }
+  await answerTelegramCallbackQuery(callback.id, 'Wird verarbeitet …');
+  if (data === 'today') {
+    await answerTodayStatus(connection.userId, telegramChatId, 'Heute-Button');
+    return;
+  }
+  const waterMatch = data.match(/^water:(250|500)$/);
+  if (waterMatch) {
+    const amountMl = Number(waterMatch[1]);
+    await answerDirectWaterLog(
+      connection.userId,
+      telegramChatId,
+      `${amountMl} ml Wasser`,
+      { amountMl, language: 'de' },
+      { source: 'telegram', deterministic: 'quick_water' },
+      `update:${updateId}`
+    );
+    return;
+  }
+  const undoMatch = data.match(/^undo:([0-9a-f-]{36})$/i);
+  if (undoMatch) {
+    await undoCoachAction(connection.userId, telegramChatId, undoMatch[1]);
+  }
+}
+
 async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
+  if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query, Number(update.update_id));
+    return;
+  }
   const message = update.message;
   const updateId = update.update_id;
   if (
@@ -490,10 +695,11 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
   const text = message.text?.trim();
   const caption = message.caption?.trim();
   const photo = selectLargestPhoto(message.photo);
-  if (!text && !photo) {
+  const audio = message.voice ?? message.audio;
+  if (!text && !photo && !audio) {
     await sendTelegramMessage(
       telegramChatId,
-      'Ich kann Textnachrichten und Fotos verarbeiten. Sprachnachrichten folgen später.'
+      'Ich kann Textnachrichten, Fotos und Sprachnachrichten verarbeiten.'
     );
     return;
   }
@@ -524,10 +730,8 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  const connection = await coachTelegramRepository.claimIncomingUpdate(
-    telegramChatId,
-    updateId
-  );
+  const connection =
+    await coachTelegramRepository.getConnectionByChatId(telegramChatId);
   if (!connection) {
     await sendTelegramMessage(
       telegramChatId,
@@ -535,8 +739,17 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
     );
     return;
   }
-  if (!connection.claimed) return;
   const { userId } = connection;
+  if (
+    connection.telegramUserId &&
+    String(message.from?.id ?? '') !== connection.telegramUserId
+  ) {
+    await sendTelegramMessage(
+      telegramChatId,
+      'Diese Nachricht ist nicht autorisiert.'
+    );
+    return;
+  }
 
   if (text && /^\/(stop|disconnect)(?:@\w+)?$/i.test(text)) {
     await coachTelegramRepository.disconnectChat(telegramChatId);
@@ -547,15 +760,38 @@ async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
     return;
   }
 
-  enqueueForUser(userId, () =>
-    answerTelegramChat(userId, telegramChatId, {
-      text:
-        text ||
-        caption ||
-        'Analysiere dieses Foto und füge das erkennbare Lebensmittel oder Gericht meinem heutigen Ernährungstagebuch hinzu.',
-      imageFileId: photo?.file_id,
-    })
-  );
+  if (text && /^\/(today|heute|status)(?:@\w+)?$/i.test(text)) {
+    await answerTodayStatus(userId, telegramChatId, text);
+    return;
+  }
+
+  let effectiveText = text || caption;
+  if (audio) {
+    try {
+      effectiveText = await transcribeTelegramVoice(userId, audio);
+    } catch (error) {
+      log(
+        'error',
+        `Telegram voice transcription failed for user ${userId}:`,
+        error
+      );
+      await telegramQueueService.queueTelegramDelivery({
+        userId,
+        telegramChatId,
+        content:
+          'Ich konnte die Sprachnachricht nicht transkribieren. Dafür muss der aktive KI-Anbieter Audio-Transkription unterstützen (OpenAI, Groq, kompatibler OpenAI-Endpunkt oder Google).',
+      });
+      return;
+    }
+  }
+
+  await answerTelegramChat(userId, telegramChatId, {
+    text:
+      effectiveText ||
+      'Analysiere dieses Foto und füge das erkennbare Lebensmittel oder Gericht meinem heutigen Ernährungstagebuch hinzu.',
+    imageFileId: photo?.file_id,
+    updateId: Number(updateId),
+  });
 }
 
 export default {

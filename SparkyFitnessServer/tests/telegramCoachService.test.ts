@@ -5,12 +5,19 @@ import telegramCoachService, {
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import chatService from '../services/chatService.js';
 import {
+  answerTelegramCallbackQuery,
+  downloadTelegramAudio,
   downloadTelegramImage,
   getTelegramBotUsername,
   sendTelegramMessage,
 } from '../services/telegramApiService.js';
 import { CHAT_TOOL_CATEGORY_SLUGS } from '@workspace/shared';
 import measurementService from '../services/measurementService.js';
+import telegramQueueService from '../services/telegramQueueService.js';
+import coachActionRepository from '../models/coachActionRepository.js';
+import coachContextService from '../services/coachContextService.js';
+import coachProfileRepository from '../models/coachProfileRepository.js';
+import { dispatchAudioTranscription } from '../ai/providerDispatch.js';
 
 vi.mock('../models/coachTelegramRepository.js', () => ({
   default: {
@@ -18,6 +25,7 @@ vi.mock('../models/coachTelegramRepository.js', () => ({
     storeLinkToken: vi.fn(),
     claimLinkToken: vi.fn(),
     claimIncomingUpdate: vi.fn(),
+    getConnectionByChatId: vi.fn(),
     getConnectedChatId: vi.fn(),
     disconnectUser: vi.fn(),
     disconnectChat: vi.fn(),
@@ -33,6 +41,7 @@ vi.mock('../services/chatService.js', () => ({
   default: {
     getSparkyChatHistory: vi.fn(),
     getActiveAiServiceSetting: vi.fn(),
+    getActiveAiServiceSettingForBackend: vi.fn(),
     processChatMessage: vi.fn(),
     saveSparkyChatHistory: vi.fn(),
   },
@@ -43,10 +52,34 @@ vi.mock('../services/measurementService.js', () => ({
     logWaterIntakeAmount: vi.fn(),
   },
 }));
+vi.mock('../models/coachActionRepository.js', () => ({
+  default: {
+    createReceipt: vi.fn(),
+    claimUndo: vi.fn(),
+    restoreCompleted: vi.fn(),
+  },
+}));
+vi.mock('../models/coachProfileRepository.js', () => ({
+  default: { getCoachLanguage: vi.fn() },
+}));
+vi.mock('../services/coachContextService.js', () => ({
+  default: {
+    getCoachTodayStatus: vi.fn(),
+    renderCoachTodayStatus: vi.fn(),
+  },
+}));
+vi.mock('../ai/providerDispatch.js', () => ({
+  dispatchAudioTranscription: vi.fn(),
+}));
+vi.mock('../services/telegramQueueService.js', () => ({
+  default: { queueTelegramDelivery: vi.fn() },
+}));
 vi.mock('../utils/timezoneLoader.js', () => ({
   loadUserTimezone: vi.fn().mockResolvedValue('Europe/Berlin'),
 }));
 vi.mock('../services/telegramApiService.js', () => ({
+  answerTelegramCallbackQuery: vi.fn(),
+  downloadTelegramAudio: vi.fn(),
   downloadTelegramImage: vi.fn(),
   getTelegramBotUsername: vi.fn(),
   isTelegramConfigured: vi.fn(() => true),
@@ -64,6 +97,47 @@ describe('telegramCoachService', () => {
     vi.mocked(downloadTelegramImage).mockResolvedValue({
       dataUrl: 'data:image/jpeg;base64,/9j/',
       mimeType: 'image/jpeg',
+    });
+    vi.mocked(downloadTelegramAudio).mockResolvedValue({
+      bytes: Buffer.from('voice'),
+      mimeType: 'audio/ogg',
+    });
+    vi.mocked(coachProfileRepository.getCoachLanguage).mockResolvedValue('de');
+    vi.mocked(coachContextService.getCoachTodayStatus).mockResolvedValue({
+      date: '2026-08-19',
+      timezone: 'Europe/Berlin',
+      caloriesConsumed: 1800,
+      caloriesBurned: 400,
+      netCalories: 1400,
+      calorieTarget: 3000,
+      caloriesRemaining: 1200,
+      proteinConsumedG: 120,
+      proteinTargetG: 160,
+      proteinRemainingG: 40,
+      waterConsumedMl: 1500,
+      waterTargetMl: 3000,
+      waterRemainingMl: 1500,
+      nextAction: 'Trinken',
+    });
+    vi.mocked(coachContextService.renderCoachTodayStatus).mockReturnValue(
+      'Heute: 1800 gegessen, 400 verbrannt, 1400 netto.'
+    );
+    vi.mocked(coachTelegramRepository.getConnectionByChatId).mockResolvedValue({
+      userId: 'user-1',
+      telegramUserId: null,
+    });
+    vi.mocked(telegramQueueService.queueTelegramDelivery).mockResolvedValue(
+      'delivery-1'
+    );
+    vi.mocked(coachActionRepository.createReceipt).mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: 'user-1',
+      actionType: 'log_water',
+      resourceType: 'water_log',
+      resourceId: 'water-1',
+      payload: {},
+      status: 'completed',
+      expiresAt: new Date(),
     });
     vi.mocked(chatService.saveSparkyChatHistory).mockResolvedValue({
       message: 'saved',
@@ -165,9 +239,11 @@ describe('telegramCoachService', () => {
         false,
         [...CHAT_TOOL_CATEGORY_SLUGS]
       );
-      expect(sendTelegramMessage).toHaveBeenCalledWith(
-        '12345',
-        'Noch 35 g Protein. Plane jetzt Skyr ein.'
+      expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          telegramChatId: '12345',
+          content: 'Noch 35 g Protein. Plane jetzt Skyr ein.',
+        })
       );
     });
   });
@@ -204,12 +280,17 @@ describe('telegramCoachService', () => {
         'user-1',
         expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
         300,
-        'manual'
+        'telegram',
+        'update:21'
       );
       expect(chatService.processChatMessage).not.toHaveBeenCalled();
-      expect(sendTelegramMessage).toHaveBeenCalledWith(
-        '12345',
-        expect.stringMatching(/Datenbank gelesener Stand: \*\*1500 ml\*\*/)
+      expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          telegramChatId: '12345',
+          content: expect.stringMatching(
+            /Datenbank gelesener Stand: \*\*1500 ml\*\*/
+          ),
+        })
       );
       expect(chatService.saveSparkyChatHistory).toHaveBeenCalledTimes(2);
     });
@@ -242,13 +323,10 @@ describe('telegramCoachService', () => {
     });
 
     await vi.waitFor(() => {
-      expect(sendTelegramMessage).toHaveBeenCalledWith(
-        '12345',
-        expect.stringContaining('nicht speichern')
-      );
-      expect(sendTelegramMessage).not.toHaveBeenCalledWith(
-        '12345',
-        expect.stringContaining('Erfasst und gespeichert')
+      expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('nicht speichern'),
+        })
       );
       expect(chatService.processChatMessage).not.toHaveBeenCalled();
     });
@@ -281,13 +359,12 @@ describe('telegramCoachService', () => {
     });
 
     await vi.waitFor(() => {
-      expect(sendTelegramMessage).toHaveBeenCalledWith(
-        '12345',
-        expect.stringContaining('wurde gespeichert')
-      );
-      expect(sendTelegramMessage).toHaveBeenCalledWith(
-        '12345',
-        expect.stringContaining('bevor du ihn erneut sendest')
+      expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringMatching(
+            /wurde gespeichert[\s\S]*bevor du ihn erneut sendest/
+          ),
+        })
       );
     });
   });
@@ -402,9 +479,10 @@ describe('telegramCoachService', () => {
         false,
         ['food', 'reports']
       );
-      expect(sendTelegramMessage).toHaveBeenCalledWith(
-        '12345',
-        'Ich habe zwei Stück eingetragen.'
+      expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: 'Ich habe zwei Stück eingetragen.',
+        })
       );
     });
   });
@@ -471,21 +549,98 @@ describe('telegramCoachService', () => {
     });
   });
 
-  it('silently ignores a duplicate update already claimed by this chat', async () => {
-    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+  it('rejects a Telegram sender that does not match the paired user', async () => {
+    vi.mocked(coachTelegramRepository.getConnectionByChatId).mockResolvedValue({
       userId: 'user-1',
-      claimed: false,
+      telegramUserId: '777',
     });
 
     await telegramCoachService.handleTelegramUpdate({
       update_id: 11,
       message: {
         chat: { id: 12345, type: 'private' },
-        text: 'duplicate',
+        from: { id: 999 },
+        text: 'not mine',
       },
     });
 
-    expect(sendTelegramMessage).not.toHaveBeenCalled();
+    expect(sendTelegramMessage).toHaveBeenCalledWith(
+      '12345',
+      expect.stringContaining('nicht autorisiert')
+    );
     expect(chatService.processChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('answers the deterministic today quick action without an AI round-trip', async () => {
+    vi.mocked(coachTelegramRepository.getConnectionByChatId).mockResolvedValue({
+      userId: 'user-1',
+      telegramUserId: '777',
+    });
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 30,
+      callback_query: {
+        id: 'callback-1',
+        from: { id: 777 },
+        message: { chat: { id: 12345, type: 'private' } },
+        data: 'today',
+      },
+    });
+
+    expect(answerTelegramCallbackQuery).toHaveBeenCalledWith(
+      'callback-1',
+      'Wird verarbeitet …'
+    );
+    expect(chatService.processChatMessage).not.toHaveBeenCalled();
+    expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        content: expect.stringContaining('1400 netto'),
+      })
+    );
+  });
+
+  it('transcribes Telegram voice and routes the transcript through the same chat tools', async () => {
+    vi.mocked(
+      chatService.getActiveAiServiceSettingForBackend
+    ).mockResolvedValue({
+      service_type: 'openai',
+      api_key: 'encrypted-backend-key',
+    } as never);
+    vi.mocked(dispatchAudioTranscription).mockResolvedValue({
+      ok: true,
+      text: 'Wie ist meine Erholung heute?',
+      language: 'de',
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(chatService.processChatMessage).mockResolvedValue({
+      content: 'Erledigt.',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 31,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        voice: { file_id: 'voice-1', duration: 3 },
+      },
+    });
+
+    expect(downloadTelegramAudio).toHaveBeenCalledWith('voice-1');
+    expect(dispatchAudioTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'audio/ogg', languageHint: 'de' })
+    );
+    expect(chatService.processChatMessage).toHaveBeenCalledWith(
+      [{ role: 'user', content: 'Wie ist meine Erholung heute?' }],
+      'ai-1',
+      'user-1',
+      'user-1',
+      false,
+      [...CHAT_TOOL_CATEGORY_SLUGS]
+    );
   });
 });

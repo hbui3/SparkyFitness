@@ -3,6 +3,7 @@ import coachProfileService from '../services/coachProfileService.js';
 import coachProfileRepository from '../models/coachProfileRepository.js';
 import AllergenPreferenceService from '../services/allergenPreferenceService.js';
 import coachContextService from '../services/coachContextService.js';
+import coachMemoryService from '../services/coachMemoryService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
@@ -23,6 +24,9 @@ vi.mock('../services/coachContextService.js', () => ({
     getCoachContextSnapshot: vi.fn(),
     formatCoachContext: vi.fn(),
   },
+}));
+vi.mock('../services/coachMemoryService.js', () => ({
+  default: { listActiveMemories: vi.fn() },
 }));
 
 const storedProfile = {
@@ -76,6 +80,7 @@ describe('coachProfileService', () => {
       'Last 7 days: nutrition logged 7/7 days',
       'Last 30 days: weight development +0.8 kg',
     ]);
+    vi.mocked(coachMemoryService.listActiveMemories).mockResolvedValue([]);
   });
 
   it('returns safe defaults before a profile has been saved', async () => {
@@ -109,6 +114,12 @@ describe('coachProfileService', () => {
       routines: ['Meal Prep Sunday'],
       coachingNotes: '',
       adaptiveCheckInsEnabled: true,
+      adaptiveStartTime: '07:00',
+      adaptiveEndTime: '20:00',
+      adaptiveIntervalMinutes: 120,
+      proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
+      memoryEnabled: true,
+      autoMemoryEnabled: false,
       dailyCheckInEnabled: true,
       dailyCheckInTime: '20:00',
       weeklyReviewEnabled: true,

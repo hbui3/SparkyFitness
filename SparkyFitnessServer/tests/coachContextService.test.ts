@@ -26,6 +26,7 @@ vi.mock('../models/coachRepository.js', () => ({
   default: {
     getExerciseAggregates: vi.fn(),
     getWeightSeries: vi.fn(),
+    getRecoverySignals: vi.fn(),
   },
 }));
 vi.mock('../services/goalService.js', () => ({
@@ -56,6 +57,12 @@ describe('coachContextService', () => {
       calories: 3000,
       protein: 160,
       water_goal_ml: 3000,
+    });
+    vi.mocked(coachRepository.getRecoverySignals).mockResolvedValue({
+      health: null,
+      sleep: null,
+      hrv: null,
+      muscles: [],
     });
   });
 

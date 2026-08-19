@@ -89,6 +89,11 @@ import cron from 'node-cron';
 import { scheduleBackupsOnStartup } from './services/backupScheduler.js';
 import { processDueProactiveCoachMessages } from './services/proactiveCoachService.js';
 import { configureTelegramWebhook } from './services/telegramApiService.js';
+import {
+  startTelegramQueueWorker,
+  stopTelegramQueueWorker,
+} from './services/telegramQueueService.js';
+import telegramCoachService from './services/telegramCoachService.js';
 import externalProviderRepository from './models/externalProviderRepository.js';
 import garminService from './services/garminService.js';
 import { getGarminSyncPhaseErrors } from './services/garminSyncResult.js';
@@ -920,6 +925,7 @@ applyMigrations()
     }
     scheduleBackupsOnStartup();
     scheduleProactiveCoachMessages();
+    startTelegramQueueWorker(telegramCoachService.handleTelegramUpdate);
     scheduleSessionCleanup();
     scheduleWithingsSyncs();
     scheduleGarminSyncs();
@@ -970,6 +976,7 @@ applyMigrations()
     const shutdown = async (signal) => {
       if (shuttingDown) return;
       shuttingDown = true;
+      stopTelegramQueueWorker();
       log('info', `${signal} received, shutting down gracefully...`);
       server.close(async () => {
         log('info', 'HTTP server closed, draining database pools...');

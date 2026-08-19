@@ -1,5 +1,6 @@
 import type {
   CoachProfiles,
+  ProactiveCoachCategory,
   UpdateCoachProfileRequest,
 } from '@workspace/shared';
 import { getClient, getSystemClient } from '../db/poolManager.js';
@@ -12,6 +13,11 @@ export interface ProactiveCoachCandidate {
   language: string;
   adaptiveCheckInsEnabled: boolean;
   adaptiveLastSentSlot: string | null;
+  adaptiveStartTime: string;
+  adaptiveEndTime: string;
+  adaptiveIntervalMinutes: number;
+  proactiveCategories: ProactiveCoachCategory[];
+  adaptiveLastSignature: string | null;
   dailyCheckInEnabled: boolean;
   dailyCheckInTime: string;
   dailyLastSentOn: string | null;
@@ -33,6 +39,13 @@ const SELECT_COLUMNS = `
   coaching_notes,
   adaptive_check_ins_enabled,
   adaptive_last_sent_slot,
+  adaptive_start_time,
+  adaptive_end_time,
+  adaptive_interval_minutes,
+  proactive_categories,
+  adaptive_last_signature,
+  memory_enabled,
+  auto_memory_enabled,
   daily_check_in_enabled,
   daily_check_in_time,
   weekly_review_enabled,
@@ -76,12 +89,18 @@ async function upsertCoachProfile(
          routines,
          coaching_notes,
          adaptive_check_ins_enabled,
+         adaptive_start_time,
+         adaptive_end_time,
+         adaptive_interval_minutes,
+         proactive_categories,
+         memory_enabled,
+         auto_memory_enabled,
          daily_check_in_enabled,
          daily_check_in_time,
          weekly_review_enabled,
          weekly_review_day,
          weekly_review_time
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::time, $12, $13, $14::time)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::time, $11::time, $12, $13, $14, $15, $16, $17::time, $18, $19, $20::time)
        ON CONFLICT (user_id) DO UPDATE SET
          enabled = EXCLUDED.enabled,
          dietary_pattern = EXCLUDED.dietary_pattern,
@@ -91,6 +110,12 @@ async function upsertCoachProfile(
          routines = EXCLUDED.routines,
          coaching_notes = EXCLUDED.coaching_notes,
          adaptive_check_ins_enabled = EXCLUDED.adaptive_check_ins_enabled,
+         adaptive_start_time = EXCLUDED.adaptive_start_time,
+         adaptive_end_time = EXCLUDED.adaptive_end_time,
+         adaptive_interval_minutes = EXCLUDED.adaptive_interval_minutes,
+         proactive_categories = EXCLUDED.proactive_categories,
+         memory_enabled = EXCLUDED.memory_enabled,
+         auto_memory_enabled = EXCLUDED.auto_memory_enabled,
          daily_check_in_enabled = EXCLUDED.daily_check_in_enabled,
          daily_check_in_time = EXCLUDED.daily_check_in_time,
          weekly_review_enabled = EXCLUDED.weekly_review_enabled,
@@ -108,6 +133,12 @@ async function upsertCoachProfile(
         profile.routines,
         profile.coachingNotes,
         profile.adaptiveCheckInsEnabled,
+        profile.adaptiveStartTime,
+        profile.adaptiveEndTime,
+        profile.adaptiveIntervalMinutes,
+        profile.proactiveCategories,
+        profile.memoryEnabled,
+        profile.autoMemoryEnabled,
         profile.dailyCheckInEnabled,
         profile.dailyCheckInTime,
         profile.weeklyReviewEnabled,
@@ -133,6 +164,11 @@ async function listProactiveCoachCandidates(): Promise<
          COALESCE(up.language, 'en') AS language,
          cp.adaptive_check_ins_enabled,
          cp.adaptive_last_sent_slot,
+         cp.adaptive_start_time,
+         cp.adaptive_end_time,
+         cp.adaptive_interval_minutes,
+         cp.proactive_categories,
+         cp.adaptive_last_signature,
          cp.daily_check_in_enabled,
          cp.daily_check_in_time,
          TO_CHAR(cp.daily_last_sent_on, 'YYYY-MM-DD') AS daily_last_sent_on,
@@ -158,6 +194,16 @@ async function listProactiveCoachCandidates(): Promise<
         typeof row.adaptive_last_sent_slot === 'string'
           ? row.adaptive_last_sent_slot
           : null,
+      adaptiveStartTime: String(row.adaptive_start_time ?? '07:00').slice(0, 5),
+      adaptiveEndTime: String(row.adaptive_end_time ?? '20:00').slice(0, 5),
+      adaptiveIntervalMinutes: Number(row.adaptive_interval_minutes ?? 120),
+      proactiveCategories: Array.isArray(row.proactive_categories)
+        ? (row.proactive_categories as ProactiveCoachCategory[])
+        : ['nutrition', 'hydration', 'training', 'recovery'],
+      adaptiveLastSignature:
+        typeof row.adaptive_last_signature === 'string'
+          ? row.adaptive_last_signature
+          : null,
       dailyCheckInEnabled: row.daily_check_in_enabled === true,
       dailyCheckInTime: String(row.daily_check_in_time).slice(0, 5),
       dailyLastSentOn:
@@ -177,11 +223,27 @@ async function listProactiveCoachCandidates(): Promise<
   }
 }
 
+async function getCoachLanguage(userId: string): Promise<string> {
+  const client = await getClient(userId, userId);
+  try {
+    const { rows } = await client.query(
+      `SELECT COALESCE(language, 'en') AS language
+       FROM user_preferences
+       WHERE user_id = $1`,
+      [userId]
+    );
+    return String(rows[0]?.language || 'en');
+  } finally {
+    client.release();
+  }
+}
+
 async function saveProactiveMessageIfDue(
   userId: string,
   kind: ProactiveCoachMessageKind,
   deliveryKey: string,
-  content: string
+  content: string,
+  stateSignature?: string
 ): Promise<boolean> {
   const client = await getClient(userId, userId);
   const markerColumn =
@@ -201,13 +263,17 @@ async function saveProactiveMessageIfDue(
     await client.query('BEGIN');
     const claimed = await client.query(
       `UPDATE coach_profiles
-       SET ${markerColumn} = ${markerValue}
+       SET ${markerColumn} = ${markerValue},
+           adaptive_last_signature = CASE
+             WHEN $3::text IS NULL THEN adaptive_last_signature
+             ELSE $3::text
+           END
        WHERE user_id = $1
          AND enabled = TRUE
          AND ${enabledColumn} = TRUE
          AND ${markerColumn} IS DISTINCT FROM ${markerValue}
        RETURNING id`,
-      [userId, deliveryKey]
+      [userId, deliveryKey, stateSignature ?? null]
     );
     if ((claimed.rowCount ?? 0) === 0) {
       await client.query('ROLLBACK');
@@ -231,6 +297,22 @@ async function saveProactiveMessageIfDue(
         JSON.stringify([{ type: 'text', text: content }]),
       ]
     );
+    await client.query(
+      `INSERT INTO coach_delivery_outbox (
+         user_id,
+         channel,
+         telegram_chat_id,
+         content,
+         idempotency_key
+       )
+       SELECT $1, 'telegram', c.telegram_chat_id, $2, $3
+       FROM coach_telegram_connections c
+       WHERE c.user_id = $1
+         AND c.enabled = TRUE
+         AND c.telegram_chat_id IS NOT NULL
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [userId, content, `proactive:${userId}:${kind}:${deliveryKey}`]
+    );
     await client.query('COMMIT');
     return true;
   } catch (error) {
@@ -241,9 +323,34 @@ async function saveProactiveMessageIfDue(
   }
 }
 
+async function markAdaptiveSlotObserved(
+  userId: string,
+  deliveryKey: string,
+  stateSignature: string
+): Promise<void> {
+  const client = await getClient(userId, userId);
+  try {
+    await client.query(
+      `UPDATE coach_profiles
+       SET adaptive_last_sent_slot = $2,
+           adaptive_last_signature = $3,
+           updated_at = now()
+       WHERE user_id = $1
+         AND enabled = TRUE
+         AND adaptive_check_ins_enabled = TRUE
+         AND adaptive_last_sent_slot IS DISTINCT FROM $2`,
+      [userId, deliveryKey, stateSignature]
+    );
+  } finally {
+    client.release();
+  }
+}
+
 export default {
   getCoachProfile,
   upsertCoachProfile,
   listProactiveCoachCandidates,
+  getCoachLanguage,
   saveProactiveMessageIfDue,
+  markAdaptiveSlotObserved,
 };

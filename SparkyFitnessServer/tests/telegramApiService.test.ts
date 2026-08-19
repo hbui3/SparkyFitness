@@ -66,7 +66,8 @@ describe('telegramApiService', () => {
         body: JSON.stringify({
           url: 'https://sparky.example.test/api/telegram/webhook',
           secret_token: 'test_secret-123',
-          allowed_updates: ['message'],
+          allowed_updates: ['message', 'callback_query'],
+          max_connections: 1,
         }),
       })
     );

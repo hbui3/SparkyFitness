@@ -3,10 +3,14 @@ import '@testing-library/jest-dom';
 import CoachProfileSettings from '@/pages/Settings/CoachProfileSettings';
 import {
   useCoachProfile,
+  useCoachMemories,
+  useCreateCoachMemory,
+  useDeleteCoachMemory,
   useCoachTelegram,
   useCreateCoachTelegramLink,
   useDisconnectCoachTelegram,
   useUpdateCoachProfile,
+  useUpdateCoachMemory,
 } from '@/hooks/Settings/useCoachProfile';
 
 jest.mock('react-i18next', () => ({
@@ -17,13 +21,18 @@ jest.mock('react-i18next', () => ({
 
 jest.mock('@/hooks/Settings/useCoachProfile', () => ({
   useCoachProfile: jest.fn(),
+  useCoachMemories: jest.fn(),
+  useCreateCoachMemory: jest.fn(),
+  useDeleteCoachMemory: jest.fn(),
   useCoachTelegram: jest.fn(),
   useCreateCoachTelegramLink: jest.fn(),
   useDisconnectCoachTelegram: jest.fn(),
   useUpdateCoachProfile: jest.fn(),
+  useUpdateCoachMemory: jest.fn(),
 }));
 
 const mutate = jest.fn();
+const createMemoryMutate = jest.fn();
 
 describe('CoachProfileSettings', () => {
   beforeEach(() => {
@@ -42,6 +51,12 @@ describe('CoachProfileSettings', () => {
         routines: ['meal prep sunday'],
         coachingNotes: 'Keep weekday recipes short.',
         adaptiveCheckInsEnabled: true,
+        adaptiveStartTime: '07:00',
+        adaptiveEndTime: '20:00',
+        adaptiveIntervalMinutes: 120,
+        proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
+        memoryEnabled: true,
+        autoMemoryEnabled: false,
         dailyCheckInEnabled: true,
         dailyCheckInTime: '20:00',
         weeklyReviewEnabled: true,
@@ -55,6 +70,20 @@ describe('CoachProfileSettings', () => {
       mutate,
       isPending: false,
     } as unknown as ReturnType<typeof useUpdateCoachProfile>);
+    jest.mocked(useCoachMemories).mockReturnValue({
+      data: [],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useCoachMemories>);
+    jest.mocked(useCreateCoachMemory).mockReturnValue({
+      mutate: createMemoryMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useCreateCoachMemory>);
+    jest.mocked(useUpdateCoachMemory).mockReturnValue({
+      mutate: jest.fn(),
+    } as unknown as ReturnType<typeof useUpdateCoachMemory>);
+    jest.mocked(useDeleteCoachMemory).mockReturnValue({
+      mutate: jest.fn(),
+    } as unknown as ReturnType<typeof useDeleteCoachMemory>);
     jest.mocked(useCoachTelegram).mockReturnValue({
       data: {
         available: false,
@@ -92,11 +121,36 @@ describe('CoachProfileSettings', () => {
       routines: ['meal prep sunday'],
       coachingNotes: 'Keep weekday recipes short.',
       adaptiveCheckInsEnabled: true,
+      adaptiveStartTime: '07:00',
+      adaptiveEndTime: '20:00',
+      adaptiveIntervalMinutes: 120,
+      proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
+      memoryEnabled: true,
+      autoMemoryEnabled: false,
       dailyCheckInEnabled: true,
       dailyCheckInTime: '20:00',
       weeklyReviewEnabled: true,
       weeklyReviewDay: 0,
       weeklyReviewTime: '18:00',
     });
+  });
+
+  it('lets the owner add a private long-term memory', () => {
+    render(<CoachProfileSettings />);
+
+    fireEvent.change(
+      screen.getByPlaceholderText('e.g. I train on Tuesdays and Thursdays'),
+      { target: { value: 'I train Tuesdays and Thursdays' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
+
+    expect(createMemoryMutate).toHaveBeenCalledWith(
+      {
+        category: 'preference',
+        content: 'I train Tuesdays and Thursdays',
+        pinned: false,
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) })
+    );
   });
 });

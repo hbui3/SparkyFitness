@@ -41,6 +41,7 @@ const EXPECTED_TOOLS = [
   'sparky_list_exercises',
   'sparky_list_foods',
   'sparky_manage_checkin',
+  'sparky_manage_coach_memory',
   'sparky_manage_exercise',
   'sparky_manage_food',
   'sparky_manage_goals',

@@ -12,6 +12,7 @@ import coachContextService, {
   type CanonicalCoachGoals,
 } from './coachContextService.js';
 import { log } from '../config/logging.js';
+import coachMemoryService from './coachMemoryService.js';
 
 const MEAT_TERMS = [
   'beef',
@@ -159,6 +160,12 @@ const DEFAULT_PROFILE: Omit<CoachProfileResponse, 'updatedAt'> = {
   routines: [],
   coachingNotes: null,
   adaptiveCheckInsEnabled: false,
+  adaptiveStartTime: '07:00',
+  adaptiveEndTime: '20:00',
+  adaptiveIntervalMinutes: 120,
+  proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
+  memoryEnabled: true,
+  autoMemoryEnabled: false,
   dailyCheckInEnabled: false,
   dailyCheckInTime: '20:00',
   weeklyReviewEnabled: false,
@@ -191,8 +198,8 @@ function containsTerm(value: string, term: string): boolean {
   return normalizedValue.includes(normalizedTerm);
 }
 
-function localTime(value: string): string {
-  return value.slice(0, 5);
+function localTime(value: string | undefined, fallback: string): string {
+  return (value || fallback).slice(0, 5);
 }
 
 function toResponse(
@@ -212,11 +219,22 @@ function toResponse(
     routines: profile.routines,
     coachingNotes: profile.coaching_notes,
     adaptiveCheckInsEnabled: profile.adaptive_check_ins_enabled,
+    adaptiveStartTime: localTime(profile.adaptive_start_time, '07:00'),
+    adaptiveEndTime: localTime(profile.adaptive_end_time, '20:00'),
+    adaptiveIntervalMinutes: profile.adaptive_interval_minutes ?? 120,
+    proactiveCategories: profile.proactive_categories ?? [
+      'nutrition',
+      'hydration',
+      'training',
+      'recovery',
+    ],
+    memoryEnabled: profile.memory_enabled ?? true,
+    autoMemoryEnabled: profile.auto_memory_enabled ?? false,
     dailyCheckInEnabled: profile.daily_check_in_enabled,
-    dailyCheckInTime: localTime(profile.daily_check_in_time),
+    dailyCheckInTime: localTime(profile.daily_check_in_time, '20:00'),
     weeklyReviewEnabled: profile.weekly_review_enabled,
     weeklyReviewDay: profile.weekly_review_day,
-    weeklyReviewTime: localTime(profile.weekly_review_time),
+    weeklyReviewTime: localTime(profile.weekly_review_time, '18:00'),
     updatedAt: profile.updated_at.toISOString(),
   };
 }
@@ -369,6 +387,20 @@ async function getPersistentChatContext(
       lines.push(`Routines: ${profile.routines.join('; ')}`);
     if (profile.coachingNotes)
       lines.push(`Coaching notes: ${profile.coachingNotes}`);
+    if (profile.memoryEnabled) {
+      const memories = await coachMemoryService.listActiveMemories(userId);
+      if (memories.length > 0) {
+        lines.push(
+          'Owner-controlled coach memories:\n' +
+            memories
+              .map(
+                (memory) =>
+                  `- [${memory.category}] ${memory.content}${memory.pinned ? ' (pinned)' : ''}`
+              )
+              .join('\n')
+        );
+      }
+    }
   }
   if (allergens.length)
     lines.push(

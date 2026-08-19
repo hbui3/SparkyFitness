@@ -16,6 +16,7 @@ import { buildFoodTools } from './foodTools.js';
 import { buildGoalTools } from './goalTools.js';
 import { buildHabitTools } from './habitTools.js';
 import { buildMedicationTools } from './medicationTools.js';
+import { buildMemoryTools } from './memoryTools.js';
 import { buildMealSafetyTools } from './mealSafetyTools.js';
 import { ENABLE_TOOLS_TOOL_NAME, buildMetaTools } from './metaTools.js';
 import { buildProfileTools } from './profileTools.js';
@@ -54,6 +55,7 @@ const CATEGORY_BUILDERS: Record<
     (u, tz) => buildCoachTools(u, tz),
     (u, tz) => buildEngagementTools(u, tz),
     (u) => buildWizardTools(u),
+    (u) => buildMemoryTools(u),
   ],
   vision: [(u) => buildVisionTools(u)],
   profile: [(u) => buildProfileTools(u), (u, tz) => buildHabitTools(u, tz)],

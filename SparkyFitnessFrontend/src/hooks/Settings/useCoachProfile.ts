@@ -1,12 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import type { UpdateCoachProfileRequest } from '@workspace/shared';
+import type {
+  CreateCoachMemoryRequest,
+  UpdateCoachMemoryRequest,
+  UpdateCoachProfileRequest,
+} from '@workspace/shared';
 import { preferencesKeys } from '@/api/keys/settings';
 import {
   createCoachTelegramLink,
+  createCoachMemory,
+  deleteCoachMemory,
   disconnectCoachTelegram,
   getCoachProfile,
   getCoachTelegramStatus,
+  getCoachMemories,
+  updateCoachMemory,
   updateCoachProfile,
 } from '@/api/Settings/coachProfile';
 import { useAuth } from '@/hooks/useAuth';
@@ -103,4 +111,48 @@ export const useDisconnectCoachTelegram = () => {
       ),
     },
   });
+};
+
+export const useCoachMemories = () => {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: preferencesKeys.coachMemories(),
+    queryFn: getCoachMemories,
+    enabled: !!user,
+  });
+};
+
+function useRefreshCoachMemories() {
+  const queryClient = useQueryClient();
+  return () =>
+    queryClient.invalidateQueries({
+      queryKey: preferencesKeys.coachMemories(),
+    });
+}
+
+export const useCreateCoachMemory = () => {
+  const refresh = useRefreshCoachMemories();
+  return useMutation({
+    mutationFn: (memory: CreateCoachMemoryRequest) => createCoachMemory(memory),
+    onSuccess: refresh,
+  });
+};
+
+export const useUpdateCoachMemory = () => {
+  const refresh = useRefreshCoachMemories();
+  return useMutation({
+    mutationFn: ({
+      id,
+      memory,
+    }: {
+      id: string;
+      memory: UpdateCoachMemoryRequest;
+    }) => updateCoachMemory(id, memory),
+    onSuccess: refresh,
+  });
+};
+
+export const useDeleteCoachMemory = () => {
+  const refresh = useRefreshCoachMemories();
+  return useMutation({ mutationFn: deleteCoachMemory, onSuccess: refresh });
 };

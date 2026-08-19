@@ -1,10 +1,8 @@
 import { timingSafeEqual } from 'crypto';
 import express from 'express';
-import telegramCoachService, {
-  type TelegramUpdate,
-} from '../services/telegramCoachService.js';
+import type { TelegramUpdate } from '../services/telegramCoachService.js';
 import { getTelegramWebhookSecret } from '../services/telegramApiService.js';
-import { log } from '../config/logging.js';
+import telegramQueueRepository from '../models/telegramQueueRepository.js';
 
 const router = express.Router();
 
@@ -26,12 +24,15 @@ router.post('/webhook', async (req, res) => {
     return;
   }
 
+  const update = req.body as TelegramUpdate;
+  if (!Number.isSafeInteger(update.update_id)) {
+    res.status(400).json({ error: 'Invalid Telegram update.' });
+    return;
+  }
+  // Acknowledge Telegram only after the exact update has been persisted. A
+  // duplicate insert is still a successful acknowledgement.
+  await telegramQueueRepository.enqueueUpdate(update);
   res.sendStatus(200);
-  void telegramCoachService
-    .handleTelegramUpdate(req.body as TelegramUpdate)
-    .catch((error) => {
-      log('error', 'Telegram webhook processing failed:', error);
-    });
 });
 
 export default router;
