@@ -1,11 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import {
   mapSpeedianceSet,
+  parseSpeedianceExerciseMetadata,
   parseSpeedianceTrainingDetail,
   parseSpeedianceTrainingRecords,
 } from '../integrations/speediance/speedianceMapper.js';
 
 describe('Speediance workout mapping', () => {
+  it('maps Speediance primary and auxiliary muscles to Sparky vocabulary', () => {
+    expect(
+      parseSpeedianceExerciseMetadata({
+        mainMuscleGroupList: [
+          { muscleGroupName: 'Pecs' },
+          { muscleGroupName: 'Front Delts' },
+        ],
+        auxiliaryMuscleGroupList: [
+          { muscleGroupName: 'Triceps' },
+          { muscleGroupName: 'Pecs' },
+          { muscleGroupName: 'Back Extensors' },
+        ],
+      })
+    ).toEqual({
+      primaryMuscles: ['chest', 'shoulders'],
+      secondaryMuscles: ['triceps', 'lower back'],
+    });
+  });
+
   it('parses summary records and ignores malformed rows', () => {
     const records = parseSpeedianceTrainingRecords([
       {

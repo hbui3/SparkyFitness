@@ -14,6 +14,7 @@ vi.mock('../models/exercise.js', () => ({
         Promise.resolve({ id: `exercise-${name}` })
       ),
     createExercise: vi.fn(),
+    updateExercise: vi.fn(),
   },
 }));
 vi.mock('../models/activityDetailsRepository.js', () => ({
@@ -41,6 +42,7 @@ vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 import { processSpeedianceWorkouts } from '../integrations/speediance/speedianceDataProcessor.js';
 import type { SpeedianceWorkoutBundle } from '../integrations/speediance/speedianceDataProcessor.js';
 import exerciseEntryRepository from '../models/exerciseEntry.js';
+import exerciseRepository from '../models/exercise.js';
 import activityDetailsRepository from '../models/activityDetailsRepository.js';
 import exercisePresetEntryRepository from '../models/exercisePresetEntryRepository.js';
 
@@ -65,6 +67,8 @@ function sampleBundle(): SpeedianceWorkoutBundle {
         isLeftRight: false,
         totalCapacity: 425,
         maxWeight: 45,
+        primaryMuscles: ['chest'],
+        secondaryMuscles: ['triceps'],
         finishedReps: [
           {
             finishedCount: 10,
@@ -154,6 +158,40 @@ describe('processSpeedianceWorkouts', () => {
       importedExercises: 1,
       skippedWorkouts: 0,
     });
+  });
+
+  it('refreshes muscle metadata on an existing user-owned Speediance exercise', async () => {
+    vi.mocked(
+      exerciseRepository.findExerciseByNameAndUserId
+    ).mockResolvedValueOnce({
+      id: 'exercise-Chest Press',
+      user_id: 'user-1',
+      source: 'Speediance',
+    });
+    vi.mocked(exerciseRepository.updateExercise).mockResolvedValueOnce({
+      id: 'exercise-Chest Press',
+      user_id: 'user-1',
+      source: 'Speediance',
+    });
+
+    await processSpeedianceWorkouts(
+      'user-1',
+      'user-1',
+      [sampleBundle()],
+      '2026-08-18',
+      '2026-08-18',
+      'UTC'
+    );
+
+    expect(exerciseRepository.updateExercise).toHaveBeenCalledWith(
+      'exercise-Chest Press',
+      'user-1',
+      {
+        primary_muscles: ['chest'],
+        secondary_muscles: ['triceps'],
+        modality: 'weight_reps',
+      }
+    );
   });
 
   it('creates a fallback session entry for Free Lift history', async () => {

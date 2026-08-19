@@ -245,6 +245,39 @@ export const calculateTimeUnderTensionData = (
   }));
 };
 
+interface ActivityTimeWindow {
+  startMs: number;
+  endMs: number;
+}
+
+const activityTimeWindow = (
+  entry: ExerciseProgressResponse
+): ActivityTimeWindow | null => {
+  const startMs = Date.parse(entry.activity_started_at ?? '');
+  if (!Number.isFinite(startMs)) return null;
+
+  const explicitEndMs = Date.parse(entry.activity_ended_at ?? '');
+  const durationEndMs =
+    startMs + Math.max(0, entry.duration_minutes ?? 0) * 60_000;
+  const endMs = Number.isFinite(explicitEndMs) ? explicitEndMs : durationEndMs;
+  return endMs > startMs ? { startMs, endMs } : null;
+};
+
+const substantiallyOverlaps = (
+  first: ActivityTimeWindow,
+  second: ActivityTimeWindow
+): boolean => {
+  const overlapMs =
+    Math.min(first.endMs, second.endMs) -
+    Math.max(first.startMs, second.startMs);
+  if (overlapMs <= 0) return false;
+  const shorterDurationMs = Math.min(
+    first.endMs - first.startMs,
+    second.endMs - second.startMs
+  );
+  return shorterDurationMs > 0 && overlapMs / shorterDurationMs >= 0.8;
+};
+
 export const extractTelemetryActivityEntries = (
   exerciseProgressData: Record<string, ExerciseProgressResponse[]>,
   selectedExercise: string,
@@ -268,6 +301,7 @@ export const extractTelemetryActivityEntries = (
     'strava',
     'healthkit',
     'health connect',
+    'speediance',
   ]);
 
   // Mobile sync writes a row for every workout the phone knows about, including
@@ -278,18 +312,40 @@ export const extractTelemetryActivityEntries = (
   // has_telemetry — which is also why this compares to true explicitly: an
   // absent flag must fail closed here rather than pass as truthy.
   const REQUIRES_TELEMETRY_FLAG = new Set(['healthkit', 'health connect']);
+  const speedianceWindows =
+    selectedExercise === 'All'
+      ? Object.values(exerciseProgressData)
+          .flat()
+          .filter(
+            (entry) => entry.provider_name?.toLowerCase() === 'speediance'
+          )
+          .map(activityTimeWindow)
+          .filter((window): window is ActivityTimeWindow => window !== null)
+      : [];
 
   const processEntry = (entry: ExerciseProgressResponse) => {
     const source = entry.provider_name?.toLowerCase();
+    const isMobileDuplicate =
+      selectedExercise === 'All' &&
+      source !== undefined &&
+      REQUIRES_TELEMETRY_FLAG.has(source) &&
+      (() => {
+        const mobileWindow = activityTimeWindow(entry);
+        return (
+          mobileWindow !== null &&
+          speedianceWindows.some((speedianceWindow) =>
+            substantiallyOverlaps(mobileWindow, speedianceWindow)
+          )
+        );
+      })();
     if (
       source &&
       TELEMETRY_PROVIDERS.has(source) &&
       entry.exercise_entry_id &&
+      !isMobileDuplicate &&
       (!REQUIRES_TELEMETRY_FLAG.has(source) || entry.has_telemetry === true)
     ) {
-      const presetId = (entry as Record<string, unknown>)[
-        'exercise_preset_entry_id'
-      ] as string | undefined;
+      const presetId = entry.exercise_preset_entry_id ?? undefined;
 
       if (presetId) {
         if (!seenPresetIds.has(presetId)) {

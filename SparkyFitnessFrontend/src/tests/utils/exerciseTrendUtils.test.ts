@@ -189,6 +189,79 @@ describe('extractTelemetryActivityEntries', () => {
     ).toEqual(['strava-1', 'strava-2']);
   });
 
+  it('groups a Speediance session into one detailed activity card', () => {
+    const data: Record<string, ExerciseProgressResponse[]> = {
+      Press: [
+        makeEntry({
+          provider_name: 'Speediance',
+          exercise_entry_id: 'speediance-1',
+          exercise_preset_entry_id: 'session-1',
+        }),
+      ],
+      Fly: [
+        makeEntry({
+          provider_name: 'speediance',
+          exercise_entry_id: 'speediance-2',
+          exercise_preset_entry_id: 'session-1',
+        }),
+      ],
+    };
+
+    expect(
+      extractTelemetryActivityEntries(data, 'All', parseISO).map(
+        (entry) => entry.exercise_entry_id
+      )
+    ).toEqual(['speediance-1']);
+  });
+
+  it('prefers Speediance over overlapping Apple Health duplicates', () => {
+    const data: Record<string, ExerciseProgressResponse[]> = {
+      'Traditional Strength Training': [
+        makeEntry({
+          provider_name: 'HealthKit',
+          exercise_entry_id: 'apple-strength',
+          has_telemetry: true,
+          activity_started_at: '2026-08-10T17:44:30.000Z',
+          activity_ended_at: '2026-08-10T18:07:14.754Z',
+        }),
+      ],
+      'Workout type 3000': [
+        makeEntry({
+          provider_name: 'HealthKit',
+          exercise_entry_id: 'apple-generic',
+          has_telemetry: true,
+          activity_started_at: '2026-08-10T17:45:33.000Z',
+          activity_ended_at: '2026-08-10T18:07:07.000Z',
+        }),
+      ],
+      'Chest Press': [
+        makeEntry({
+          provider_name: 'Speediance',
+          exercise_entry_id: 'speediance-detail',
+          exercise_preset_entry_id: 'speediance-session',
+          duration_minutes: 22,
+          activity_started_at: '2026-08-10T17:44:30.000Z',
+          activity_ended_at: '2026-08-10T18:07:12.000Z',
+        }),
+      ],
+      Walking: [
+        makeEntry({
+          provider_name: 'HealthKit',
+          exercise_entry_id: 'apple-walk',
+          has_telemetry: true,
+          activity_started_at: '2026-08-10T08:00:00.000Z',
+          activity_ended_at: '2026-08-10T08:30:00.000Z',
+        }),
+      ],
+    };
+
+    const entries = extractTelemetryActivityEntries(data, 'All', parseISO);
+    expect(entries.map((entry) => entry.exercise_entry_id)).toEqual(
+      expect.arrayContaining(['speediance-detail', 'apple-walk'])
+    );
+    expect(entries).toHaveLength(2);
+  });
+
   it('accepts mobile-synced workouts from HealthKit and Health Connect', () => {
     // The mobile app writes these exact strings (see healthRecords.ts); the
     // workout handler persists their GPS/laps/zones, so they belong in the

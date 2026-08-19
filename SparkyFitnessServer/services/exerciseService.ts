@@ -2231,23 +2231,24 @@ async function getActivityDetailsByExerciseEntryIdAndProvider(
     );
     let targetId = entryId; // Default to the provided entryId
     if (exerciseEntry) {
-      // If it's an exercise entry and linked to a preset, use the preset ID
+      // Provider details may be attached directly to the selected child entry
+      // (Speediance) or to its parent preset session (Garmin). Read the child
+      // first and then add any session-level rows so both storage models work.
+      activityDetails =
+        await activityDetailsRepository.getActivityDetailsByEntryOrPresetId(
+          authenticatedUserId,
+          targetId,
+          null
+        );
       if (exerciseEntry.exercise_preset_entry_id) {
         targetId = exerciseEntry.exercise_preset_entry_id;
-        activityDetails =
+        const presetActivityDetails =
           await activityDetailsRepository.getActivityDetailsByEntryOrPresetId(
             authenticatedUserId,
             null,
             targetId
           );
-      } else {
-        // If it's an exercise entry but not linked to a preset, use its own ID
-        activityDetails =
-          await activityDetailsRepository.getActivityDetailsByEntryOrPresetId(
-            authenticatedUserId,
-            targetId,
-            null
-          );
+        activityDetails = [...activityDetails, ...presetActivityDetails];
       }
     } else {
       // If not an exercise entry, try to find an exercise preset entry with the given ID

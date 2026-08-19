@@ -125,4 +125,34 @@ describe('SpeedianceApiClient', () => {
     );
     expect(get).not.toHaveBeenCalled();
   });
+
+  it('loads exercise muscle metadata from the action-library group', async () => {
+    post
+      .mockResolvedValueOnce({
+        data: { data: { isExist: true, hasPwd: true } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { token: 'token-1', appUserId: 'user-1' } },
+      });
+    get.mockResolvedValueOnce({
+      data: { data: { mainMuscleGroupName: 'Pecs' } },
+    });
+    const client = new SpeedianceApiClient({
+      region: 'EU',
+      timezone: 'Europe/Berlin',
+      httpClient,
+    });
+    await client.login('local-test@example.com', 'local-test-password');
+
+    await expect(client.getActionLibraryGroup('group/id 1')).resolves.toEqual({
+      mainMuscleGroupName: 'Pecs',
+    });
+    expect(get).toHaveBeenCalledWith(
+      '/api/app/actionLibraryGroup/group%2Fid%201',
+      expect.objectContaining({
+        params: { isDisplay: 1 },
+        headers: expect.objectContaining({ Token: 'token-1' }),
+      })
+    );
+  });
 });

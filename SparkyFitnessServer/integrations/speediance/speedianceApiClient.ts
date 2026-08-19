@@ -229,6 +229,21 @@ export class SpeedianceApiClient {
     return this.getTrainingResource(trainingId, trainingType, 'info');
   }
 
+  async getActionLibraryGroup(actionLibraryGroupId: string): Promise<unknown> {
+    try {
+      const response = await this.http.get(
+        `/api/app/actionLibraryGroup/${encodeURIComponent(actionLibraryGroupId)}`,
+        {
+          headers: this.authenticatedHeaders(),
+          params: { isDisplay: 1 },
+        }
+      );
+      return this.unwrap(response.data);
+    } catch (error) {
+      this.rethrowReadError(error, 'exercise metadata');
+    }
+  }
+
   private async getTrainingResource(
     trainingId: string,
     trainingType: number,

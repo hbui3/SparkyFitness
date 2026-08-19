@@ -15,6 +15,8 @@ const ENTRY_SOURCE = 'Speediance';
 
 interface ExerciseRow {
   id: string;
+  source?: string | null;
+  user_id?: string | null;
 }
 
 interface WorkoutPresetRow {
@@ -52,8 +54,9 @@ function sessionExerciseName(record: SpeedianceTrainingRecord): string {
 
 async function findOrCreateExercise(
   userId: string,
-  exerciseName: string
+  detail: SpeedianceExerciseDetail
 ): Promise<ExerciseRow | null> {
+  const exerciseName = detail.actionLibraryName;
   let exercise = (await exerciseRepository.findExerciseByNameAndUserId(
     exerciseName,
     userId
@@ -63,8 +66,22 @@ async function findOrCreateExercise(
       user_id: userId,
       name: exerciseName,
       source: ENTRY_SOURCE,
+      source_id: detail.actionLibraryGroupId,
       is_custom: true,
       shared_with_public: false,
+      primary_muscles: detail.primaryMuscles,
+      secondary_muscles: detail.secondaryMuscles,
+      modality: detail.completionMethod === 0 ? 'duration' : 'weight_reps',
+    })) as ExerciseRow | null;
+  } else if (
+    exercise.user_id === userId &&
+    exercise.source === ENTRY_SOURCE &&
+    (detail.primaryMuscles.length > 0 || detail.secondaryMuscles.length > 0)
+  ) {
+    exercise = (await exerciseRepository.updateExercise(exercise.id, userId, {
+      primary_muscles: detail.primaryMuscles,
+      secondary_muscles: detail.secondaryMuscles,
+      modality: detail.completionMethod === 0 ? 'duration' : 'weight_reps',
     })) as ExerciseRow | null;
   }
   return exercise;
@@ -102,7 +119,7 @@ async function createExerciseEntry(
   workoutPresetId: number,
   timezone: string
 ): Promise<ExerciseEntryRow | null> {
-  const exercise = await findOrCreateExercise(userId, detail.actionLibraryName);
+  const exercise = await findOrCreateExercise(userId, detail);
   if (!exercise) {
     throw new Error(`Unable to create exercise "${detail.actionLibraryName}".`);
   }
@@ -217,6 +234,8 @@ async function processWorkout(
             isLeftRight: false,
             totalCapacity: record.totalCapacity,
             maxWeight: null,
+            primaryMuscles: [],
+            secondaryMuscles: [],
             finishedReps: [],
             raw: record.raw,
           },
