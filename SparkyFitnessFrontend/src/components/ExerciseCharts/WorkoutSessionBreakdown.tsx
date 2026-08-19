@@ -1,13 +1,11 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePreferences, type WeightUnit } from '@/contexts/PreferencesContext';
 import { formatWeight } from '@/utils/numberFormatting';
 import { FaChevronDown, FaChevronUp, FaDumbbell } from 'react-icons/fa';
-import { useBodyMapSvgQuery } from '@/hooks/Exercises/useExercises';
 import { useGroupedWorkoutSession } from '@/hooks/Exercises/useExercises';
-import { svgClassToSchemaName } from '@/constants/exercises';
 import type { ExerciseEntryResponse } from '@workspace/shared';
-import './WorkoutSessionBodyMap.css';
+import MuscleBodyMap from './MuscleBodyMap';
 
 const formatExerciseName = (name: string | undefined | null): string => {
   if (!name) return 'Exercise';
@@ -491,7 +489,8 @@ export const WorkoutSessionBreakdown = ({
 
       {effectiveActiveTab === 'muscles' && (
         <div className="space-y-6">
-          <WorkoutSessionBodyMap
+          <MuscleBodyMap
+            variant="targets"
             primaryMuscles={primaryMusclesTargeted}
             secondaryMuscles={secondaryMusclesTargeted}
           />
@@ -585,71 +584,6 @@ export const WorkoutSessionBreakdown = ({
           </div>
         </div>
       )}
-    </div>
-  );
-};
-
-const WorkoutSessionBodyMap: React.FC<{
-  primaryMuscles: string[];
-  secondaryMuscles: string[];
-}> = ({ primaryMuscles, secondaryMuscles }) => {
-  const svgContainerRef = useRef<HTMLDivElement>(null);
-  const { data: svgContent } = useBodyMapSvgQuery();
-
-  useEffect(() => {
-    if (!svgContent || !svgContainerRef.current) return;
-    const container = svgContainerRef.current;
-    container.innerHTML = svgContent;
-
-    const svgElement = container.querySelector('svg');
-    if (!svgElement) return;
-
-    svgElement.setAttribute('width', '100%');
-    svgElement.style.maxWidth = '380px';
-    svgElement.style.height = 'auto';
-
-    const paths = svgElement.querySelectorAll('path[class]');
-
-    paths.forEach((path) => {
-      const svgClassName = path.getAttribute('class') || '';
-      const muscleName = (
-        svgClassToSchemaName[svgClassName] || svgClassName
-      ).toLowerCase();
-
-      const isPrimary = primaryMuscles.includes(muscleName);
-      const isSecondary = secondaryMuscles.includes(muscleName);
-
-      path.classList.remove('active-primary', 'active-secondary', 'inactive');
-      if (isPrimary) {
-        path.classList.add('active-primary');
-      } else if (isSecondary) {
-        path.classList.add('active-secondary');
-      } else {
-        path.classList.add('inactive');
-      }
-    });
-  }, [svgContent, primaryMuscles, secondaryMuscles]);
-
-  return (
-    <div className="w-full flex flex-col items-center justify-center p-4 bg-muted/20 rounded-xl border border-border overflow-hidden">
-      <div
-        ref={svgContainerRef}
-        className="workout-session-body-map w-full flex justify-center overflow-hidden max-w-[380px]"
-      />
-      <div className="flex items-center gap-6 mt-4 text-xs font-semibold">
-        <span className="flex items-center gap-1.5 text-red-500">
-          <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />{' '}
-          Primary Muscles
-        </span>
-        <span className="flex items-center gap-1.5 text-amber-500">
-          <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />{' '}
-          Secondary Muscles
-        </span>
-        <span className="flex items-center gap-1.5 text-gray-400">
-          <span className="w-2.5 h-2.5 rounded-full bg-gray-400 inline-block" />{' '}
-          Untargeted Muscles
-        </span>
-      </div>
     </div>
   );
 };

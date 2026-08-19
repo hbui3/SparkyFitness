@@ -111,6 +111,19 @@ const snapshot: CoachContextSnapshot = {
     bodyBatteryLowest: null,
     recentMuscleLoad: [],
   },
+  adaptiveTraining: {
+    id: '00000000-0000-4000-8000-000000000001',
+    date: '2026-08-23',
+    kind: 'workout',
+    presetId: 1,
+    presetName: 'Full Body',
+    score: 82,
+    status: 'planned',
+    volumeFactor: 1,
+    rationale: [],
+    algorithmVersion: 'adaptive-v1',
+    generatedAt: '2026-08-23T06:00:00.000Z',
+  },
 };
 
 describe('proactiveCoachService', () => {

@@ -132,7 +132,10 @@ export function adaptiveStateSignature(
       ? snapshot.today.waterConsumedMl
       : null,
     training: categories.includes('training')
-      ? snapshot.week.workoutCount
+      ? {
+          workoutCount: snapshot.week.workoutCount,
+          recommendation: snapshot.adaptiveTraining,
+        }
       : null,
     recovery: categories.includes('recovery')
       ? {
@@ -159,6 +162,11 @@ function adaptiveFocusDe(
       (snapshot.recovery.sleepScore ?? 100) < 50)
   ) {
     return 'Deine Erholungswerte sind heute niedrig. Priorisiere Schlaf, lockere Bewegung und reduziere die Trainingsintensität.';
+  }
+  if (categories.includes('training') && slotMinutes < 13 * 60) {
+    return snapshot.adaptiveTraining.kind === 'workout'
+      ? `Dein heutiger Trainingsvorschlag ist „${snapshot.adaptiveTraining.presetName ?? 'Training'}“ mit einem Fit-Score von ${snapshot.adaptiveTraining.score}/100${snapshot.adaptiveTraining.volumeFactor < 1 ? ` und ${Math.round(snapshot.adaptiveTraining.volumeFactor * 100)} % Volumen` : ''}.`
+      : `Heute ist ein Erholungstag empfohlen (Score ${snapshot.adaptiveTraining.score}/100). Plane höchstens lockere Bewegung ein.`;
   }
   if (categories.includes('nutrition') && today.caloriesConsumed === 0) {
     if (slotMinutes >= 10 * 60) {
@@ -205,6 +213,11 @@ function adaptiveFocusEn(
       (snapshot.recovery.sleepScore ?? 100) < 50)
   ) {
     return 'Your recovery signals are low today. Prioritize sleep and easy movement, and reduce training intensity.';
+  }
+  if (categories.includes('training') && slotMinutes < 13 * 60) {
+    return snapshot.adaptiveTraining.kind === 'workout'
+      ? `Today's workout recommendation is “${snapshot.adaptiveTraining.presetName ?? 'Workout'}” with a ${snapshot.adaptiveTraining.score}/100 fit score${snapshot.adaptiveTraining.volumeFactor < 1 ? ` and ${Math.round(snapshot.adaptiveTraining.volumeFactor * 100)}% volume` : ''}.`
+      : `Today is a recommended recovery day (score ${snapshot.adaptiveTraining.score}/100). Keep movement easy.`;
   }
   if (categories.includes('nutrition') && today.caloriesConsumed === 0) {
     if (slotMinutes >= 10 * 60) {

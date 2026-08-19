@@ -186,6 +186,8 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     user_cycle_display_preferences: 'owner',
     user_mood_display_preferences: 'owner',
     // diary
+    adaptive_training_recommendations: 'diary',
+    adaptive_training_settings: 'diary',
     exercise_entries: 'diary',
     exercise_preset_entries: 'diary',
     food_entry_meals: 'diary',

@@ -26,6 +26,8 @@ BEGIN
     'check_in_measurements',
     'check_in_photos',
     'coach_profiles',
+    'adaptive_training_settings',
+    'adaptive_training_recommendations',
     'coach_telegram_connections',
     'coach_memories',
     'coach_delivery_outbox',
@@ -627,6 +629,8 @@ SELECT create_checkin_policy('check_in_photos');
 SELECT create_checkin_policy('custom_categories');
 SELECT create_checkin_policy('custom_measurements');
 SELECT create_diary_policy('exercise_entries');
+SELECT create_diary_policy('adaptive_training_settings');
+SELECT create_diary_policy('adaptive_training_recommendations');
 -- Custom policy for exercise_entries to allow access if linked to an owned exercise_preset_entry
 CREATE POLICY select_exercise_preset_entry_linked_policy ON public.exercise_entries FOR SELECT TO PUBLIC
 USING (

@@ -10,6 +10,7 @@ import goalService from '../services/goalService.js';
 import workoutDeduplicationService from '../services/workoutDeduplicationService.js';
 import { getDailySummary } from '../services/dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import adaptiveTrainingService from '../services/adaptiveTrainingService.js';
 
 vi.mock('../models/onboardingRepository.js', () => ({
   default: { getOnboardingGoalData: vi.fn() },
@@ -45,6 +46,9 @@ vi.mock('../services/dailySummaryService.js', () => ({
 vi.mock('../utils/timezoneLoader.js', () => ({
   loadUserTimezone: vi.fn(),
 }));
+vi.mock('../services/adaptiveTrainingService.js', () => ({
+  default: { getAdaptiveTrainingDashboard: vi.fn() },
+}));
 
 describe('coachContextService', () => {
   beforeEach(() => {
@@ -67,6 +71,42 @@ describe('coachContextService', () => {
       sleep: null,
       hrv: null,
       muscles: [],
+    });
+    vi.mocked(
+      adaptiveTrainingService.getAdaptiveTrainingDashboard
+    ).mockResolvedValue({
+      date: '2026-08-18',
+      settings: {
+        enabled: true,
+        sessionsPerWeek: 3,
+        maxDurationMinutes: 45,
+        recoveryWindowHours: 72,
+        preferredMuscles: [],
+        candidateWorkoutPresetIds: [],
+        avoidConsecutiveTrainingDays: true,
+      },
+      readiness: {
+        score: 75,
+        sleepHours: 7.5,
+        sleepScore: 80,
+        trainingReadinessScore: 70,
+      },
+      muscleLoad: [],
+      recommendation: {
+        id: '00000000-0000-4000-8000-000000000001',
+        date: '2026-08-18',
+        kind: 'workout',
+        presetId: 1,
+        presetName: 'Full Body',
+        score: 82,
+        status: 'planned',
+        volumeFactor: 1,
+        rationale: [],
+        algorithmVersion: 'adaptive-v1',
+        generatedAt: '2026-08-18T06:00:00.000Z',
+      },
+      availablePresets: [],
+      hiddenDuplicateWorkouts: 0,
     });
   });
 

@@ -1,4 +1,5 @@
 export * from "./schemas/api/AiServiceSettings.api.zod.ts";
+export * from "./schemas/api/AdaptiveTraining.api.zod.ts";
 export * from "./schemas/api/Backup.api.zod.ts";
 export * from "./schemas/api/CustomCategories.api.zod.ts";
 export * from "./schemas/api/CustomMeasurements.api.zod.ts";
@@ -19,6 +20,8 @@ export * from "./schemas/api/Speediance.api.zod.ts";
 export * from "./schemas/api/IGPSport.api.zod.ts";
 export * from "./schemas/api/WorkoutPresets.api.zod.ts";
 export * from "./schemas/database/Account.zod.ts";
+export * from "./schemas/database/AdaptiveTrainingRecommendations.zod.ts";
+export * from "./schemas/database/AdaptiveTrainingSettings.zod.ts";
 export * from "./schemas/database/AdminActivityLogs.zod.ts";
 export * from "./schemas/database/AiServiceSettings.zod.ts";
 export * from "./schemas/database/ApiKey.zod.ts";

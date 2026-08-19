@@ -28,7 +28,7 @@ If a task also touches `shared/`, the frontend, or the mobile app, read the rele
 - Stack: Express 5, PostgreSQL via `pg`, Better Auth, Zod, TypeScript 5, Vitest 4, ESLint 10
 - Module system: ESM with `type: "module"` and `moduleResolution: "NodeNext"`
 - The package is now effectively TypeScript-first; almost all source files are `.ts`
-- Main domains: food and meal tracking, exercise logging, health and sleep data, sleep science, fasting, medications, mood, menstrual cycle and pregnancy, reporting, AI chat with private persistent coach profiles, onboarding, identity, admin tooling, and external provider integrations
+- Main domains: food and meal tracking, exercise logging and adaptive training, health and sleep data, sleep science, fasting, medications, mood, menstrual cycle and pregnancy, reporting, AI chat with private persistent coach profiles, onboarding, identity, admin tooling, and external provider integrations
 
 ## Verified Commands
 
@@ -64,6 +64,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `routes/auth/` - auth-specific route fragments mounted through `routes/authRoutes.ts`
 - `services/` - business logic and orchestration
 - `services/workoutDeduplicationService.ts` - canonical cross-provider workout reads; preserves provider rows in storage while suppressing overlapping mobile-health mirrors for reports, calories, daily views, and coach aggregates
+- `routes/adaptiveTrainingRoutes.ts`, `services/adaptiveTrainingService.ts`, `services/muscleLoadService.ts`, and `models/adaptiveTrainingRepository.ts` - diary-scoped daily workout/recovery recommendations, 0-100 decaying muscle load, readiness checks, owned-preset scoring, and persisted rationale/snapshots
 - `models/reportRepository.ts` - tabular report reads and provider provenance. `check_in_measurements.source_provenance` is per metric because a daily row can combine providers; ingest paths must pass source metadata into `models/measurementRepository.ts`.
 - `models/` - PostgreSQL repositories and persistence helpers
 - `middleware/` - auth, permissions, uploads, and shared Express middleware
@@ -232,6 +233,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   inspect `integrations/healthData/healthDataRoutes.ts`, `services/measurementService.ts`, and `utils/timezoneLoader.ts`
 - Duplicate workouts across HealthKit/Health Connect and a direct fitness provider:
   inspect `services/workoutDeduplicationService.ts`, `models/reportRepository.ts`, and the shared `utils/workoutDeduplication.ts`; do not delete or merge provider-owned rows at ingest time
+- Adaptive training, muscle-load, or workout recommendation issue:
+  inspect `routes/adaptiveTrainingRoutes.ts`, `services/adaptiveTrainingService.ts`, `services/muscleLoadService.ts`, and `models/adaptiveTrainingRepository.ts`; recommendations must consume canonical workout rows and owned workout presets rather than raw provider rows
 - Missing or incorrect report data source:
   inspect `models/reportRepository.ts`, the provider/health-data ingest path, and `models/measurementRepository.ts`; body check-ins require per-metric `source_provenance`, not one source for the whole daily row
 - Self-service "delete synced data by source" issue:
