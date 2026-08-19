@@ -71,6 +71,7 @@ import {
   buildChatbotTools,
   buildChatToolSurface,
   resolveCategories,
+  COACH_MEMORY_TOOL_NAME,
   ENABLE_TOOLS_TOOL_NAME,
   ASK_USER_TOOL_NAME,
   type ChatToolProfile,
@@ -594,6 +595,10 @@ async function prepareChatContext(
           (slug: ChatToolCategorySlug) => surface.toolNamesByCategory[slug]
         )
       ),
+      // Long-term memory is application-wide context, not a health-data
+      // category. Keep explicit remember/forget requests and automatic
+      // stable-fact capture available on every turn.
+      COACH_MEMORY_TOOL_NAME,
       ENABLE_TOOLS_TOOL_NAME,
       // Quick-reply chips: full profile only. The tool belongs to no category,
       // so it is never pulled in by the classifier — it has to be added here.
