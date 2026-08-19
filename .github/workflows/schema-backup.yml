@@ -46,12 +46,13 @@ jobs:
         # pg_dump runs inside this container, so bumping the tag also bumps
         # the pg_dump version recorded in the dump header.
         image: postgres:18.3-alpine
-        # The passwords guard an empty, minutes-lived CI container; they live
-        # in repo secrets only to keep secret scanners quiet. Runs in a fork
-        # require creating both SCHEMA_BACKUP_* secrets (any value works).
+        # These are fixed, non-production credentials for an empty,
+        # minutes-lived GitHub-hosted CI container. Keeping them local to the
+        # workflow also makes schema regeneration work in forks without
+        # requiring repository secrets.
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ${{ secrets.SCHEMA_BACKUP_DB_PASSWORD }}
+          POSTGRES_PASSWORD: sparky_schema_ci_db
           POSTGRES_DB: sparky_test
         ports:
           - 5432:5432
@@ -92,9 +93,9 @@ jobs:
           SPARKY_FITNESS_DB_PORT: "5432"
           SPARKY_FITNESS_DB_NAME: sparky_test
           SPARKY_FITNESS_DB_USER: postgres
-          SPARKY_FITNESS_DB_PASSWORD: ${{ secrets.SCHEMA_BACKUP_DB_PASSWORD }}
+          SPARKY_FITNESS_DB_PASSWORD: sparky_schema_ci_db
           SPARKY_FITNESS_APP_DB_USER: sparky_app
-          SPARKY_FITNESS_APP_DB_PASSWORD: ${{ secrets.SCHEMA_BACKUP_APP_DB_PASSWORD }}
+          SPARKY_FITNESS_APP_DB_PASSWORD: sparky_schema_ci_app
 
       # Same flags as db_backup.sh. Running pg_dump inside the service
       # container guarantees its version matches the server's.
