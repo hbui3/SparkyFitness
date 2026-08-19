@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import externalProviderRepository from '../models/externalProviderRepository.js';
+import externalProviderRepository, {
+  usesWriteOnlyPassword,
+} from '../models/externalProviderRepository.js';
 import externalProviderService from '../services/externalProviderService.js';
 import { invalidateOpenFoodFactsSession } from '../integrations/openfoodfacts/openFoodFactsAuth.js';
 
@@ -23,6 +25,10 @@ const yazioAppKey = JSON.stringify({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(usesWriteOnlyPassword).mockImplementation(
+    (providerType) =>
+      providerType === 'speediance' || providerType === 'igpsport'
+  );
 });
 
 describe('getExternalDataProvidersForUser - non-owner credential redaction', () => {
@@ -155,6 +161,47 @@ describe('redactProviderDetailsForNonOwner', () => {
   });
 });
 
+describe('getExternalDataProviderDetails - write-only passwords', () => {
+  it('does not expose an iGPSPORT password even to its owner', async () => {
+    vi.mocked(
+      externalProviderRepository.checkExternalDataProviderAccess
+    ).mockResolvedValue(true);
+    vi.mocked(
+      externalProviderRepository.getExternalDataProviderById
+    ).mockResolvedValue({
+      id: PROVIDER_ID,
+      provider_name: 'iGPSPORT',
+      provider_type: 'igpsport',
+      user_id: OWNER,
+      is_public: false,
+      is_active: true,
+      base_url: 'https://prod.en.igpsport.com',
+      sync_frequency: 'manual',
+      app_id: 'rider@example.com',
+      app_key: 'local-password',
+      token_expires_at: null,
+      external_user_id: null,
+      garth_dump: null,
+      is_strictly_private: true,
+      categories: ['exercise'],
+      required_fields: ['app_id', 'app_key'],
+      field_labels: {},
+      supports_barcode: false,
+    });
+
+    const result = await externalProviderService.getExternalDataProviderDetails(
+      OWNER,
+      PROVIDER_ID
+    );
+
+    expect(result).toMatchObject({
+      provider_type: 'igpsport',
+      app_id: 'rider@example.com',
+      app_key: null,
+    });
+  });
+});
+
 describe('getExternalDataProviders - runtime availability', () => {
   it('marks YAZIO inactive when provider OAuth credentials are missing', async () => {
     // @ts-expect-error TS(2339): Property 'mockResolvedValue' does not exist on typ... Remove this comment to see the full error message
@@ -217,6 +264,44 @@ describe('createExternalDataProvider - mutual exclusion', () => {
     await expect(promise).rejects.toThrow(pattern);
     await expect(promise).rejects.toMatchObject({ statusCode: 400 });
   };
+
+  it('normalizes an iGPSPORT account to the global regional endpoint', async () => {
+    vi.mocked(
+      externalProviderRepository.createExternalDataProvider
+    ).mockResolvedValue({ id: 'prov-igpsport-1' });
+
+    await externalProviderService.createExternalDataProvider(OWNER, {
+      provider_type: 'igpsport',
+      provider_name: 'iGPSPORT',
+      app_id: 'rider@example.com',
+      app_key: 'local-password',
+    });
+
+    expect(
+      externalProviderRepository.createExternalDataProvider
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider_type: 'igpsport',
+        base_url: 'https://prod.en.igpsport.com',
+        is_public: false,
+      })
+    );
+  });
+
+  it('rejects an iGPSPORT row without both account fields', async () => {
+    await expectBadRequest(
+      externalProviderService.createExternalDataProvider(OWNER, {
+        provider_type: 'igpsport',
+        provider_name: 'iGPSPORT',
+        app_id: 'rider@example.com',
+      }),
+      /email address or phone number and password/i
+    );
+
+    expect(
+      externalProviderRepository.createExternalDataProvider
+    ).not.toHaveBeenCalled();
+  });
 
   it('rejects an OFF row with only app_id populated', async () => {
     await expectBadRequest(

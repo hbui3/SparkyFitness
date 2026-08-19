@@ -1,4 +1,6 @@
-import externalProviderRepository from '../models/externalProviderRepository.js';
+import externalProviderRepository, {
+  usesWriteOnlyPassword,
+} from '../models/externalProviderRepository.js';
 import { log } from '../config/logging.js';
 import { invalidateOpenFoodFactsSession } from '../integrations/openfoodfacts/openFoodFactsAuth.js';
 import {
@@ -7,6 +9,7 @@ import {
   resolveYazioCredentials,
 } from '../integrations/yazio/yazioService.js';
 import { normalizeSpeedianceBaseUrl } from '../integrations/speediance/speedianceConfig.js';
+import { normalizeIGPSportBaseUrl } from '../integrations/igpsport/igpsportConfig.js';
 
 function validateSpeedianceCredentials(email: unknown, password: unknown) {
   if (
@@ -20,6 +23,28 @@ function validateSpeedianceCredentials(email: unknown, password: unknown) {
       'Speediance credentials must include a valid email address and password.'
     );
   }
+}
+
+function validateIGPSportCredentials(username: unknown, password: unknown) {
+  if (
+    typeof username !== 'string' ||
+    !username.trim() ||
+    typeof password !== 'string' ||
+    !password
+  ) {
+    throw badRequest(
+      'iGPSPORT credentials must include an email address or phone number and password.'
+    );
+  }
+}
+
+function resolveCredentialField(
+  nextValue: unknown,
+  currentValue: unknown
+): unknown {
+  if (nextValue === null) return null;
+  if (nextValue === undefined) return currentValue;
+  return nextValue;
 }
 
 // Build a 400-tagged Error for user-input validation failures so the
@@ -261,6 +286,10 @@ async function createExternalDataProvider(
       validateSpeedianceCredentials(providerData.app_id, providerData.app_key);
       providerData.base_url = normalizeSpeedianceBaseUrl(providerData.base_url);
     }
+    if (providerData.provider_type === 'igpsport') {
+      validateIGPSportCredentials(providerData.app_id, providerData.app_key);
+      providerData.base_url = normalizeIGPSportBaseUrl(providerData.base_url);
+    }
     const newProvider =
       await externalProviderRepository.createExternalDataProvider(providerData);
     if (
@@ -415,18 +444,32 @@ async function updateExternalDataProvider(
         existingProvider?.provider_type === 'speediance'
           ? existingProvider
           : undefined;
-      const resolveField = (nextValue: unknown, currentValue: unknown) => {
-        if (nextValue === null) return null;
-        if (nextValue === undefined) return currentValue;
-        return nextValue;
-      };
       validateSpeedianceCredentials(
-        resolveField(updateData.app_id, existingSpeediance?.app_id),
-        resolveField(updateData.app_key, existingSpeediance?.app_key)
+        resolveCredentialField(updateData.app_id, existingSpeediance?.app_id),
+        resolveCredentialField(updateData.app_key, existingSpeediance?.app_key)
       );
       updateData.base_url = normalizeSpeedianceBaseUrl(
         updateData.base_url === undefined
           ? existingSpeediance?.base_url
+          : updateData.base_url
+      );
+    }
+
+    const isIGPSport =
+      existingProvider?.provider_type === 'igpsport' ||
+      updateData.provider_type === 'igpsport';
+    if (isIGPSport) {
+      const existingIGPSport =
+        existingProvider?.provider_type === 'igpsport'
+          ? existingProvider
+          : undefined;
+      validateIGPSportCredentials(
+        resolveCredentialField(updateData.app_id, existingIGPSport?.app_id),
+        resolveCredentialField(updateData.app_key, existingIGPSport?.app_key)
+      );
+      updateData.base_url = normalizeIGPSportBaseUrl(
+        updateData.base_url === undefined
+          ? existingIGPSport?.base_url
           : updateData.base_url
       );
     }
@@ -475,6 +518,9 @@ async function getExternalDataProviderDetails(
     }
     const details =
       await externalProviderRepository.getExternalDataProviderById(providerId);
+    if (details && usesWriteOnlyPassword(details.provider_type)) {
+      return { ...details, app_key: null };
+    }
     return details;
   } catch (error) {
     log(

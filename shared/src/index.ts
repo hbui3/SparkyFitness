@@ -16,6 +16,7 @@ export * from "./schemas/api/FoodPhotoEstimate.api.zod.ts";
 export * from "./schemas/api/Pagination.api.zod.ts";
 export * from "./schemas/api/SleepScience.api.zod.ts";
 export * from "./schemas/api/Speediance.api.zod.ts";
+export * from "./schemas/api/IGPSport.api.zod.ts";
 export * from "./schemas/api/WorkoutPresets.api.zod.ts";
 export * from "./schemas/database/Account.zod.ts";
 export * from "./schemas/database/AdminActivityLogs.zod.ts";

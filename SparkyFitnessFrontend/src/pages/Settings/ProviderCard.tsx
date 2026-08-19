@@ -35,6 +35,7 @@ import {
   useManualSyncStravaMutation,
   useSyncHevyMutation,
   useSyncSpeedianceMutation,
+  useSyncIGPSportMutation,
 } from '@/hooks/Integrations/useIntegrations';
 import {
   useDeleteExternalProviderMutation,
@@ -98,6 +99,10 @@ const PROVIDER_PORTALS: Record<string, { label: string; url: string }> = {
   speediance: {
     label: 'SmartGymWorkoutManager API reference',
     url: 'https://github.com/ANPC86/SmartGymWorkoutManager',
+  },
+  igpsport: {
+    label: 'iGPSPORT Web App',
+    url: 'https://app.igpsport.com/',
   },
 };
 
@@ -178,6 +183,8 @@ export const ProviderCard = ({
     useSyncHevyMutation();
   const { mutate: syncSpeedianceData, isPending: isSyncSpeediancePending } =
     useSyncSpeedianceMutation();
+  const { mutate: syncIGPSportData, isPending: isSyncIGPSportPending } =
+    useSyncIGPSportMutation();
 
   const [isSyncDialogOpen, setIsSyncDialogOpen] = useState(false);
 
@@ -229,6 +236,14 @@ export const ProviderCard = ({
           endDate,
         });
         break;
+      case 'igpsport':
+        syncIGPSportData({
+          fullSync: false,
+          providerId: provider.id,
+          startDate,
+          endDate,
+        });
+        break;
     }
   };
 
@@ -259,7 +274,8 @@ export const ProviderCard = ({
     isSyncPolarPending ||
     isSyncStravaPending ||
     isSyncHevyPending ||
-    isSyncSpeediancePending;
+    isSyncSpeediancePending ||
+    isSyncIGPSportPending;
 
   const handleToggleActive = async (providerId: string, isActive: boolean) => {
     try {
@@ -336,7 +352,8 @@ export const ProviderCard = ({
       provider.garmin_connect_status === 'linked' ||
       provider.garmin_connect_status === 'connected' ||
       provider.hevy_connect_status === 'connected' ||
-      provider.speediance_connect_status === 'connected';
+      provider.speediance_connect_status === 'connected' ||
+      provider.igpsport_connect_status === 'connected';
 
     switch (provider.provider_type) {
       case 'withings':
@@ -417,6 +434,15 @@ export const ProviderCard = ({
           disconnect: null,
           sync: () => setIsSyncDialogOpen(true),
           lastSync: provider.speediance_last_sync_at,
+          tokenExpires: null,
+          hasToken: isLinked && provider.is_active,
+        };
+      case 'igpsport':
+        return {
+          connect: null,
+          disconnect: null,
+          sync: () => setIsSyncDialogOpen(true),
+          lastSync: provider.igpsport_last_sync_at,
           tokenExpires: null,
           hasToken: isLinked && provider.is_active,
         };
@@ -663,6 +689,7 @@ export const ProviderCard = ({
         'garmin',
         'hevy',
         'speediance',
+        'igpsport',
         'strava',
       ].includes(provider.provider_type) && (
         <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-2 text-xs text-yellow-800 dark:text-yellow-200 mt-2 flex items-center gap-1">

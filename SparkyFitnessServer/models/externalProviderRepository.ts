@@ -1,6 +1,16 @@
 import { getClient, getSystemClient } from '../db/poolManager.js';
 import { encrypt, decrypt, ENCRYPTION_KEY } from '../security/encryption.js';
 import { log } from '../config/logging.js';
+
+const PASSWORD_CREDENTIAL_PROVIDER_TYPES = new Set(['speediance', 'igpsport']);
+
+export function usesWriteOnlyPassword(providerType: unknown): boolean {
+  return (
+    typeof providerType === 'string' &&
+    PASSWORD_CREDENTIAL_PROVIDER_TYPES.has(providerType)
+  );
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getExternalDataProviders(userId: any) {
   const client = await getClient(userId); // User-specific operation
@@ -53,7 +63,9 @@ async function getExternalDataProviders(userId: any) {
         return {
           ...row,
           app_id: decryptedAppId,
-          app_key: row.provider_type === 'speediance' ? null : decryptedAppKey,
+          app_key: usesWriteOnlyPassword(row.provider_type)
+            ? null
+            : decryptedAppKey,
           has_token: !!row.encrypted_access_token,
         };
       })
@@ -146,7 +158,9 @@ async function getExternalDataProvidersByUserId(
           user_id: row.user_id,
           is_public: row.is_public,
           app_id: decryptedAppId,
-          app_key: row.provider_type === 'speediance' ? null : decryptedAppKey,
+          app_key: usesWriteOnlyPassword(row.provider_type)
+            ? null
+            : decryptedAppKey,
           token_expires_at: row.token_expires_at,
           external_user_id: row.external_user_id,
           garth_dump: decryptedGarthDump,

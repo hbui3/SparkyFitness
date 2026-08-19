@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-08-18_
+_Last updated: 2026-08-19_
 
 SparkyFitness Server is the backend API package for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessServer/`.
 
@@ -190,8 +190,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 ### Integrations and Background Work
 
 - Provider-specific adapters live under `integrations/`; coordinating logic usually lives in `services/` and persistence in `models/`
-- Current adapters span food/nutrition (OpenFoodFacts, FatSecret, Nutritionix, USDA, Mealie, Tandoor, Norish, SwissFood, Yazio), fitness devices (Garmin Connect sync plus FIT file import via `integrations/garminfit/` + `services/fitImportService.ts`, Withings, Fitbit, Oura, Polar, Strava, Hevy, Speediance), exercise databases (Wger, FreeExerciseDB), and health-data import (Google Health, generic/mobile health data)
-- Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, and Speediance. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract; its regional base URL must stay allow-listed.
+- Current adapters span food/nutrition (OpenFoodFacts, FatSecret, Nutritionix, USDA, Mealie, Tandoor, Norish, SwissFood, Yazio), fitness devices (Garmin Connect sync plus FIT file import via `integrations/garminfit/` + `services/fitImportService.ts`, Withings, Fitbit, Oura, Polar, Strava, Hevy, Speediance, iGPSPORT), exercise databases (Wger, FreeExerciseDB), and health-data import (Google Health, generic/mobile health data)
+- Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, Speediance, and iGPSPORT. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract. iGPSPORT uses `integrations/igpsport/`, `routes/igpsportRoutes.ts`, the shared `IGPSport.api.zod.ts` contract, and the native FIT import service. Both providers' regional base URLs must stay allow-listed.
 - Integration work often spans route, service, repository, cron, and external-provider settings code; inspect the whole path before calling the work complete
 
 ### AI Services

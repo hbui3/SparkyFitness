@@ -21,17 +21,30 @@ import {
 } from './garmin/garminTelemetryExtractors.js';
 
 // Distinct from the Connect sync's 'garmin' so its range-delete-and-recreate
-// re-sync never wipes FIT imports.
-const FIT_SOURCE = 'garmin_fit';
+// re-sync never wipes manually uploaded FIT imports.
+const DEFAULT_FIT_IMPORT_SOURCE: FitImportSource = {
+  entrySource: 'garmin_fit',
+  detailProviderName: 'garmin_fit',
+  exerciseSource: 'garmin',
+  notesPrefix: 'Garmin FIT Import',
+};
 
-interface UploadedFitFile {
+export interface FitImportFile {
   originalname: string;
   buffer: Buffer;
+  sourceId?: string;
+  activityName?: string;
+}
+
+export interface FitImportSource {
+  entrySource: string;
+  detailProviderName: string;
+  exerciseSource: string;
+  notesPrefix: string;
 }
 
 interface PersistedFitEntry {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  entry: any;
+  entry: { id: string };
   operation: 'created' | 'updated';
 }
 
@@ -42,30 +55,36 @@ interface PersistedFitEntry {
 async function persistFitEntry(
   targetUserId: string,
   actingUserId: string,
-  entryData: FitEntryData & { exercise_id: string; entry_date: string },
+  entryData: FitEntryData & {
+    exercise_id: string;
+    entry_date: string;
+    exercise_name?: string;
+  },
   detailData: FitDetailData,
-  entryDate: string
+  entryDate: string,
+  source: FitImportSource
 ): Promise<PersistedFitEntry> {
   const client = await getClient(targetUserId, actingUserId);
   try {
     await client.query('BEGIN');
-    const { entry, operation } =
+    const { entry: storedEntry, operation } =
       await exerciseEntryRepository._createExerciseEntryWithClient(
         client,
         targetUserId,
         entryData,
         actingUserId,
-        FIT_SOURCE
+        source.entrySource
       );
+    const entry = storedEntry as { id: string };
     await activityDetailsRepository._deleteActivityDetailsByEntryIdAndProviderWithClient(
       client,
       targetUserId,
       entry.id,
-      FIT_SOURCE
+      source.detailProviderName
     );
     await activityDetailsRepository._createActivityDetailWithClient(client, {
       exercise_entry_id: entry.id,
-      provider_name: FIT_SOURCE,
+      provider_name: source.detailProviderName,
       detail_type: 'full_activity_data',
       detail_data: detailData,
       created_by_user_id: actingUserId,
@@ -134,7 +153,8 @@ async function persistFitEntry(
 async function importSingleFitFile(
   targetUserId: string,
   actingUserId: string,
-  file: UploadedFitFile
+  file: FitImportFile,
+  source: FitImportSource
 ): Promise<ImportFitFileResult> {
   const fileName = file.originalname;
   try {
@@ -180,19 +200,26 @@ async function importSingleFitFile(
     const exercise = await getOrCreateGarminExercise(
       targetUserId,
       transformed.sport,
-      transformed.sport
+      transformed.sport,
+      source.exerciseSource
     );
+    const activityName = file.activityName?.trim() || transformed.activityName;
+    transformed.detailData.activity.activityName = activityName;
 
     const { entry, operation } = await persistFitEntry(
       targetUserId,
       actingUserId,
       {
         ...transformed.entryData,
+        source_id: file.sourceId || transformed.sourceId,
+        notes: `${source.notesPrefix}: ${activityName} (${transformed.sport})`,
         exercise_id: exercise.id,
+        exercise_name: activityName,
         entry_date: entryDate,
       },
       transformed.detailData,
-      entryDate
+      entryDate,
+      source
     );
 
     const result: ImportFitFileResult = {
@@ -200,7 +227,7 @@ async function importSingleFitFile(
       status: operation,
       exerciseEntryId: entry.id,
       entryDate,
-      activityName: transformed.activityName,
+      activityName,
       sport: transformed.sport,
     };
     if (warnings.length > 0) {
@@ -232,11 +259,14 @@ async function importSingleFitFile(
 async function importFitFiles(
   targetUserId: string,
   actingUserId: string,
-  files: UploadedFitFile[]
+  files: FitImportFile[],
+  source: FitImportSource = DEFAULT_FIT_IMPORT_SOURCE
 ): Promise<ImportFitResponse> {
   const results: ImportFitFileResult[] = [];
   for (const file of files) {
-    results.push(await importSingleFitFile(targetUserId, actingUserId, file));
+    results.push(
+      await importSingleFitFile(targetUserId, actingUserId, file, source)
+    );
   }
   const created = results.filter((r) => r.status === 'created').length;
   const updated = results.filter((r) => r.status === 'updated').length;

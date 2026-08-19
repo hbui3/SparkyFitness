@@ -4568,6 +4568,8 @@
     "stravaSuccess": "Your Strava account has been successfully linked.",
     "speedianceSyncError": "Speediance sync failed. Check the email, password, and region.",
     "speedianceSyncSuccess": "Speediance workouts synced successfully.",
+    "igpsportSyncError": "iGPSPORT sync failed. Check the account, password, and region.",
+    "igpsportSyncSuccess": "iGPSPORT activities synced successfully.",
     "withingsError": "Failed to link Withings account. Please try again.",
     "withingsSuccess": "Your Withings account has been successfully linked."
   },

@@ -173,6 +173,7 @@ const PROVIDER_LABEL_EXCEPTIONS: Record<
   { key?: string; fallback: string }
 > = {
   garmin_fit: { fallback: 'Garmin' },
+  igpsport: { fallback: 'iGPSPORT' },
   healthkit: {
     key: 'reports.activityReport.provider.appleHealth',
     fallback: 'Apple Health',

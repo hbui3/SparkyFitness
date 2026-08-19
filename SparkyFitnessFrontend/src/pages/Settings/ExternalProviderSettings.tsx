@@ -56,6 +56,9 @@ export interface ExternalDataProvider {
   speediance_last_sync_at?: string | null;
   speediance_connect_status?: 'connected' | 'disconnected';
   speediance_region?: 'EU' | 'Global' | null;
+  igpsport_last_sync_at?: string | null;
+  igpsport_connect_status?: 'connected' | 'disconnected';
+  igpsport_region?: 'Global' | 'China' | null;
   strava_last_sync_at?: string | null;
   strava_token_expires?: string | null;
   googlehealth_last_sync_at?: string | null;

@@ -262,6 +262,59 @@ describe('extractTelemetryActivityEntries', () => {
     expect(entries).toHaveLength(2);
   });
 
+  it('prefers iGPSPORT FIT telemetry over an overlapping Apple Health copy', () => {
+    const data: Record<string, ExerciseProgressResponse[]> = {
+      Cycling: [
+        makeEntry({
+          provider_name: 'HealthKit',
+          exercise_entry_id: 'apple-cycling',
+          has_telemetry: true,
+          activity_started_at: '2026-08-18T08:00:00.000Z',
+          activity_ended_at: '2026-08-18T09:30:00.000Z',
+        }),
+        makeEntry({
+          provider_name: 'iGPSPORT',
+          exercise_entry_id: 'igpsport-fit',
+          has_telemetry: true,
+          activity_started_at: '2026-08-18T08:00:10.000Z',
+          activity_ended_at: '2026-08-18T09:29:50.000Z',
+        }),
+      ],
+    };
+
+    expect(
+      extractTelemetryActivityEntries(data, 'All', parseISO).map(
+        (entry) => entry.exercise_entry_id
+      )
+    ).toEqual(['igpsport-fit']);
+  });
+
+  it('prefers iGPSPORT when the report is filtered to one exercise', () => {
+    const data: Record<string, ExerciseProgressResponse[]> = {
+      Cycling: [
+        makeEntry({
+          provider_name: 'HealthKit',
+          exercise_entry_id: 'apple-cycling',
+          has_telemetry: true,
+          activity_started_at: '2026-08-18T08:00:00.000Z',
+          activity_ended_at: '2026-08-18T09:30:00.000Z',
+        }),
+        makeEntry({
+          provider_name: 'iGPSPORT',
+          exercise_entry_id: 'igpsport-fit',
+          activity_started_at: '2026-08-18T08:00:10.000Z',
+          activity_ended_at: '2026-08-18T09:29:50.000Z',
+        }),
+      ],
+    };
+
+    expect(
+      extractTelemetryActivityEntries(data, 'Cycling', parseISO).map(
+        (entry) => entry.exercise_entry_id
+      )
+    ).toEqual(['igpsport-fit']);
+  });
+
   it('accepts mobile-synced workouts from HealthKit and Health Connect', () => {
     // The mobile app writes these exact strings (see healthRecords.ts); the
     // workout handler persists their GPS/laps/zones, so they belong in the
@@ -412,6 +465,14 @@ describe('providerLabel', () => {
       label: 'Garmin',
       isTranslationKey: false,
       fallback: 'Garmin',
+    });
+  });
+
+  it('preserves the iGPSPORT brand casing', () => {
+    expect(providerLabel('iGPSPORT')).toEqual({
+      label: 'iGPSPORT',
+      isTranslationKey: false,
+      fallback: 'iGPSPORT',
     });
   });
 

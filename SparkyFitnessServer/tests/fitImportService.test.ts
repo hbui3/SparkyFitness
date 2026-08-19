@@ -252,7 +252,65 @@ describe('importFitFiles', () => {
     expect(getOrCreateGarminExercise).toHaveBeenCalledWith(
       'user-1',
       'tennis',
-      'tennis'
+      'tennis',
+      'garmin'
+    );
+  });
+
+  it('stores provider-specific provenance for an iGPSPORT download', async () => {
+    const response = await importFitFiles(
+      'user-1',
+      'actor-1',
+      [
+        {
+          ...fixtureFile('ride-42.fit'),
+          sourceId: 'ride-42',
+          activityName: 'Evening Ride',
+        },
+      ],
+      {
+        entrySource: 'iGPSPORT',
+        detailProviderName: 'iGPSPORT',
+        exerciseSource: 'igpsport',
+        notesPrefix: 'iGPSPORT FIT Import',
+      }
+    );
+
+    expect(response.results[0]).toMatchObject({
+      status: 'created',
+      activityName: 'Evening Ride',
+    });
+    expect(getOrCreateGarminExercise).toHaveBeenCalledWith(
+      'user-1',
+      'tennis',
+      'tennis',
+      'igpsport'
+    );
+    expect(
+      exerciseEntryRepository._createExerciseEntryWithClient
+    ).toHaveBeenCalledWith(
+      mockClient,
+      'user-1',
+      expect.objectContaining({
+        source_id: 'ride-42',
+        exercise_name: 'Evening Ride',
+        notes: 'iGPSPORT FIT Import: Evening Ride (tennis)',
+      }),
+      'actor-1',
+      'iGPSPORT'
+    );
+    expect(
+      activityDetailsRepository._createActivityDetailWithClient
+    ).toHaveBeenCalledWith(
+      mockClient,
+      expect.objectContaining({
+        provider_name: 'iGPSPORT',
+        detail_data: expect.objectContaining({
+          activity: expect.objectContaining({
+            activityName: 'Evening Ride',
+          }),
+        }),
+      })
     );
   });
 });

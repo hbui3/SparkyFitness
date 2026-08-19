@@ -62,6 +62,7 @@ export const createExternalProvider = async (
         'yazio',
         'norish',
         'speediance',
+        'igpsport',
       ].includes(payload.provider_type)
         ? payload.base_url || null
         : null,
@@ -75,6 +76,7 @@ export const createExternalProvider = async (
         'polar',
         'hevy',
         'speediance',
+        'igpsport',
       ].includes(payload.provider_type)
         ? payload.sync_frequency
         : null,
@@ -486,6 +488,21 @@ export const fetchSpeedianceStatus = async (
   });
 };
 
+export interface IGPSportStatusResponse {
+  connected: boolean;
+  active: boolean;
+  region: 'Global' | 'China' | null;
+  lastSyncAt: string | null;
+}
+
+export const fetchIGPSportStatus = async (
+  providerId: string
+): Promise<IGPSportStatusResponse> => {
+  return apiCall('/integrations/igpsport/status', {
+    params: { providerId },
+  });
+};
+
 export const fetchStravaStatus = async (): Promise<OAuthStatusResponse> => {
   return apiCall('/integrations/strava/status');
 };
@@ -564,6 +581,15 @@ export const getEnrichedProviders = async (): Promise<
             enriched.speediance_region = status.region;
             break;
           }
+          case 'igpsport': {
+            const status = await fetchIGPSportStatus(provider.id);
+            enriched.igpsport_connect_status = status.connected
+              ? 'connected'
+              : 'disconnected';
+            enriched.igpsport_last_sync_at = status.lastSyncAt;
+            enriched.igpsport_region = status.region;
+            break;
+          }
           case 'strava': {
             if (provider.has_token) {
               const status = await fetchStravaStatus();
@@ -590,6 +616,9 @@ export const getEnrichedProviders = async (): Promise<
         }
         if (provider.provider_type === 'speediance') {
           enriched.speediance_connect_status = 'disconnected';
+        }
+        if (provider.provider_type === 'igpsport') {
+          enriched.igpsport_connect_status = 'disconnected';
         }
       }
 
