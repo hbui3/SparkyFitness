@@ -62,6 +62,7 @@ function sampleBundle(): SpeedianceWorkoutBundle {
     exercises: [
       {
         actionLibraryName: 'Chest Press',
+        actionLibraryId: null,
         actionLibraryGroupId: 'group-1',
         completionMethod: 1,
         isLeftRight: false,

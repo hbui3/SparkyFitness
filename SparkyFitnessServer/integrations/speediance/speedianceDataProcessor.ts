@@ -229,6 +229,7 @@ async function processWorkout(
       : [
           {
             actionLibraryName: sessionExerciseName(record),
+            actionLibraryId: null,
             actionLibraryGroupId: null,
             completionMethod: null,
             isLeftRight: false,

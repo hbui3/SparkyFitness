@@ -24,6 +24,7 @@ export interface SpeedianceFinishedSet {
 
 export interface SpeedianceExerciseDetail {
   actionLibraryName: string;
+  actionLibraryId: string | null;
   actionLibraryGroupId: string | null;
   completionMethod: number | null;
   isLeftRight: boolean;
@@ -36,6 +37,7 @@ export interface SpeedianceExerciseDetail {
 }
 
 export interface SpeedianceExerciseMetadata {
+  actionLibraryGroupId: string | null;
   primaryMuscles: string[];
   secondaryMuscles: string[];
 }
@@ -115,9 +117,18 @@ export function parseSpeedianceExerciseMetadata(
   payload: unknown
 ): SpeedianceExerciseMetadata {
   if (!isRecord(payload)) {
-    return { primaryMuscles: [], secondaryMuscles: [] };
+    return {
+      actionLibraryGroupId: null,
+      primaryMuscles: [],
+      secondaryMuscles: [],
+    };
   }
 
+  const rawGroupId = payload.groupId;
+  const actionLibraryGroupId =
+    typeof rawGroupId === 'string' || typeof rawGroupId === 'number'
+      ? String(rawGroupId)
+      : null;
   const primaryMuscles = muscleNames(payload.mainMuscleGroupList);
   if (primaryMuscles.length === 0) {
     const primary = canonicalMuscleName(payload.mainMuscleGroupName);
@@ -128,7 +139,7 @@ export function parseSpeedianceExerciseMetadata(
     (muscle) => !primarySet.has(muscle)
   );
 
-  return { primaryMuscles, secondaryMuscles };
+  return { actionLibraryGroupId, primaryMuscles, secondaryMuscles };
 }
 
 export function parseSpeedianceTrainingRecords(
@@ -261,8 +272,9 @@ function parseFreeTrainingActions(
           (actionCount > 1
             ? `Speediance Free Lift ${index + 1}`
             : 'Speediance Free Lift'),
-        actionLibraryGroupId:
+        actionLibraryId:
           libraryId !== null && libraryId > 0 ? String(libraryId) : null,
+        actionLibraryGroupId: null,
         completionMethod: 1,
         isLeftRight,
         totalCapacity: Math.max(
@@ -323,12 +335,17 @@ export function parseSpeedianceTrainingDetail(
           .filter((set): set is SpeedianceFinishedSet => set !== null)
       : [];
     const groupId = item.actionLibraryGroupId;
+    const actionId = item.actionLibraryId;
     return [
       {
         actionLibraryName: stringValue(
           item.actionLibraryName ?? item.actionName,
           `Speediance Exercise ${index + 1}`
         ),
+        actionLibraryId:
+          typeof actionId === 'string' || typeof actionId === 'number'
+            ? String(actionId)
+            : null,
         actionLibraryGroupId:
           typeof groupId === 'string' || typeof groupId === 'number'
             ? String(groupId)
