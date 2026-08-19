@@ -401,12 +401,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ steps.sync.outputs.base_sha }}
         run: |
-          gh workflow run ci-tests.yml \
-            --ref "${SYNC_BRANCH}" \
-            --field "base_sha=${BASE_SHA}"
+          CI_DISPATCH_PAYLOAD="${RUNNER_TEMP}/upstream-sync-ci-dispatch.json"
+          jq -n \
+            --arg ref "${SYNC_BRANCH}" \
+            --arg base_sha "${BASE_SHA}" \
+            '{ref: $ref, inputs: {base_sha: $base_sha}}' \
+            > "${CI_DISPATCH_PAYLOAD}"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci-tests.yml/dispatches" \
+            --input "${CI_DISPATCH_PAYLOAD}" \
+            --silent
 
       - name: Dispatch documentation build
         if: steps.sync.outputs.has_changes == 'true' && steps.sync.outputs.docs_changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run docs-test.yml --ref "${SYNC_BRANCH}"
+        run: |
+          DOCS_DISPATCH_PAYLOAD="${RUNNER_TEMP}/upstream-sync-docs-dispatch.json"
+          jq -n --arg ref "${SYNC_BRANCH}" '{ref: $ref}' \
+            > "${DOCS_DISPATCH_PAYLOAD}"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/docs-test.yml/dispatches" \
+            --input "${DOCS_DISPATCH_PAYLOAD}" \
+            --silent
