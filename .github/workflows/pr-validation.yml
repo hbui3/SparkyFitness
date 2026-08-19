@@ -21,6 +21,10 @@ jobs:
           script: |
             const title = context.payload.pull_request.title;
             const body  = context.payload.pull_request.body || '';
+            const head  = context.payload.pull_request.head;
+            const isTrustedUpstreamSync =
+              head.ref === 'automation/upstream-sync' &&
+              head.repo.full_name === context.payload.repository.full_name;
 
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
@@ -81,45 +85,45 @@ jobs:
             const warnings = [];
 
             // Mandatory for all PRs
-            if (!checked('[MANDATORY - ALL] Integrity & License')) {
+            if (!isTrustedUpstreamSync && !checked('[MANDATORY - ALL] Integrity & License')) {
               errors.push('**[MANDATORY]** Check the "Integrity & License" checkbox.');
             }
 
             // New features
-            if (isNewFeature && !checked('[MANDATORY for new feature] Alignment')) {
+            if (!isTrustedUpstreamSync && isNewFeature && !checked('[MANDATORY for new feature] Alignment')) {
               errors.push('**[MANDATORY for new features]** Check the "Alignment" checkbox.');
             }
 
             // Frontend
-            if (hasFrontendChanges && !checked('[MANDATORY for Frontend changes] Quality')) {
+            if (!isTrustedUpstreamSync && hasFrontendChanges && !checked('[MANDATORY for Frontend changes] Quality')) {
               errors.push('**[MANDATORY for Frontend changes]** Run `pnpm run validate` and check the "Quality" checkbox.');
             }
-            if (nonEnLocaleFiles.length > 0) {
+            if (!isTrustedUpstreamSync && nonEnLocaleFiles.length > 0) {
               errors.push(
                 `**[MANDATORY]** Only the \`en\` translation file may be modified. ` +
                 `Remove changes to: ${nonEnLocaleFiles.map(f => '`' + f + '`').join(', ')}.`
               );
             }
-            if (hasEnTranslationChange && !checked('[MANDATORY for Frontend changes] Translations')) {
+            if (!isTrustedUpstreamSync && hasEnTranslationChange && !checked('[MANDATORY for Frontend changes] Translations')) {
               errors.push('**[MANDATORY for Frontend changes]** You modified `en/translation.json`. Check the "Translations" checkbox.');
             }
 
             // Backend
-            if (hasBackendChanges && !checked('[MANDATORY for Backend changes] Code Quality')) {
+            if (!isTrustedUpstreamSync && hasBackendChanges && !checked('[MANDATORY for Backend changes] Code Quality')) {
               errors.push('**[MANDATORY for Backend changes]** Check the "Code Quality" checkbox.');
             }
-            if (hasSQLChanges && !checked('[MANDATORY for Backend changes] Database Security')) {
+            if (!isTrustedUpstreamSync && hasSQLChanges && !checked('[MANDATORY for Backend changes] Database Security')) {
               errors.push('**[MANDATORY for Backend changes]** `rls_policies.sql` was modified. Check the "Database Security" checkbox.');
             }
 
             // Mobile
-            if (hasMobileChanges && !checked('[MANDATORY for Mobile changes] Tested on device or emulator')) {
+            if (!isTrustedUpstreamSync && hasMobileChanges && !checked('[MANDATORY for Mobile changes] Tested on device or emulator')) {
               errors.push('**[MANDATORY for Mobile changes]** Check the "Tested on device or emulator" checkbox.');
             }
 
             // Screenshots — validate the box is backed by actual images or videos
             const screenshotsChecked = checked('[MANDATORY for UI changes] Screenshots');
-            if (screenshotsChecked) {
+            if (!isTrustedUpstreamSync && screenshotsChecked) {
               const hasMedia =
                 /!\[.*?\]\(.+?\)/i.test(body) ||
                 /<(?:img|video)\s/i.test(body) ||
@@ -131,22 +135,26 @@ jobs:
             }
 
             // ---- Warnings ----
-            if (!isIssue && !isNewFeature && !isRefactor && !isDocs) {
+            if (!isTrustedUpstreamSync && !isIssue && !isNewFeature && !isRefactor && !isDocs) {
               warnings.push('Please select a PR type (Issue, New Feature, Refactor, or Documentation).');
             }
 
             // Check description section exists and has real content
             const descriptionSection = body.split('## Description')[1]?.split(/^##\s/m)[0] ?? '';
-            if (!body.includes('## Description') || descriptionSection.trim().length < 20) {
+            if (!isTrustedUpstreamSync && (!body.includes('## Description') || descriptionSection.trim().length < 20)) {
               warnings.push('Please provide a meaningful description of your changes.');
             }
 
-            if (!body.match(/Linked Issue:\s*(Closes|Fixes|Resolves)?\s*#\d+/i)) {
+            if (!isTrustedUpstreamSync && !body.match(/Linked Issue:\s*(Closes|Fixes|Resolves)?\s*#\d+/i)) {
               warnings.push('Please link a related GitHub issue (`Linked Issue: Closes #123`).');
             }
 
             // ---- Build summary ----
             let message = '## PR Validation Results\n\n';
+
+            if (isTrustedUpstreamSync) {
+              message += '> This is the repository-owned upstream sync branch. Contributor checklist rules are skipped; the dispatched CI workflows remain required for review.\n\n';
+            }
 
             message += '### Change Detection\n';
             if (hasFrontendChanges)      message += '- 🖥️ Frontend changes detected\n';

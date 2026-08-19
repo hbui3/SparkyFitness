@@ -10,7 +10,8 @@ This directory contains all GitHub Actions workflows for the SparkyFitness proje
 
 **Purpose**: Run automated tests for Frontend, Backend, Mobile, and Garmin components.
 
-**Triggers**: Pull requests and pushes to `main` branch
+**Triggers**: Pull requests, pushes to `main`, and explicit dispatches from the
+upstream review workflow
 
 **What it does**:
 
@@ -88,6 +89,41 @@ Unraid server through an ephemeral Tailscale connection.
 
 See [`deploy/unraid/README.md`](../../deploy/unraid/README.md) for setup and
 required GitHub variables/secrets.
+
+---
+
+#### `upstream-sync.yml`
+
+**Purpose**: Keep this fork informed about new commits from
+`CodeWithCJ/SparkyFitness` without changing production automatically.
+
+**Triggers**: Daily at `04:23 UTC`, plus manual workflow dispatch
+
+**One-time repository setting**: GitHub combines the ability for Actions to
+create pull requests with the ability to approve reviews in one setting. Enable
+`Settings → Actions → General → Allow GitHub Actions to create and approve pull
+requests`. This workflow creates and updates draft pull requests but contains no
+review approval, ready-for-review, merge, or direct `main` push operation.
+
+**What it does**:
+
+- Compares fork `main` with official upstream `main`
+- Rebuilds a draft pull request on `automation/upstream-sync`
+- Reports incoming commits, changed files, sensitive paths, and files changed
+  independently in both repositories
+- Marks migrations, authentication, Coach/Telegram/Speediance, mobile,
+  deployment, workflow, and dependency changes for focused review
+- Treats 20 commits, 50 files, or 1,500 changed lines as a large update
+- Dispatches the existing code/container CI and documentation build explicitly
+- Opens or updates an issue instead of guessing when Git reports conflicts
+
+**Safety**:
+
+- Never merges the pull request
+- Never pushes to `main`
+- Returns an updated pull request to draft status
+- Production deployment remains gated on a reviewed merge and successful
+  `main` CI
 
 ---
 
