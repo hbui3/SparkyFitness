@@ -1286,6 +1286,218 @@ CREATE TABLE public.check_in_photos (
 
 
 --
+-- Name: coach_action_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_action_receipts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    action_type text NOT NULL,
+    resource_type text NOT NULL,
+    resource_id text,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'completed'::text NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '24:00:00'::interval) NOT NULL,
+    undone_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_action_receipts_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT coach_action_receipts_status_check CHECK ((status = ANY (ARRAY['completed'::text, 'undone'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: coach_delivery_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_delivery_outbox (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    channel text DEFAULT 'telegram'::text NOT NULL,
+    telegram_chat_id bigint,
+    content text NOT NULL,
+    buttons jsonb DEFAULT '[]'::jsonb NOT NULL,
+    idempotency_key text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    locked_at timestamp with time zone,
+    delivered_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_delivery_outbox_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT coach_delivery_outbox_buttons_check CHECK ((jsonb_typeof(buttons) = 'array'::text)),
+    CONSTRAINT coach_delivery_outbox_channel_check CHECK ((channel = 'telegram'::text)),
+    CONSTRAINT coach_delivery_outbox_content_check CHECK (((length(btrim(content)) >= 1) AND (length(btrim(content)) <= 50000))),
+    CONSTRAINT coach_delivery_outbox_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'delivered'::text, 'failed'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: coach_memories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_memories (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    category text NOT NULL,
+    content text NOT NULL,
+    source text DEFAULT 'user'::text NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    pinned boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_memories_category_check CHECK ((category = ANY (ARRAY['preference'::text, 'routine'::text, 'constraint'::text, 'injury'::text, 'goal'::text, 'achievement'::text, 'context'::text]))),
+    CONSTRAINT coach_memories_content_check CHECK (((length(btrim(content)) >= 1) AND (length(btrim(content)) <= 500))),
+    CONSTRAINT coach_memories_source_check CHECK ((source = ANY (ARRAY['user'::text, 'coach'::text, 'import'::text])))
+);
+
+
+--
+-- Name: coach_profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    dietary_pattern text DEFAULT 'omnivore'::text NOT NULL,
+    excluded_ingredients text[] DEFAULT '{}'::text[] NOT NULL,
+    preferred_ingredients text[] DEFAULT '{}'::text[] NOT NULL,
+    disliked_ingredients text[] DEFAULT '{}'::text[] NOT NULL,
+    routines text[] DEFAULT '{}'::text[] NOT NULL,
+    coaching_notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    daily_check_in_enabled boolean DEFAULT false NOT NULL,
+    daily_check_in_time time without time zone DEFAULT '20:00:00'::time without time zone NOT NULL,
+    weekly_review_enabled boolean DEFAULT false NOT NULL,
+    weekly_review_day smallint DEFAULT 0 NOT NULL,
+    weekly_review_time time without time zone DEFAULT '18:00:00'::time without time zone NOT NULL,
+    daily_last_sent_on date,
+    weekly_last_sent_on date,
+    adaptive_check_ins_enabled boolean DEFAULT false NOT NULL,
+    adaptive_last_sent_slot text,
+    adaptive_start_time time without time zone DEFAULT '07:00:00'::time without time zone NOT NULL,
+    adaptive_end_time time without time zone DEFAULT '20:00:00'::time without time zone NOT NULL,
+    adaptive_interval_minutes smallint DEFAULT 120 NOT NULL,
+    proactive_categories text[] DEFAULT ARRAY['nutrition'::text, 'hydration'::text, 'training'::text, 'recovery'::text] NOT NULL,
+    adaptive_last_signature text,
+    memory_enabled boolean DEFAULT true NOT NULL,
+    auto_memory_enabled boolean DEFAULT false NOT NULL,
+    CONSTRAINT coach_profiles_adaptive_interval_minutes_check CHECK (((adaptive_interval_minutes >= 30) AND (adaptive_interval_minutes <= 360))),
+    CONSTRAINT coach_profiles_adaptive_last_sent_slot_check CHECK (((adaptive_last_sent_slot IS NULL) OR (adaptive_last_sent_slot ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}$'::text))),
+    CONSTRAINT coach_profiles_adaptive_time_window_check CHECK ((adaptive_start_time < adaptive_end_time)),
+    CONSTRAINT coach_profiles_dietary_pattern_check CHECK ((dietary_pattern = ANY (ARRAY['omnivore'::text, 'vegetarian'::text, 'vegan'::text, 'pescatarian'::text, 'other'::text]))),
+    CONSTRAINT coach_profiles_proactive_categories_check CHECK ((proactive_categories <@ ARRAY['nutrition'::text, 'hydration'::text, 'training'::text, 'recovery'::text])),
+    CONSTRAINT coach_profiles_weekly_review_day_check CHECK (((weekly_review_day >= 0) AND (weekly_review_day <= 6)))
+);
+
+
+--
+-- Name: COLUMN coach_profiles.daily_check_in_time; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.daily_check_in_time IS 'Local user time for an opt-in daily proactive coach message.';
+
+
+--
+-- Name: COLUMN coach_profiles.weekly_review_day; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.weekly_review_day IS 'Local weekday for an opt-in weekly review; 0 is Sunday and 6 is Saturday.';
+
+
+--
+-- Name: COLUMN coach_profiles.weekly_review_time; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.weekly_review_time IS 'Local user time for an opt-in weekly proactive coach review.';
+
+
+--
+-- Name: COLUMN coach_profiles.adaptive_check_ins_enabled; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.adaptive_check_ins_enabled IS 'Opt-in contextual coach nudges every two hours from 07:00 through 19:00 local time.';
+
+
+--
+-- Name: COLUMN coach_profiles.adaptive_last_sent_slot; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.adaptive_last_sent_slot IS 'Latest claimed local two-hour slot, formatted YYYY-MM-DDTHH:MM.';
+
+
+--
+-- Name: COLUMN coach_profiles.adaptive_start_time; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.adaptive_start_time IS 'Local start of the configurable adaptive coach notification window.';
+
+
+--
+-- Name: COLUMN coach_profiles.adaptive_end_time; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.adaptive_end_time IS 'Local end of the configurable adaptive coach notification window.';
+
+
+--
+-- Name: COLUMN coach_profiles.adaptive_interval_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.adaptive_interval_minutes IS 'Minimum minutes between adaptive coach evaluation slots.';
+
+
+--
+-- Name: COLUMN coach_profiles.proactive_categories; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.proactive_categories IS 'Enabled proactive domains: nutrition, hydration, training, recovery.';
+
+
+--
+-- Name: COLUMN coach_profiles.adaptive_last_signature; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.adaptive_last_signature IS 'Signature of the last adaptive message state used to suppress unchanged nudges.';
+
+
+--
+-- Name: COLUMN coach_profiles.memory_enabled; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.memory_enabled IS 'Whether active owner-controlled coach memories are included in coach context.';
+
+
+--
+-- Name: COLUMN coach_profiles.auto_memory_enabled; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.coach_profiles.auto_memory_enabled IS 'Whether the coach may store stable facts without an explicit remember command.';
+
+
+--
+-- Name: coach_telegram_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_telegram_connections (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    telegram_chat_id bigint,
+    telegram_user_id bigint,
+    telegram_username text,
+    enabled boolean DEFAULT false NOT NULL,
+    link_token_hash text,
+    link_token_expires_at timestamp with time zone,
+    last_telegram_update_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_telegram_link_pair CHECK ((((link_token_hash IS NULL) AND (link_token_expires_at IS NULL)) OR ((link_token_hash IS NOT NULL) AND (link_token_expires_at IS NOT NULL))))
+);
+
+
+--
 -- Name: custom_categories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3145,6 +3357,44 @@ CREATE TABLE public.symptom_entries (
 
 
 --
+-- Name: telegram_coach_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.telegram_coach_settings (
+    id smallint DEFAULT 1 NOT NULL,
+    encrypted_bot_token text,
+    bot_token_iv text,
+    bot_token_tag text,
+    encrypted_webhook_secret text,
+    webhook_secret_iv text,
+    webhook_secret_tag text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT telegram_coach_bot_token_encryption_complete CHECK ((((encrypted_bot_token IS NULL) AND (bot_token_iv IS NULL) AND (bot_token_tag IS NULL)) OR ((encrypted_bot_token IS NOT NULL) AND (bot_token_iv IS NOT NULL) AND (bot_token_tag IS NOT NULL)))),
+    CONSTRAINT telegram_coach_settings_id_check CHECK ((id = 1)),
+    CONSTRAINT telegram_coach_webhook_secret_encryption_complete CHECK ((((encrypted_webhook_secret IS NULL) AND (webhook_secret_iv IS NULL) AND (webhook_secret_tag IS NULL)) OR ((encrypted_webhook_secret IS NOT NULL) AND (webhook_secret_iv IS NOT NULL) AND (webhook_secret_tag IS NOT NULL))))
+);
+
+
+--
+-- Name: telegram_update_inbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.telegram_update_inbox (
+    update_id bigint NOT NULL,
+    payload jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    locked_at timestamp with time zone,
+    processed_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT telegram_update_inbox_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT telegram_update_inbox_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'processed'::text, 'dead_letter'::text])))
+);
+
+
+--
 -- Name: two_factor; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4252,6 +4502,86 @@ ALTER TABLE ONLY public.check_in_photos
 
 
 --
+-- Name: coach_action_receipts coach_action_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_action_receipts
+    ADD CONSTRAINT coach_action_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_delivery_outbox coach_delivery_outbox_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_delivery_outbox
+    ADD CONSTRAINT coach_delivery_outbox_idempotency_key_key UNIQUE (idempotency_key);
+
+
+--
+-- Name: coach_delivery_outbox coach_delivery_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_delivery_outbox
+    ADD CONSTRAINT coach_delivery_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_memories coach_memories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_memories
+    ADD CONSTRAINT coach_memories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_profiles coach_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_profiles
+    ADD CONSTRAINT coach_profiles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_profiles coach_profiles_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_profiles
+    ADD CONSTRAINT coach_profiles_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: coach_telegram_connections coach_telegram_connections_link_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_telegram_connections
+    ADD CONSTRAINT coach_telegram_connections_link_token_hash_key UNIQUE (link_token_hash);
+
+
+--
+-- Name: coach_telegram_connections coach_telegram_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_telegram_connections
+    ADD CONSTRAINT coach_telegram_connections_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_telegram_connections coach_telegram_connections_telegram_chat_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_telegram_connections
+    ADD CONSTRAINT coach_telegram_connections_telegram_chat_id_key UNIQUE (telegram_chat_id);
+
+
+--
+-- Name: coach_telegram_connections coach_telegram_connections_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_telegram_connections
+    ADD CONSTRAINT coach_telegram_connections_user_id_key UNIQUE (user_id);
+
+
+--
 -- Name: cycle_daily_entries cycle_daily_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4812,6 +5142,22 @@ ALTER TABLE ONLY public.symptom_entries
 
 
 --
+-- Name: telegram_coach_settings telegram_coach_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.telegram_coach_settings
+    ADD CONSTRAINT telegram_coach_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: telegram_update_inbox telegram_update_inbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.telegram_update_inbox
+    ADD CONSTRAINT telegram_update_inbox_pkey PRIMARY KEY (update_id);
+
+
+--
 -- Name: two_factor two_factor_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5271,6 +5617,41 @@ CREATE INDEX idx_magic_link_token ON auth.users USING btree (magic_link_token);
 --
 
 CREATE UNIQUE INDEX check_in_measurements_user_date_unique ON public.check_in_measurements USING btree (user_id, entry_date);
+
+
+--
+-- Name: coach_action_receipts_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_action_receipts_user_idx ON public.coach_action_receipts USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: coach_delivery_outbox_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_delivery_outbox_pending_idx ON public.coach_delivery_outbox USING btree (available_at, created_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: coach_delivery_outbox_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_delivery_outbox_user_idx ON public.coach_delivery_outbox USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: coach_memories_user_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_memories_user_active_idx ON public.coach_memories USING btree (user_id, active, pinned DESC, updated_at DESC);
+
+
+--
+-- Name: coach_telegram_connections_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_telegram_connections_user_id_idx ON public.coach_telegram_connections USING btree (user_id);
 
 
 --
@@ -5995,6 +6376,13 @@ CREATE UNIQUE INDEX sleep_entry_stages_entry_natural_key_idx ON public.sleep_ent
 
 
 --
+-- Name: telegram_update_inbox_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX telegram_update_inbox_pending_idx ON public.telegram_update_inbox USING btree (available_at, update_id) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
 -- Name: unique_active_pregnancy; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6441,6 +6829,46 @@ ALTER TABLE ONLY public.check_in_photos
 
 ALTER TABLE ONLY public.check_in_photos
     ADD CONSTRAINT check_in_photos_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_action_receipts coach_action_receipts_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_action_receipts
+    ADD CONSTRAINT coach_action_receipts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_delivery_outbox coach_delivery_outbox_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_delivery_outbox
+    ADD CONSTRAINT coach_delivery_outbox_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_memories coach_memories_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_memories
+    ADD CONSTRAINT coach_memories_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_profiles coach_profiles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_profiles
+    ADD CONSTRAINT coach_profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_telegram_connections coach_telegram_connections_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_telegram_connections
+    ADD CONSTRAINT coach_telegram_connections_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
 
 
 --
@@ -7828,6 +8256,36 @@ ALTER TABLE public.check_in_measurements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.check_in_photos ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: coach_action_receipts; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_action_receipts ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_delivery_outbox; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_delivery_outbox ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_memories; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_memories ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_profiles; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_profiles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_telegram_connections; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_telegram_connections ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: custom_categories; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -8614,6 +9072,41 @@ CREATE POLICY owner_policy ON public.api_key USING ((reference_id = public.authe
 
 
 --
+-- Name: coach_action_receipts owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_action_receipts USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_delivery_outbox owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_delivery_outbox USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_memories owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_memories USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_profiles owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_profiles USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_telegram_connections owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_telegram_connections USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
 -- Name: cycle_daily_entries owner_policy; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9319,6 +9812,18 @@ ALTER TABLE public.sparky_chat_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.symptom_entries ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: telegram_coach_settings; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.telegram_coach_settings ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: telegram_update_inbox; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.telegram_update_inbox ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: external_data_providers update_policy; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9901,6 +10406,41 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.check_in_photos TO sparky_app;
 
 
 --
+-- Name: TABLE coach_action_receipts; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_action_receipts TO sparky_app;
+
+
+--
+-- Name: TABLE coach_delivery_outbox; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_delivery_outbox TO sparky_app;
+
+
+--
+-- Name: TABLE coach_memories; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_memories TO sparky_app;
+
+
+--
+-- Name: TABLE coach_profiles; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_profiles TO sparky_app;
+
+
+--
+-- Name: TABLE coach_telegram_connections; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_telegram_connections TO sparky_app;
+
+
+--
 -- Name: TABLE custom_categories; Type: ACL; Schema: public; Owner: -
 --
 
@@ -10360,6 +10900,20 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.sso_provider TO sparky_app;
 --
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.symptom_entries TO sparky_app;
+
+
+--
+-- Name: TABLE telegram_coach_settings; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.telegram_coach_settings TO sparky_app;
+
+
+--
+-- Name: TABLE telegram_update_inbox; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.telegram_update_inbox TO sparky_app;
 
 
 --
