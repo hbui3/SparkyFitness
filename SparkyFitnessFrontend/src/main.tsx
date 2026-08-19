@@ -13,6 +13,7 @@ import i18n from './i18n';
 import { getUserLoggingLevel } from './utils/userPreferences.ts';
 import { toast } from './hooks/use-toast.ts';
 import { error } from '@/utils/logging';
+import { startPwaReleaseRefresh } from '@/utils/pwaReleaseRefresh';
 
 declare module '@tanstack/react-query' {
   interface Register {
@@ -108,6 +109,9 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+startPwaReleaseRefresh();
+
 createRoot(document.getElementById('root')!).render(
   <Suspense fallback="loading">
     <QueryClientProvider client={queryClient}>
