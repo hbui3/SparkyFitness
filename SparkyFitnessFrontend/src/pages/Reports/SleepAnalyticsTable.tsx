@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { prettifySourceList } from '@/utils/sourceLabels';
 import { SLEEP_STAGE_COLORS } from '@/types';
 import {
   Table,
@@ -222,7 +223,9 @@ const SleepAnalyticsTable = ({
                     </TableCell>
                     <TableCell>{sleepAnalyticsData.awakePeriods}</TableCell>
                     <TableCell>{insight}</TableCell>
-                    <TableCell>{sleepEntry.source}</TableCell>
+                    <TableCell>
+                      {prettifySourceList(sleepEntry.source)}
+                    </TableCell>
                   </TableRow>
                   {isExpanded && sleepEntry.stage_events && (
                     <TableRow>

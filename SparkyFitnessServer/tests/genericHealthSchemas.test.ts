@@ -118,6 +118,10 @@ describe('Generic Health & Workout Zod Schemas', () => {
       muscle_mass_kg: 34.2,
       bone_mass_kg: 3.1,
       body_water_percentage: 61.4,
+      source_provenance: {
+        weight: { source: 'Withings', source_id: 'scale-1' },
+        steps: { source: 'HealthKit' },
+      },
     };
 
     const parsed = checkInMeasurementsSchema.parse(validCheckIn);
@@ -125,6 +129,7 @@ describe('Generic Health & Workout Zod Schemas', () => {
     expect(parsed.muscle_mass_kg).toBe(34.2);
     expect(parsed.bone_mass_kg).toBe(3.1);
     expect(parsed.body_water_percentage).toBe(61.4);
+    expect(parsed.source_provenance.weight?.source).toBe('Withings');
   });
 
   it('should validate exerciseEntryLapsSchema', () => {

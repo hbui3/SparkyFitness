@@ -40,6 +40,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
 - The persistent AI coach spans `shared` contracts, owner-only profiles/memories/undo receipts, canonical onboarding/goal/daily/trend/recovery context, configurable proactive messages, a durable system-only Telegram inbox plus owner-scoped delivery outbox, bidirectional text/photo/voice Telegram chat with deterministic quick actions, the encrypted system-only bot credential, meal-safety enforcement, and the frontend Nutrition & Diet settings with live cross-channel refresh.
 - Cross-provider workout reads are canonicalized by `SparkyFitnessServer/services/workoutDeduplicationService.ts` using the shared overlap rule: provider-owned raw rows remain stored, while lower-fidelity HealthKit/Health Connect mirrors are excluded from reports, calorie totals, daily views, and coach aggregates.
+- Report tables expose stored provider provenance for food, canonical workouts, sleep, custom measurements, and body measurements. Because one daily `check_in_measurements` row can combine providers, its `source_provenance` is keyed per metric rather than represented by one row-level source.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
 - `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.
@@ -83,6 +84,7 @@ Cheap ways to learn things:
 - Prefer the shared timezone helpers from `@workspace/shared` and `SparkyFitnessServer/utils/timezoneLoader.ts` for day-string logic. Avoid `toISOString().split('T')[0]` for user-facing or business-logic dates.
 - Keep `YYYY-MM-DD` values as calendar-day strings until you reach a database or external API boundary that needs UTC instants.
 - Auth or API contract changes usually need a quick check in both web and mobile because they share the same backend.
+- Preserve provider provenance across ingest, persistence, report responses, and CSV exports. Mixed aggregate rows must retain provenance per field; never assign one provider to unrelated values in the same row.
 - Frontend local dev proxies `/api`, `/health-data`, and `/uploads` to the server on `3010`. The `/health-data` proxy is rewritten to `/api/health-data`, while server APIs remain rooted at `/api`.
 - Server runtime secrets are usually sourced from repo-root `.env`, commonly created from `docker/.env.example`. The server can also load secret files via `SparkyFitnessServer/utils/secretLoader.ts`.
 - Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract _behavior_, not coincidental shape. See `agent-docs/anti-patterns.md`.

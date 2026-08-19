@@ -73,8 +73,18 @@ describe('processHealthData per-record error contract', () => {
     expect(
       measurementRepository.bulkUpsertCheckInMeasurements
     ).toHaveBeenCalledWith(userId, actingUserId, [
-      { entryDate: '2025-02-01', measurements: { steps: 5000 } },
-      { entryDate: '2025-02-01', measurements: { weight: 70.5 } },
+      {
+        entryDate: '2025-02-01',
+        measurements: { steps: 5000 },
+        source: 'HealthKit',
+        sourceId: null,
+      },
+      {
+        entryDate: '2025-02-01',
+        measurements: { weight: 70.5 },
+        source: 'HealthKit',
+        sourceId: null,
+      },
     ]);
   });
 
@@ -93,9 +103,24 @@ describe('processHealthData per-record error contract', () => {
     expect(
       measurementRepository.bulkUpsertCheckInMeasurements
     ).toHaveBeenCalledWith(userId, actingUserId, [
-      { entryDate: '2025-02-01', measurements: { waist: 82 } },
-      { entryDate: '2025-02-01', measurements: { neck: 38 } },
-      { entryDate: '2025-02-01', measurements: { hips: 95 } },
+      {
+        entryDate: '2025-02-01',
+        measurements: { waist: 82 },
+        source: 'CSV_Import',
+        sourceId: null,
+      },
+      {
+        entryDate: '2025-02-01',
+        measurements: { neck: 38 },
+        source: 'CSV_Import',
+        sourceId: null,
+      },
+      {
+        entryDate: '2025-02-01',
+        measurements: { hips: 95 },
+        source: 'CSV_Import',
+        sourceId: null,
+      },
     ]);
   });
 

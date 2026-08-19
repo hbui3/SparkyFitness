@@ -4,6 +4,7 @@ import { log } from '../config/logging.js';
 import format from 'pg-format';
 import {
   CALORIE_CALCULATION_CONSTANTS,
+  type MeasurementSourceProvenance,
   isDayString,
   isValidTimeZone,
   todayInZone,
@@ -78,18 +79,44 @@ const CHECK_IN_COLUMN_TYPES: Record<string, string> = {
   bone_mass_kg: 'numeric',
   body_water_percentage: 'numeric',
 };
+
+interface CheckInMeasurementWrite {
+  entryDate: string;
+  measurements: Record<string, unknown>;
+  source?: string;
+  sourceId?: string | null;
+}
+
+interface CheckInMeasurementRow extends Record<string, unknown> {
+  id: string;
+  entry_date: string;
+}
+
+function buildMeasurementSourceProvenance(
+  measurementKeys: string[],
+  source = 'manual',
+  sourceId: string | null = null
+): MeasurementSourceProvenance {
+  return Object.fromEntries(
+    measurementKeys.map((key) => [
+      key,
+      {
+        source,
+        ...(sourceId ? { source_id: sourceId } : {}),
+      },
+    ])
+  );
+}
 // Tolerance in milliliters for matching historical manual records with incoming sync data
 const WATER_ADOPTION_TOLERANCE_ML = 5;
 
 async function upsertStepData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  actingUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  value: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  date: any
+  userId: string,
+  actingUserId: string,
+  value: number,
+  date: string,
+  source = 'manual',
+  sourceId: string | null = null
 ) {
   const client = await getClient(actingUserId); // User-specific operation, using actingUserId for RLS context
   try {
@@ -105,15 +132,38 @@ async function upsertStepData(
       // keeps the largest total seen so a smaller/partial read never clobbers a
       // complete day. Manual user edits go through upsertCheckInMeasurements,
       // which overwrites, so a deliberate correction is still possible.
+      const provenance = buildMeasurementSourceProvenance(
+        ['steps'],
+        source,
+        sourceId
+      );
       const updateResult = await client.query(
-        'UPDATE check_in_measurements SET steps = GREATEST($1::integer, steps), updated_at = now(), updated_by_user_id = $2 WHERE entry_date = $3 AND user_id = $4 RETURNING *',
-        [value, actingUserId, date, userId]
+        `UPDATE check_in_measurements
+         SET steps = GREATEST($1::integer, steps),
+             source_provenance = CASE
+               WHEN steps IS NULL OR $1::integer >= steps
+               THEN COALESCE(source_provenance, '{}'::jsonb) || $5::jsonb
+               ELSE COALESCE(source_provenance, '{}'::jsonb)
+             END,
+             updated_at = now(),
+             updated_by_user_id = $2
+         WHERE entry_date = $3 AND user_id = $4
+         RETURNING *`,
+        [value, actingUserId, date, userId, JSON.stringify(provenance)]
       );
       result = updateResult.rows[0];
     } else {
+      const provenance = buildMeasurementSourceProvenance(
+        ['steps'],
+        source,
+        sourceId
+      );
       const insertResult = await client.query(
-        'INSERT INTO check_in_measurements (user_id, entry_date, steps, created_by_user_id, updated_by_user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $4, now(), now()) RETURNING *',
-        [userId, date, value, actingUserId]
+        `INSERT INTO check_in_measurements
+           (user_id, entry_date, steps, source_provenance, created_by_user_id, updated_by_user_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $5::jsonb, $4, $4, now(), now())
+         RETURNING *`,
+        [userId, date, value, actingUserId, JSON.stringify(provenance)]
       );
       result = insertResult.rows[0];
     }
@@ -329,16 +379,14 @@ async function deleteWaterIntake(id: any, userId: any) {
   }
 }
 async function upsertCheckInMeasurements(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  actingUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  entryDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  measurements: any
+  userId: string,
+  actingUserId: string,
+  entryDate: string,
+  measurements: Record<string, unknown>,
+  source = 'manual',
+  sourceId: string | null = null
 ) {
-  console.log('Incoming measurements:', measurements);
+  log('debug', '[measurementRepository] Incoming measurements:', measurements);
   const client = await getClient(actingUserId); // User-specific operation, using actingUserId for RLS context
   try {
     let query;
@@ -349,9 +397,7 @@ async function upsertCheckInMeasurements(
     // SECURITY: Whitelist allowed measurement columns to prevent SQL injection via dynamic keys
     const measurementKeys = Object.keys(filteredMeasurements).filter((key) => {
       if (!ALLOWED_CHECK_IN_COLUMNS.includes(key)) {
-        console.warn(
-          `Attempted to upsert unauthorized measurement key: ${key}`
-        );
+        log('warn', `Attempted to upsert unauthorized measurement key: ${key}`);
         return false;
       }
       return true;
@@ -367,22 +413,40 @@ async function upsertCheckInMeasurements(
     );
     if (existingRecord.rows.length > 0) {
       const id = existingRecord.rows[0].id;
+      const provenance = buildMeasurementSourceProvenance(
+        measurementKeys,
+        source,
+        sourceId
+      );
       const fields = measurementKeys
         .map((key, index) => `${key} = $${index + 1}`)
         .join(', ');
       // Add updated_by_user_id to update query
-      query = `UPDATE check_in_measurements SET ${fields}, updated_at = now(), updated_by_user_id = $${measurementKeys.length + 1} WHERE id = $${measurementKeys.length + 2} RETURNING *`;
+      query = `UPDATE check_in_measurements
+        SET ${fields},
+            source_provenance = COALESCE(source_provenance, '{}'::jsonb) || $${measurementKeys.length + 1}::jsonb,
+            updated_at = now(),
+            updated_by_user_id = $${measurementKeys.length + 2}
+        WHERE id = $${measurementKeys.length + 3}
+        RETURNING *`;
       values = [
         ...measurementKeys.map((key) => filteredMeasurements[key]),
+        JSON.stringify(provenance),
         actingUserId,
         id,
       ];
     } else {
+      const provenance = buildMeasurementSourceProvenance(
+        measurementKeys,
+        source,
+        sourceId
+      );
       // Add updated_by_user_id to insert query
       const cols = [
         'user_id',
         'entry_date',
         ...measurementKeys,
+        'source_provenance',
         'created_by_user_id',
         'updated_by_user_id',
         'created_at',
@@ -393,6 +457,7 @@ async function upsertCheckInMeasurements(
         userId,
         entryDate,
         ...measurementKeys.map((key) => filteredMeasurements[key]),
+        JSON.stringify(provenance),
         actingUserId,
         actingUserId,
         new Date().toISOString(),
@@ -420,12 +485,9 @@ async function upsertCheckInMeasurements(
  * upsertCheckInMeasurements).
  */
 async function bulkUpsertCheckInMeasurements(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  actingUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  entries: Array<{ entryDate: string; measurements: any }>
+  userId: string,
+  actingUserId: string,
+  entries: CheckInMeasurementWrite[]
 ) {
   if (!entries || entries.length === 0) {
     return [];
@@ -435,38 +497,57 @@ async function bulkUpsertCheckInMeasurements(
     await client.query('BEGIN');
     // Merge measurements per date (later record wins per column), whitelisting
     // columns exactly as upsertCheckInMeasurements does.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mergedByDate = new Map<string, Record<string, any>>();
-    for (const { entryDate, measurements } of entries) {
+    const mergedByDate = new Map<string, Record<string, unknown>>();
+    const provenanceByDate = new Map<string, MeasurementSourceProvenance>();
+    for (const {
+      entryDate,
+      measurements,
+      source = 'manual',
+      sourceId = null,
+    } of entries) {
       const filteredMeasurements = { ...measurements };
       delete filteredMeasurements.id;
       const merged = mergedByDate.get(entryDate) ?? {};
+      const mergedProvenance = provenanceByDate.get(entryDate) ?? {};
       for (const key of Object.keys(filteredMeasurements)) {
         if (!ALLOWED_CHECK_IN_COLUMNS.includes(key)) {
-          console.warn(
+          log(
+            'warn',
             `Attempted to upsert unauthorized measurement key: ${key}`
           );
           continue;
         }
+        if (
+          key === 'steps' &&
+          typeof merged.steps === 'number' &&
+          typeof filteredMeasurements.steps === 'number' &&
+          filteredMeasurements.steps < merged.steps
+        ) {
+          continue;
+        }
         merged[key] = filteredMeasurements[key];
+        mergedProvenance[key] = buildMeasurementSourceProvenance(
+          [key],
+          source,
+          sourceId
+        )[key]!;
       }
       mergedByDate.set(entryDate, merged);
+      provenanceByDate.set(entryDate, mergedProvenance);
     }
     const writableDates = [...mergedByDate.keys()].filter(
       (date) => Object.keys(mergedByDate.get(date)!).length > 0
     );
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const writtenByDate = new Map<string, any>();
+    const writtenByDate = new Map<string, CheckInMeasurementRow>();
     if (writableDates.length > 0) {
       const existing = await client.query(
         'SELECT * FROM check_in_measurements WHERE user_id = $1 AND entry_date = ANY($2::date[])',
         [userId, writableDates]
       );
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const existingByDate = new Map<string, any>(
+      const existingRows = existing.rows as CheckInMeasurementRow[];
+      const existingByDate = new Map<string, CheckInMeasurementRow>(
         // entry_date comes back as a YYYY-MM-DD string (poolManager DATE parser)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        existing.rows.map((row: any) => [String(row.entry_date), row])
+        existingRows.map((row) => [String(row.entry_date), row])
       );
       const updateDates = writableDates.filter((date) =>
         existingByDate.has(date)
@@ -499,18 +580,35 @@ async function bulkUpsertCheckInMeasurements(
             (column, index) =>
               `$${index + 3}::${CHECK_IN_COLUMN_TYPES[column]}[]`
           )
+          .concat(`$${updateColumns.length + 3}::jsonb[]`)
           .join(', ');
+        const sourceProvenanceUpdate = updateColumns.includes('steps')
+          ? `COALESCE(cm.source_provenance, '{}'::jsonb)
+             || (u.source_provenance - 'steps')
+             || CASE
+                  WHEN u.steps IS NOT NULL
+                   AND (cm.steps IS NULL OR u.steps >= cm.steps)
+                  THEN jsonb_build_object('steps', u.source_provenance -> 'steps')
+                  ELSE '{}'::jsonb
+                END`
+          : "COALESCE(cm.source_provenance, '{}'::jsonb) || u.source_provenance";
         const updateResult = await client.query(
           `UPDATE check_in_measurements cm
-           SET ${setClauses}, updated_at = now(), updated_by_user_id = $1
-           FROM unnest($2::uuid[], ${unnestParams}) AS u(id, ${updateColumns.join(', ')})
+           SET ${setClauses},
+               source_provenance = ${sourceProvenanceUpdate},
+               updated_at = now(),
+               updated_by_user_id = $1
+           FROM unnest($2::uuid[], ${unnestParams}) AS u(id, ${updateColumns.join(', ')}, source_provenance)
            WHERE cm.id = u.id
            RETURNING cm.*`,
           [
             actingUserId,
-            updateDates.map((date) => existingByDate.get(date).id),
+            updateDates.map((date) => existingByDate.get(date)!.id),
             ...updateColumns.map((column) =>
               updateDates.map((date) => mergedByDate.get(date)![column] ?? null)
+            ),
+            updateDates.map((date) =>
+              JSON.stringify(provenanceByDate.get(date) ?? {})
             ),
           ]
         );
@@ -531,6 +629,7 @@ async function bulkUpsertCheckInMeasurements(
           ...insertColumns.map(
             (column) => mergedByDate.get(date)![column] ?? null
           ),
+          JSON.stringify(provenanceByDate.get(date) ?? {}),
           actingUserId,
           actingUserId,
           nowIso,
@@ -538,7 +637,7 @@ async function bulkUpsertCheckInMeasurements(
         ]);
         const insertResult = await client.query(
           format(
-            `INSERT INTO check_in_measurements (user_id, entry_date, ${insertColumns.join(', ')}, created_by_user_id, updated_by_user_id, created_at, updated_at)
+            `INSERT INTO check_in_measurements (user_id, entry_date, ${insertColumns.join(', ')}, source_provenance, created_by_user_id, updated_by_user_id, created_at, updated_at)
              VALUES %L RETURNING *`,
             insertRows
           )
@@ -658,14 +757,12 @@ async function getExternalBmrForDate(
   }
 }
 async function updateCheckInMeasurements(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  actingUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  entryDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  updateData: any
+  userId: string,
+  actingUserId: string,
+  entryDate: string,
+  updateData: Record<string, unknown>,
+  source = 'manual',
+  sourceId: string | null = null
 ) {
   log(
     'info',
@@ -674,9 +771,12 @@ async function updateCheckInMeasurements(
   );
   const client = await getClient(actingUserId); // User-specific operation, using actingUserId for RLS context
   try {
-    const fieldsToUpdate = Object.keys(updateData)
-      .filter((key) => ALLOWED_CHECK_IN_COLUMNS.includes(key))
-      .map((key, index) => `${key} = $${index + 1}`);
+    const measurementKeys = Object.keys(updateData).filter((key) =>
+      ALLOWED_CHECK_IN_COLUMNS.includes(key)
+    );
+    const fieldsToUpdate = measurementKeys.map(
+      (key, index) => `${key} = $${index + 1}`
+    );
     if (fieldsToUpdate.length === 0) {
       log(
         'warn',
@@ -685,15 +785,27 @@ async function updateCheckInMeasurements(
       return null;
     }
     // Correctly construct the values array: first the values for the SET clause, then actingUserId (for audit), then userId, then entryDate
-    const updateValues = Object.keys(updateData)
-      .filter((key) => ALLOWED_CHECK_IN_COLUMNS.includes(key))
-      .map((key) => updateData[key]);
-    const values = [...updateValues, actingUserId, userId, entryDate];
+    const updateValues = measurementKeys.map((key) => updateData[key]);
+    const provenance = buildMeasurementSourceProvenance(
+      measurementKeys,
+      source,
+      sourceId
+    );
+    const values = [
+      ...updateValues,
+      JSON.stringify(provenance),
+      actingUserId,
+      userId,
+      entryDate,
+    ];
     // Add updated_by_user_id to update query
     const query = `
       UPDATE check_in_measurements
-      SET ${fieldsToUpdate.join(', ')}, updated_at = now(), updated_by_user_id = $${fieldsToUpdate.length + 1}
-      WHERE user_id = $${fieldsToUpdate.length + 2} AND entry_date = $${fieldsToUpdate.length + 3}
+      SET ${fieldsToUpdate.join(', ')},
+          source_provenance = COALESCE(source_provenance, '{}'::jsonb) || $${fieldsToUpdate.length + 1}::jsonb,
+          updated_at = now(),
+          updated_by_user_id = $${fieldsToUpdate.length + 2}
+      WHERE user_id = $${fieldsToUpdate.length + 3} AND entry_date = $${fieldsToUpdate.length + 4}
       RETURNING *`;
     log('debug', `[measurementRepository] Executing query: ${query}`);
     log(

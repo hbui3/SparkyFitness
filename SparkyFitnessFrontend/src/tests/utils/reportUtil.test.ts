@@ -1,6 +1,7 @@
-import { exportFoodDiary } from '@/utils/reportUtil';
+import { exportBodyMeasurements, exportFoodDiary } from '@/utils/reportUtil';
 import { DailyFoodEntry } from '@/types/reports';
 import { UserCustomNutrient } from '@/types/customNutrient';
+import type { CheckInMeasurementsResponse } from '@workspace/shared';
 
 // Mock dependencies
 jest.mock('@/i18n', () => ({
@@ -69,6 +70,7 @@ describe('exportFoodDiary', () => {
       carbs: 1.4,
       fat: 12.8,
       dietary_fiber: 0,
+      source: 'HealthKit',
     };
 
     const mockFormatDate = (date: string | Date) =>
@@ -100,6 +102,8 @@ describe('exportFoodDiary', () => {
     const csvContent = await createdBlobs[0]!.text();
     const lines = csvContent.split('\n');
 
+    expect(lines[0]).toContain('"Source"');
+
     // Check individual entry row: "2026-08-03","breakfast","Eggs","Farm Fresh","120","g","184","15.6","1.4","12.8",...
     const eggsRow = lines.find((line) => line.includes('"Eggs"'));
     expect(eggsRow).toBeDefined();
@@ -107,6 +111,7 @@ describe('exportFoodDiary', () => {
     expect(eggsRow).toContain('"15.6"');
     expect(eggsRow).toContain('"1.4"');
     expect(eggsRow).toContain('"12.8"');
+    expect(eggsRow).toContain('"Apple Health"');
 
     // Check total row: "2026-08-03","Total","","","","","184","15.6","1.4","12.8",...
     const totalRow = lines.find((line) => line.includes('"Total"'));
@@ -116,6 +121,33 @@ describe('exportFoodDiary', () => {
 
     appendChildSpy.mockRestore();
     removeChildSpy.mockRestore();
+  });
+
+  it('exports per-field body measurement provenance', async () => {
+    const measurement = {
+      entry_date: '2026-08-03',
+      weight: 82.6,
+      steps: 2120,
+      source_provenance: {
+        weight: { source: 'Withings' },
+        steps: { source: 'HealthKit' },
+      },
+    } as unknown as CheckInMeasurementsResponse;
+
+    await exportBodyMeasurements({
+      loggingLevel: 'INFO',
+      startDate: '2026-08-03',
+      endDate: '2026-08-03',
+      measurementData: [measurement],
+      defaultWeightUnit: 'kg',
+      defaultMeasurementUnit: 'cm',
+      formatDateInUserTimezone: () => '2026-08-03',
+    });
+
+    expect(createdBlobs).toHaveLength(1);
+    const csvContent = await createdBlobs[0]!.text();
+    expect(csvContent).toContain('"Source"');
+    expect(csvContent).toContain('"Weight: Withings; Steps: Apple Health"');
   });
 
   it('correctly accumulates custom nutrient totals across multiple entries', async () => {

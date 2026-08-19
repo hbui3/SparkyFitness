@@ -221,7 +221,8 @@ async function processPolarPhysicalInfo(
         userId,
         createdByUserId,
         entryDate,
-        measurementsToUpsert
+        measurementsToUpsert,
+        'Polar'
       );
       log(
         'info',

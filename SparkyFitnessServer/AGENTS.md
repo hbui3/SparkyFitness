@@ -64,6 +64,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `routes/auth/` - auth-specific route fragments mounted through `routes/authRoutes.ts`
 - `services/` - business logic and orchestration
 - `services/workoutDeduplicationService.ts` - canonical cross-provider workout reads; preserves provider rows in storage while suppressing overlapping mobile-health mirrors for reports, calories, daily views, and coach aggregates
+- `models/reportRepository.ts` - tabular report reads and provider provenance. `check_in_measurements.source_provenance` is per metric because a daily row can combine providers; ingest paths must pass source metadata into `models/measurementRepository.ts`.
 - `models/` - PostgreSQL repositories and persistence helpers
 - `middleware/` - auth, permissions, uploads, and shared Express middleware
 - `integrations/` - provider adapters and ingest pipelines
@@ -231,6 +232,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   inspect `integrations/healthData/healthDataRoutes.ts`, `services/measurementService.ts`, and `utils/timezoneLoader.ts`
 - Duplicate workouts across HealthKit/Health Connect and a direct fitness provider:
   inspect `services/workoutDeduplicationService.ts`, `models/reportRepository.ts`, and the shared `utils/workoutDeduplication.ts`; do not delete or merge provider-owned rows at ingest time
+- Missing or incorrect report data source:
+  inspect `models/reportRepository.ts`, the provider/health-data ingest path, and `models/measurementRepository.ts`; body check-ins require per-metric `source_provenance`, not one source for the whole daily row
 - Self-service "delete synced data by source" issue:
   inspect `routes/syncedDataRoutes.ts`, `services/syncedDataService.ts`, and `models/syncedDataRepository.ts` (the `SYNCED_SOURCE_TABLES` whitelist)
 - AI chat or chatbot tool issue:

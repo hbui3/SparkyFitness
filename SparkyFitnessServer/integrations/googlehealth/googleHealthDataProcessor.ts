@@ -248,7 +248,8 @@ async function processGoogleSteps(
       userId,
       createdByUserId,
       steps,
-      entryDate
+      entryDate,
+      'Google Health'
     );
     log(
       'info',
@@ -286,7 +287,8 @@ async function processGoogleWeight(
       userId,
       createdByUserId,
       entryDate,
-      { weight: weightKg }
+      { weight: weightKg },
+      'Google Health'
     );
     log(
       'info',
@@ -424,7 +426,8 @@ async function processGoogleProfile(
     userId,
     createdByUserId,
     syncDate,
-    { height: heightCm }
+    { height: heightCm },
+    'Google Health'
   );
   log(
     'info',
@@ -908,7 +911,8 @@ async function processGoogleBodyFat(
       userId,
       createdByUserId,
       entryDate,
-      { body_fat_percentage: bodyFatPct }
+      { body_fat_percentage: bodyFatPct },
+      'Google Health'
     );
     log(
       'info',

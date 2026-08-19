@@ -96,7 +96,8 @@ async function processHevyUserInfo(
         userId,
         createdByUserId,
         entryDate,
-        measurements
+        measurements,
+        'Hevy'
       );
       log(
         'info',

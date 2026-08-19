@@ -6,6 +6,7 @@ import ReportsTables, {
 } from '@/pages/Reports/ReportsTables';
 import type { DailyExerciseEntry } from '@/types/reports';
 import type {
+  CheckInMeasurementsResponse,
   CustomCategoriesResponse,
   CustomMeasurementsResponse,
 } from '@workspace/shared';
@@ -54,6 +55,8 @@ const baseEntry = {
   calories: 0,
   protein: 0,
   fat: 0,
+  source: 'HealthKit',
+  source_id: 'food-1',
 };
 
 const durationOnlyExerciseEntry = {
@@ -112,6 +115,7 @@ describe('ReportsTables net carbs', () => {
   it('renders the Carbohydrates column with total carbs by default', () => {
     renderTable();
     expect(screen.getByText('Carbohydrates (g)')).toBeInTheDocument();
+    expect(screen.getByText('Apple Health')).toHaveAttribute('title', 'food-1');
     const cells = screen.getAllByRole('cell');
     const carbsCell = cells.find((c) => within(c).queryByText('30.0') !== null);
     expect(carbsCell).toBeDefined();
@@ -132,7 +136,7 @@ describe('ReportsTables duration-only exercise sets', () => {
   it('shows the canonical workout data source', () => {
     renderTable([durationOnlyExerciseEntry]);
 
-    expect(screen.getByText('Source')).toBeInTheDocument();
+    expect(screen.getAllByText('Source').length).toBeGreaterThan(0);
     expect(screen.getByText('iGPSPORT')).toHaveAttribute('title', '91053993');
   });
 
@@ -196,6 +200,7 @@ describe('ReportsTables table type filter', () => {
       entry_timestamp: null,
       value: '72',
       notes: null,
+      source: 'Withings',
     } as unknown as CustomMeasurementsResponse;
 
     const Wrapper = () => {
@@ -239,5 +244,43 @@ describe('ReportsTables table type filter', () => {
     expect(
       screen.getAllByText('Heart Rate (bpm)').length
     ).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Withings')).toBeInTheDocument();
+  });
+});
+
+describe('ReportsTables body measurement provenance', () => {
+  it('shows all contributing providers and per-field detail', () => {
+    const measurement = {
+      entry_date: '2026-05-15',
+      weight: 82.6,
+      steps: 2120,
+      source_provenance: {
+        weight: { source: 'Withings', source_id: 'scale-1' },
+        steps: { source: 'HealthKit' },
+      },
+    } as unknown as CheckInMeasurementsResponse;
+
+    render(
+      <ReportsTables
+        tabularData={[]}
+        exerciseEntries={[]}
+        measurementData={[measurement]}
+        customCategories={[]}
+        customMeasurementsData={[]}
+        prData={undefined}
+        selectedTable="measurements"
+        onSelectedTableChange={() => {}}
+        onExportFoodDiary={() => {}}
+        onExportBodyMeasurements={() => {}}
+        onExportCustomMeasurements={() => {}}
+        onExportExerciseEntries={() => {}}
+        customNutrients={[]}
+      />
+    );
+
+    expect(screen.getByText('Withings, Apple Health')).toHaveAttribute(
+      'title',
+      'Weight: Withings (scale-1)\nSteps: Apple Health'
+    );
   });
 });

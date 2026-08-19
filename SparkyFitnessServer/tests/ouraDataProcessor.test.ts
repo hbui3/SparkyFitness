@@ -309,7 +309,8 @@ describe('processOuraDailyActivity', () => {
       UID,
       CID,
       9000,
-      '2026-07-15'
+      '2026-07-15',
+      'Oura'
     );
     // Metabolism, Active Calories, Activity Score
     expect(measurementRepository.upsertCustomMeasurement).toHaveBeenCalledTimes(

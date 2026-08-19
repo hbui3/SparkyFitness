@@ -34,6 +34,7 @@ import {
   formatMeasurement,
 } from '@/utils/numberFormatting';
 import type { UserCustomNutrient } from '@/types/customNutrient';
+import { prettifySourceList } from '@/utils/sourceLabels';
 import type {
   DailyFoodEntry,
   DailyExerciseEntry,
@@ -81,6 +82,19 @@ const formatTonnage = (
     weightUnit
   );
 };
+
+const BODY_MEASUREMENT_SOURCE_KEYS = [
+  'weight',
+  'neck',
+  'waist',
+  'hips',
+  'steps',
+  'height',
+  'body_fat_percentage',
+  'muscle_mass_kg',
+  'bone_mass_kg',
+  'body_water_percentage',
+] as const;
 
 export type TableFilterValue =
   | 'all'
@@ -163,11 +177,45 @@ const ReportsTables = ({
   } | null>(null);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
-  const formatWorkoutSource = (entry: DailyExerciseEntry) => {
-    const source = entry.source ?? entry.exercises.source;
-    if (source?.toLowerCase() === 'healthkit') return 'Apple Health';
-    if (source?.toLowerCase() === 'health connect') return 'Health Connect';
-    return source || '-';
+  const formatBodyMeasurementSource = (
+    measurement: CheckInMeasurementsResponse
+  ) => {
+    const fieldLabels: Record<
+      (typeof BODY_MEASUREMENT_SOURCE_KEYS)[number],
+      string
+    > = {
+      weight: t('reportsTables.weight', 'Weight'),
+      neck: t('reportsTables.neck', 'Neck'),
+      waist: t('reportsTables.waist', 'Waist'),
+      hips: t('reportsTables.hips', 'Hips'),
+      steps: t('reportsTables.steps', 'Steps'),
+      height: t('reportsTables.height', 'Height'),
+      body_fat_percentage: t('reportsTables.bodyFatPercentage', 'Body Fat %'),
+      muscle_mass_kg: t('reportsTables.muscleMass', 'Muscle Mass'),
+      bone_mass_kg: t('reportsTables.boneMass', 'Bone Mass'),
+      body_water_percentage: t('reportsTables.bodyWater', 'Body Water %'),
+    };
+    const details = BODY_MEASUREMENT_SOURCE_KEYS.flatMap((key) => {
+      const provenance = measurement.source_provenance?.[key];
+      if (measurement[key] == null || !provenance?.source) return [];
+      return [
+        {
+          label: fieldLabels[key],
+          source: prettifySourceList(provenance.source),
+          sourceId: provenance.source_id,
+        },
+      ];
+    });
+    const sources = [...new Set(details.map((detail) => detail.source))];
+    return {
+      label: sources.length > 0 ? sources.join(', ') : '-',
+      title: details
+        .map(
+          (detail) =>
+            `${detail.label}: ${detail.source}${detail.sourceId ? ` (${detail.sourceId})` : ''}`
+        )
+        .join('\n'),
+    };
   };
 
   info(loggingLevel, 'ReportsTables: Rendering component.');
@@ -388,7 +436,12 @@ const ReportsTables = ({
         measurement.neck !== undefined ||
         measurement.waist !== undefined ||
         measurement.hips !== undefined ||
-        measurement.steps !== undefined
+        measurement.steps !== undefined ||
+        measurement.height !== undefined ||
+        measurement.body_fat_percentage !== undefined ||
+        measurement.muscle_mass_kg !== undefined ||
+        measurement.bone_mass_kg !== undefined ||
+        measurement.body_water_percentage !== undefined
     )
     .sort(
       (a, b) =>
@@ -465,6 +518,7 @@ const ReportsTables = ({
                     <TableHead className="min-w-[250px]">
                       {t('reportsTables.food', 'Food')}
                     </TableHead>
+                    <TableHead>{t('reportsTables.source', 'Source')}</TableHead>
                     <TableHead>
                       {t('reportsTables.quantity', 'Quantity')}
                     </TableHead>
@@ -531,6 +585,11 @@ const ReportsTables = ({
                               )}
                             </div>
                           )}
+                        </TableCell>
+                        <TableCell title={entry.source_id ?? undefined}>
+                          {entry.isTotal
+                            ? ''
+                            : prettifySourceList(entry.source)}
                         </TableCell>
                         <TableCell>
                           {entry.isTotal
@@ -718,7 +777,9 @@ const ReportsTables = ({
                           </TableCell>
                           <TableCell>{entry.exercises.name}</TableCell>
                           <TableCell title={entry.source_id ?? undefined}>
-                            {formatWorkoutSource(entry)}
+                            {prettifySourceList(
+                              entry.source ?? entry.exercises.source
+                            )}
                           </TableCell>
                           <TableCell>{entry.sets.length}</TableCell>
                           <TableCell></TableCell>
@@ -820,6 +881,7 @@ const ReportsTables = ({
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('reportsTables.date', 'Date')}</TableHead>
+                    <TableHead>{t('reportsTables.source', 'Source')}</TableHead>
                     <TableHead>
                       {t('reportsTables.weight', 'Weight')} ({weightUnit})
                     </TableHead>
@@ -839,40 +901,70 @@ const ReportsTables = ({
                     <TableHead>
                       {t('reportsTables.bodyFatPercentage', 'Body Fat %')}
                     </TableHead>
+                    <TableHead>
+                      {t('reportsTables.muscleMass', 'Muscle Mass')} (
+                      {weightUnit})
+                    </TableHead>
+                    <TableHead>
+                      {t('reportsTables.boneMass', 'Bone Mass')} ({weightUnit})
+                    </TableHead>
+                    <TableHead>
+                      {t('reportsTables.bodyWater', 'Body Water %')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedMeasurementData.map((measurement, index) => (
-                    <TableRow key={index}>
-                      <TableCell>
-                        {formatDateInUserTimezone(
-                          parseISO(measurement.entry_date),
-                          dateFormat
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {formatWeight(measurement.weight, weightUnit)}
-                      </TableCell>
-                      <TableCell>
-                        {formatMeasurement(measurement.neck, measurementUnit)}
-                      </TableCell>
-                      <TableCell>
-                        {formatMeasurement(measurement.waist, measurementUnit)}
-                      </TableCell>
-                      <TableCell>
-                        {formatMeasurement(measurement.hips, measurementUnit)}
-                      </TableCell>
-                      <TableCell>{measurement.steps || '-'}</TableCell>
-                      <TableCell>
-                        {formatHeight(measurement.height, measurementUnit)}
-                      </TableCell>
-                      <TableCell>
-                        {measurement.body_fat_percentage
-                          ? measurement.body_fat_percentage.toFixed(1)
-                          : '-'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {sortedMeasurementData.map((measurement, index) => {
+                    const source = formatBodyMeasurementSource(measurement);
+                    return (
+                      <TableRow key={index}>
+                        <TableCell>
+                          {formatDateInUserTimezone(
+                            parseISO(measurement.entry_date),
+                            dateFormat
+                          )}
+                        </TableCell>
+                        <TableCell title={source.title || undefined}>
+                          {source.label}
+                        </TableCell>
+                        <TableCell>
+                          {formatWeight(measurement.weight, weightUnit)}
+                        </TableCell>
+                        <TableCell>
+                          {formatMeasurement(measurement.neck, measurementUnit)}
+                        </TableCell>
+                        <TableCell>
+                          {formatMeasurement(
+                            measurement.waist,
+                            measurementUnit
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {formatMeasurement(measurement.hips, measurementUnit)}
+                        </TableCell>
+                        <TableCell>{measurement.steps ?? '-'}</TableCell>
+                        <TableCell>
+                          {formatHeight(measurement.height, measurementUnit)}
+                        </TableCell>
+                        <TableCell>
+                          {measurement.body_fat_percentage != null
+                            ? measurement.body_fat_percentage.toFixed(1)
+                            : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {formatWeight(measurement.muscle_mass_kg, weightUnit)}
+                        </TableCell>
+                        <TableCell>
+                          {formatWeight(measurement.bone_mass_kg, weightUnit)}
+                        </TableCell>
+                        <TableCell>
+                          {measurement.body_water_percentage != null
+                            ? measurement.body_water_percentage.toFixed(1)
+                            : '-'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -947,6 +1039,9 @@ const ReportsTables = ({
                             : category.measurement_type}
                         )
                       </TableHead>
+                      <TableHead>
+                        {t('reportsTables.source', 'Source')}
+                      </TableHead>
                       <TableHead>{t('reportsTables.notes', 'Notes')}</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -999,6 +1094,9 @@ const ReportsTables = ({
                             </TableCell>
                             <TableCell>{formattedHour}</TableCell>
                             <TableCell>{displayValue}</TableCell>
+                            <TableCell>
+                              {prettifySourceList(measurement.source)}
+                            </TableCell>
                             <TableCell>{measurement.notes || '-'}</TableCell>
                           </TableRow>
                         );

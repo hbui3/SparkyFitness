@@ -259,7 +259,8 @@ async function processStravaAthleteWeight(
       userId,
       createdByUserId,
       entryDate,
-      measurementsToUpsert
+      measurementsToUpsert,
+      'Strava'
     );
     log(
       'info',

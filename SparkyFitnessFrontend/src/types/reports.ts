@@ -58,6 +58,8 @@ export interface DailyFoodEntry {
   iron?: number;
   food_name?: string;
   brand_name?: string;
+  source?: string | null;
+  source_id?: string | null;
   glycemic_index?: string | number;
   [key: string]:
     | string
