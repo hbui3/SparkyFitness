@@ -1,4 +1,7 @@
-import { ExerciseProgressResponse } from '@workspace/shared';
+import {
+  findMirroredWorkoutDuplicates,
+  type ExerciseProgressResponse,
+} from '@workspace/shared';
 
 /**
  * Returns the Monday (week start) of the week containing the given date.
@@ -245,39 +248,6 @@ export const calculateTimeUnderTensionData = (
   }));
 };
 
-interface ActivityTimeWindow {
-  startMs: number;
-  endMs: number;
-}
-
-const activityTimeWindow = (
-  entry: ExerciseProgressResponse
-): ActivityTimeWindow | null => {
-  const startMs = Date.parse(entry.activity_started_at ?? '');
-  if (!Number.isFinite(startMs)) return null;
-
-  const explicitEndMs = Date.parse(entry.activity_ended_at ?? '');
-  const durationEndMs =
-    startMs + Math.max(0, entry.duration_minutes ?? 0) * 60_000;
-  const endMs = Number.isFinite(explicitEndMs) ? explicitEndMs : durationEndMs;
-  return endMs > startMs ? { startMs, endMs } : null;
-};
-
-const substantiallyOverlaps = (
-  first: ActivityTimeWindow,
-  second: ActivityTimeWindow
-): boolean => {
-  const overlapMs =
-    Math.min(first.endMs, second.endMs) -
-    Math.max(first.startMs, second.startMs);
-  if (overlapMs <= 0) return false;
-  const shorterDurationMs = Math.min(
-    first.endMs - first.startMs,
-    second.endMs - second.startMs
-  );
-  return shorterDurationMs > 0 && overlapMs / shorterDurationMs >= 0.8;
-};
-
 export const extractTelemetryActivityEntries = (
   exerciseProgressData: Record<string, ExerciseProgressResponse[]>,
   selectedExercise: string,
@@ -319,29 +289,24 @@ export const extractTelemetryActivityEntries = (
       : selectedExercise && exerciseProgressData[selectedExercise]
         ? exerciseProgressData[selectedExercise]
         : [];
-  const preferredRawProviderWindows = candidateEntries
-    .filter((entry) =>
-      ['speediance', 'igpsport'].includes(
-        entry.provider_name?.toLowerCase() ?? ''
-      )
-    )
-    .map(activityTimeWindow)
-    .filter((window): window is ActivityTimeWindow => window !== null);
+  const duplicateIds = new Set(
+    findMirroredWorkoutDuplicates(
+      candidateEntries
+        .filter((entry) => entry.exercise_entry_id)
+        .map((entry) => ({
+          id: entry.exercise_entry_id!,
+          source: entry.provider_name,
+          activityStartedAt: entry.activity_started_at,
+          activityEndedAt: entry.activity_ended_at,
+          durationSeconds: (entry.duration_minutes ?? 0) * 60,
+        })),
+      'UTC'
+    ).map((duplicate) => duplicate.duplicateId)
+  );
 
   const processEntry = (entry: ExerciseProgressResponse) => {
     const source = entry.provider_name?.toLowerCase();
-    const isMobileDuplicate =
-      source !== undefined &&
-      REQUIRES_TELEMETRY_FLAG.has(source) &&
-      (() => {
-        const mobileWindow = activityTimeWindow(entry);
-        return (
-          mobileWindow !== null &&
-          preferredRawProviderWindows.some((providerWindow) =>
-            substantiallyOverlaps(mobileWindow, providerWindow)
-          )
-        );
-      })();
+    const isMobileDuplicate = duplicateIds.has(entry.exercise_entry_id ?? '');
     if (
       source &&
       TELEMETRY_PROVIDERS.has(source) &&

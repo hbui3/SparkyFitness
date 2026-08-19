@@ -61,6 +61,8 @@ const durationOnlyExerciseEntry = {
   entry_date: '2026-05-15',
   duration_minutes: 3,
   calories_burned: 20,
+  source: 'iGPSPORT',
+  source_id: '91053993',
   exercises: { id: 'exercise-1', name: 'Plank' },
   sets: [
     {
@@ -127,6 +129,13 @@ describe('ReportsTables net carbs', () => {
 });
 
 describe('ReportsTables duration-only exercise sets', () => {
+  it('shows the canonical workout data source', () => {
+    renderTable([durationOnlyExerciseEntry]);
+
+    expect(screen.getByText('Source')).toBeInTheDocument();
+    expect(screen.getByText('iGPSPORT')).toHaveAttribute('title', '91053993');
+  });
+
   it('renders a dash for the rep range instead of a bogus 0 - 0', () => {
     renderTable([durationOnlyExerciseEntry]);
 

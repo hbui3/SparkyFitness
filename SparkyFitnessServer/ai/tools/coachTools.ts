@@ -1,8 +1,13 @@
 import { tool } from 'ai';
-import { todayInZone, ENERGY_DENSITY_KCAL_PER_KG } from '@workspace/shared';
+import {
+  addDays,
+  todayInZone,
+  ENERGY_DENSITY_KCAL_PER_KG,
+} from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import coachRepository from '../../models/coachRepository.js';
 import coachProfileService from '../../services/coachProfileService.js';
+import workoutDeduplicationService from '../../services/workoutDeduplicationService.js';
 import { ERRORS, formatZodError } from './errors.js';
 import { normalizeDayKeywords } from './dates.js';
 import { dayString, formatSuccess } from './formatting.js';
@@ -29,11 +34,12 @@ async function getHealthSummary(
     startDate,
     end
   );
-  const exercise = await coachRepository.getExerciseAggregates(
-    userId,
-    startDate,
-    end
-  );
+  const exercise =
+    await workoutDeduplicationService.getCanonicalWorkoutAggregates(
+      userId,
+      startDate,
+      end
+    );
   const weight = await coachRepository.getLatestWeightInRange(
     userId,
     startDate,
@@ -142,10 +148,12 @@ async function get30DayTrends(
   const end = endDate || todayInZone(tz);
 
   const food = await coachRepository.get30DayFoodAggregates(userId, end);
-  const exercise = await coachRepository.get30DayExerciseAggregates(
-    userId,
-    end
-  );
+  const exercise =
+    await workoutDeduplicationService.getCanonicalWorkoutAggregates(
+      userId,
+      addDays(end, -29),
+      end
+    );
   const mood = await coachRepository.get30DayMoodAggregates(userId, end);
   const sleep = await coachRepository.get30DaySleepAggregates(userId, end);
   const weightRows = await coachRepository.get30DayWeightSeries(userId, end);
@@ -164,7 +172,7 @@ async function get30DayTrends(
       avg_daily_protein: Number(Number(food.avg_daily_protein).toFixed(1)),
     },
     exercise: {
-      total_workouts: exercise.total_workouts,
+      total_workouts: exercise.workout_count,
       active_days: exercise.active_days,
       total_calories_burned: Number(exercise.total_calories_burned),
     },

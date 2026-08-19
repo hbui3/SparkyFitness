@@ -63,6 +63,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `routes/v2/` - newer typed route surface; pair these changes with `schemas/`
 - `routes/auth/` - auth-specific route fragments mounted through `routes/authRoutes.ts`
 - `services/` - business logic and orchestration
+- `services/workoutDeduplicationService.ts` - canonical cross-provider workout reads; preserves provider rows in storage while suppressing overlapping mobile-health mirrors for reports, calories, daily views, and coach aggregates
 - `models/` - PostgreSQL repositories and persistence helpers
 - `middleware/` - auth, permissions, uploads, and shared Express middleware
 - `integrations/` - provider adapters and ingest pipelines
@@ -228,6 +229,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   inspect the relevant `integrations/*` code, then the matching service and repository files
 - Health data or date bucketing issue:
   inspect `integrations/healthData/healthDataRoutes.ts`, `services/measurementService.ts`, and `utils/timezoneLoader.ts`
+- Duplicate workouts across HealthKit/Health Connect and a direct fitness provider:
+  inspect `services/workoutDeduplicationService.ts`, `models/reportRepository.ts`, and the shared `utils/workoutDeduplication.ts`; do not delete or merge provider-owned rows at ingest time
 - Self-service "delete synced data by source" issue:
   inspect `routes/syncedDataRoutes.ts`, `services/syncedDataService.ts`, and `models/syncedDataRepository.ts` (the `SYNCED_SOURCE_TABLES` whitelist)
 - AI chat or chatbot tool issue:

@@ -39,6 +39,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `docs/` - Nuxt / Docus docs site.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
 - The persistent AI coach spans `shared` contracts, owner-only profiles/memories/undo receipts, canonical onboarding/goal/daily/trend/recovery context, configurable proactive messages, a durable system-only Telegram inbox plus owner-scoped delivery outbox, bidirectional text/photo/voice Telegram chat with deterministic quick actions, the encrypted system-only bot credential, meal-safety enforcement, and the frontend Nutrition & Diet settings with live cross-channel refresh.
+- Cross-provider workout reads are canonicalized by `SparkyFitnessServer/services/workoutDeduplicationService.ts` using the shared overlap rule: provider-owned raw rows remain stored, while lower-fidelity HealthKit/Health Connect mirrors are excluded from reports, calorie totals, daily views, and coach aggregates.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
 - `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.

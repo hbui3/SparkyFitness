@@ -653,6 +653,7 @@ export const exportExerciseEntries = async ({
         'reports.exerciseEntriesExportHeaders.exerciseName',
         'Exercise Name'
       ),
+      i18n.t('reports.exerciseEntriesExportHeaders.source', 'Source'),
       i18n.t(
         'reports.exerciseEntriesExportHeaders.durationMinutes',
         'Duration (minutes)'
@@ -681,6 +682,7 @@ export const exportExerciseEntries = async ({
     const csvRows = exerciseEntries.map((entry) => [
       formatDateInUserTimezone(entry.entry_date, 'MMM dd, yyyy'),
       entry.exercises.name,
+      entry.source ?? entry.exercises.source ?? '',
       entry.duration_minutes.toString(),
       Math.round(
         convertEnergy(entry.calories_burned, 'kcal', energyUnit)

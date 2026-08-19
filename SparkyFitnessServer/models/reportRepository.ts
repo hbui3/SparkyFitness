@@ -1,5 +1,38 @@
 import { FOOD_VARIANT_NUTRIENT_FIELDS } from '@workspace/shared';
 import { getClient } from '../db/poolManager.js';
+
+export interface ReportExerciseEntryRow {
+  id: string;
+  entry_date: string;
+  entry_time: string | null;
+  duration_minutes: number | string;
+  calories_burned: number | string;
+  notes: string | null;
+  exercise_id: string;
+  exercise_name: string;
+  exercise_category: string | null;
+  exercise_calories_per_hour: number | string | null;
+  exercise_equipment: string | null;
+  exercise_primary_muscles: string | null;
+  exercise_secondary_muscles: string | null;
+  exercise_instructions: string | null;
+  exercise_images: string | null;
+  exercise_source: string | null;
+  exercise_source_id: string | null;
+  exercise_user_id: string;
+  exercise_level: string | null;
+  exercise_force: string | null;
+  exercise_mechanic: string | null;
+  exercise_preset_entry_id: string | null;
+  distance: number | string | null;
+  steps: number | string | null;
+  elapsed_time_seconds: number | string | null;
+  activity_started_at: string | null;
+  activity_ended_at: string | null;
+  activity_started_at_local: string | null;
+  sets: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
 async function getNutritionData(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   userId: any,
@@ -513,24 +546,19 @@ async function getMiniNutritionTrends(
   }
 }
 async function getExerciseEntries(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  equipment: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  muscle: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  exercise: any
-) {
+  userId: string,
+  startDate: string,
+  endDate: string,
+  equipment?: string | null,
+  muscle?: string | null,
+  exercise?: string | null
+): Promise<ReportExerciseEntryRow[]> {
   const client = await getClient(userId); // User-specific operation
   try {
     let query = `SELECT
          ee.id,
          TO_CHAR(ee.entry_date, 'YYYY-MM-DD') AS entry_date,
+         ee.entry_time,
          ee.duration_minutes,
          ee.calories_burned,
          ee.notes,
@@ -549,6 +577,13 @@ async function getExerciseEntries(
          ee.level AS exercise_level,
          ee.force AS exercise_force,
          ee.mechanic AS exercise_mechanic,
+         ee.exercise_preset_entry_id,
+         ee.distance,
+         ee.steps,
+         ee.elapsed_time_seconds,
+         activity_window.activity_started_at,
+         activity_window.activity_ended_at,
+         activity_window.activity_started_at_local,
          COALESCE(
            (SELECT json_agg(set_data ORDER BY set_data.set_number)
             FROM (
@@ -557,8 +592,41 @@ async function getExerciseEntries(
               WHERE ees.exercise_entry_id = ee.id
             ) AS set_data
            ), '[]'::json
-         ) AS sets
+       ) AS sets
        FROM exercise_entries ee
+       LEFT JOIN LATERAL (
+         SELECT
+           COALESCE(
+             MAX(CASE
+               WHEN ee.source = 'Speediance'
+                AND (detail.detail_data #>> '{training,startTimestamp}') ~ '^[0-9]+([.][0-9]+)?$'
+               THEN to_char(
+                 to_timestamp((detail.detail_data #>> '{training,startTimestamp}')::double precision)
+                   AT TIME ZONE 'UTC',
+                 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+               )
+             END),
+             MAX(CASE WHEN detail.detail_data ? 'startTime'
+               THEN detail.detail_data ->> 'startTime' END)
+           ) AS activity_started_at,
+           COALESCE(
+             MAX(CASE
+               WHEN ee.source = 'Speediance'
+                AND (detail.detail_data #>> '{training,endTimestamp}') ~ '^[0-9]+([.][0-9]+)?$'
+               THEN to_char(
+                 to_timestamp((detail.detail_data #>> '{training,endTimestamp}')::double precision)
+                   AT TIME ZONE 'UTC',
+                 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+               )
+             END),
+             MAX(CASE WHEN detail.detail_data ? 'endTime'
+               THEN detail.detail_data ->> 'endTime' END)
+           ) AS activity_ended_at,
+           MAX(detail.detail_data #>> '{activity,startTimeLocal}')
+             AS activity_started_at_local
+         FROM exercise_entry_activity_details detail
+         WHERE detail.exercise_entry_id = ee.id
+       ) activity_window ON TRUE
        WHERE ee.user_id = $1 AND ee.entry_date BETWEEN $2 AND $3`;
     const params = [userId, startDate, endDate];
     let paramIndex = 4;
@@ -579,7 +647,7 @@ async function getExerciseEntries(
     }
     query += ' ORDER BY ee.entry_date DESC, ee.created_at DESC';
     const result = await client.query(query, params);
-    return result.rows;
+    return result.rows as ReportExerciseEntryRow[];
   } finally {
     client.release();
   }

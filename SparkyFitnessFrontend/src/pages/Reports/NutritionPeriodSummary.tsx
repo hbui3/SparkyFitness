@@ -2,7 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { DailyExerciseEntry, NutritionData } from '@/types/reports';
+import {
+  DailyExerciseEntry,
+  ExerciseCaloriesByDate,
+  NutritionData,
+} from '@/types/reports';
 import { ExpandedGoals } from '@/types/goals';
 import type { UserCustomNutrient } from '@/types/customNutrient';
 import { CENTRAL_NUTRIENT_CONFIG } from '@/constants/nutrients';
@@ -45,6 +49,7 @@ interface NutritionPeriodSummaryProps {
   customNutrients: UserCustomNutrient[];
   goals?: Record<string, ExpandedGoals>;
   exerciseEntries?: DailyExerciseEntry[];
+  exerciseCaloriesByDate?: ExerciseCaloriesByDate[];
 }
 
 const NutritionPeriodSummary = ({
@@ -52,6 +57,7 @@ const NutritionPeriodSummary = ({
   customNutrients,
   goals,
   exerciseEntries,
+  exerciseCaloriesByDate,
 }: NutritionPeriodSummaryProps) => {
   const { t } = useTranslation();
   const {
@@ -154,6 +160,12 @@ const NutritionPeriodSummary = ({
 
   const exerciseBurnByDate = useMemo(() => {
     const map: Record<string, number> = {};
+    if (exerciseCaloriesByDate) {
+      exerciseCaloriesByDate.forEach((entry) => {
+        map[entry.entry_date] = Number(entry.calories_burned) || 0;
+      });
+      return map;
+    }
     (exerciseEntries || []).forEach((entry) => {
       const date =
         typeof entry.entry_date === 'string'
@@ -162,7 +174,7 @@ const NutritionPeriodSummary = ({
       map[date] = (map[date] || 0) + (Number(entry.calories_burned) || 0);
     });
     return map;
-  }, [exerciseEntries]);
+  }, [exerciseCaloriesByDate, exerciseEntries]);
 
   // Calculate KPIs and prepare cumulative chart data using the same filtered dataset
   const { totalEaten, totalGoal, validDaysCount, cumulativeData, netBalance } =

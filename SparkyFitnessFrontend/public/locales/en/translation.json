@@ -3188,6 +3188,7 @@
     "exerciseEntriesExportHeaders": {
       "date": "Date",
       "exerciseName": "Exercise Name",
+      "source": "Source",
       "durationMinutes": "Duration (minutes)",
       "caloriesBurned": "Calories Burned",
       "sets": "Sets",
@@ -3566,6 +3567,8 @@
     "filterBySetType": "Filter by set type...",
     "date": "Date",
     "exercise": "Exercise",
+    "source": "Source",
+    "mirroredWorkoutsHidden": "{{count}} mirrored provider entries are hidden; their raw imports remain stored.",
     "set": "Set",
     "type": "Type",
     "reps": "Reps",
