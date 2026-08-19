@@ -1,6 +1,9 @@
 import { apiCall } from '@/api/api';
 import type {
   CoachProfileResponse,
+  CoachMemoryResponse,
+  CreateCoachMemoryRequest,
+  UpdateCoachMemoryRequest,
   CoachTelegramConnectionStatus,
   CoachTelegramDisconnectResponse,
   CoachTelegramLinkResponse,
@@ -29,6 +32,29 @@ export const createCoachTelegramLink = (): Promise<CoachTelegramLinkResponse> =>
 export const disconnectCoachTelegram =
   (): Promise<CoachTelegramDisconnectResponse> =>
     apiCall('/coach-profile/telegram', { method: 'DELETE' });
+
+export const getCoachMemories = (): Promise<CoachMemoryResponse[]> =>
+  apiCall('/coach-profile/memories');
+
+export const createCoachMemory = (
+  memory: CreateCoachMemoryRequest
+): Promise<CoachMemoryResponse> =>
+  apiCall('/coach-profile/memories', {
+    method: 'POST',
+    body: JSON.stringify(memory),
+  });
+
+export const updateCoachMemory = (
+  id: string,
+  memory: UpdateCoachMemoryRequest
+): Promise<CoachMemoryResponse> =>
+  apiCall(`/coach-profile/memories/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(memory),
+  });
+
+export const deleteCoachMemory = (id: string): Promise<void> =>
+  apiCall(`/coach-profile/memories/${id}`, { method: 'DELETE' });
 
 export const validateMealSuggestion = (
   ingredients: string[]

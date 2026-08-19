@@ -1,11 +1,17 @@
 import express from 'express';
 import {
+  createCoachMemoryRequestSchema,
   updateCoachProfileRequestSchema,
+  updateCoachMemoryRequestSchema,
   validateMealSuggestionRequestSchema,
 } from '@workspace/shared';
+import { z } from 'zod';
 import { authenticate } from '../middleware/authMiddleware.js';
 import coachProfileService from '../services/coachProfileService.js';
 import telegramCoachService from '../services/telegramCoachService.js';
+import coachMemoryService from '../services/coachMemoryService.js';
+import coachContextService from '../services/coachContextService.js';
+import coachEventService from '../services/coachEventService.js';
 
 const router = express.Router();
 router.use(authenticate);
@@ -82,6 +88,114 @@ router.put('/', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+router.get('/today', async (req, res, next) => {
+  try {
+    res.json(
+      await coachContextService.getCoachTodayStatus(
+        req.authenticatedUserId,
+        req.headers['accept-language'] ?? 'de'
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/memories', async (req, res, next) => {
+  try {
+    res.json(await coachMemoryService.listMemories(req.authenticatedUserId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/memories', async (req, res, next) => {
+  try {
+    const parsed = createCoachMemoryRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: 'Invalid coach memory',
+        errors: parsed.error.flatten(),
+      });
+      return;
+    }
+    const memory = await coachMemoryService.createMemory(
+      req.authenticatedUserId,
+      parsed.data
+    );
+    coachEventService.publish(req.authenticatedUserId, 'coach');
+    res.status(201).json(memory);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/memories/:id', async (req, res, next) => {
+  try {
+    const id = z.string().uuid().safeParse(req.params.id);
+    const body = updateCoachMemoryRequestSchema.safeParse(req.body);
+    if (!id.success || !body.success) {
+      res.status(400).json({ message: 'Invalid coach memory update.' });
+      return;
+    }
+    const memory = await coachMemoryService.updateMemory(
+      req.authenticatedUserId,
+      id.data,
+      body.data
+    );
+    if (!memory) {
+      res.status(404).json({ message: 'Coach memory not found.' });
+      return;
+    }
+    coachEventService.publish(req.authenticatedUserId, 'coach');
+    res.json(memory);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/memories/:id', async (req, res, next) => {
+  try {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ message: 'Invalid coach memory id.' });
+      return;
+    }
+    if (
+      !(await coachMemoryService.deleteMemory(req.authenticatedUserId, id.data))
+    ) {
+      res.status(404).json({ message: 'Coach memory not found.' });
+      return;
+    }
+    coachEventService.publish(req.authenticatedUserId, 'coach');
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/events', (req, res) => {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write('event: ready\ndata: {}\n\n');
+  const unsubscribe = coachEventService.subscribe(
+    req.authenticatedUserId,
+    (event) => {
+      res.write(`id: ${event.id}\n`);
+      res.write(`event: ${event.type}\n`);
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+  );
+  const keepAlive = setInterval(() => res.write(': keepalive\n\n'), 25_000);
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    unsubscribe();
+  });
 });
 
 /**

@@ -32,6 +32,11 @@ describe('coachProfileRepository proactive messages', () => {
           language: 'de',
           adaptive_check_ins_enabled: true,
           adaptive_last_sent_slot: '2026-08-17T19:00',
+          adaptive_start_time: '07:00:00',
+          adaptive_end_time: '20:00:00',
+          adaptive_interval_minutes: 120,
+          proactive_categories: ['nutrition', 'hydration'],
+          adaptive_last_signature: 'last-state',
           daily_check_in_enabled: true,
           daily_check_in_time: '20:00:00',
           daily_last_sent_on: '2026-08-17',
@@ -52,6 +57,11 @@ describe('coachProfileRepository proactive messages', () => {
         language: 'de',
         adaptiveCheckInsEnabled: true,
         adaptiveLastSentSlot: '2026-08-17T19:00',
+        adaptiveStartTime: '07:00',
+        adaptiveEndTime: '20:00',
+        adaptiveIntervalMinutes: 120,
+        proactiveCategories: ['nutrition', 'hydration'],
+        adaptiveLastSignature: 'last-state',
         dailyCheckInEnabled: true,
         dailyCheckInTime: '20:00',
         dailyLastSentOn: '2026-08-17',
@@ -67,6 +77,7 @@ describe('coachProfileRepository proactive messages', () => {
     userClient.query
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'profile-1' }] })
+      .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({});
 
@@ -84,7 +95,10 @@ describe('coachProfileRepository proactive messages', () => {
     expect(userClient.query.mock.calls[2][0]).toContain(
       'INSERT INTO sparky_chat_history'
     );
-    expect(userClient.query.mock.calls[3][0]).toBe('COMMIT');
+    expect(userClient.query.mock.calls[3][0]).toContain(
+      'INSERT INTO coach_delivery_outbox'
+    );
+    expect(userClient.query.mock.calls[4][0]).toBe('COMMIT');
   });
 
   it('rolls back without inserting when the period was already delivered', async () => {

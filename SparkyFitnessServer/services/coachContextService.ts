@@ -1,4 +1,9 @@
-import { addDays, localDateToDay, todayInZone } from '@workspace/shared';
+import {
+  addDays,
+  localDateToDay,
+  todayInZone,
+  type CoachTodayStatusResponse,
+} from '@workspace/shared';
 import onboardingRepository from '../models/onboardingRepository.js';
 import preferenceRepository from '../models/preferenceRepository.js';
 import foodRepository from '../models/foodMisc.js';
@@ -50,12 +55,37 @@ export interface CoachWeightTrend {
   changeKg: number | null;
 }
 
+export interface CoachMuscleLoad {
+  muscle: string;
+  lastTrainedOn: string;
+  weightedLoad: number;
+}
+
+export interface CoachRecoveryContext {
+  observedOn: string | null;
+  sleepHours: number | null;
+  sleepScore: number | null;
+  restingHeartRate: number | null;
+  hrvRmssdMs: number | null;
+  vo2Max: number | null;
+  recoveryTimeHours: number | null;
+  trainingReadinessScore: number | null;
+  acuteTrainingLoad: number | null;
+  chronicTrainingLoad: number | null;
+  acwrRatio: number | null;
+  stressLevel: number | null;
+  bodyBatteryHighest: number | null;
+  bodyBatteryLowest: number | null;
+  recentMuscleLoad: CoachMuscleLoad[];
+}
+
 export interface CoachContextSnapshot {
   timezone: string;
   today: CoachDailyProgress;
   week: CoachPeriodProgress;
   longTerm: CoachPeriodProgress;
   weight30Days: CoachWeightTrend;
+  recovery: CoachRecoveryContext;
 }
 
 interface GoalRecord {
@@ -78,6 +108,158 @@ interface WaterRow {
 interface WeightRow {
   entry_date: Date | string;
   weight: unknown;
+}
+
+interface TrendContext {
+  nutritionRows: NutritionRow[];
+  waterRows: WaterRow[];
+  goalsByDate: Record<string, GoalRecord>;
+  weekExercise: { workout_count?: unknown };
+  longExercise: { workout_count?: unknown };
+  weightRows: WeightRow[];
+  recoveryRows: Awaited<ReturnType<typeof coachRepository.getRecoverySignals>>;
+}
+
+const TREND_CACHE_TTL_MS = 5 * 60_000;
+const trendCache = new Map<
+  string,
+  { expiresAt: number; value: Promise<TrendContext> }
+>();
+
+function parseMuscles(value: unknown): string[] {
+  if (Array.isArray(value))
+    return value.filter((item): item is string => typeof item === 'string');
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+}
+
+function latestHrvRmssd(value: unknown): number | null {
+  if (!Array.isArray(value)) return null;
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const sample = value[index];
+    if (!sample || typeof sample !== 'object') continue;
+    const parsed = finiteNumber((sample as Record<string, unknown>).rmssd_ms);
+    if (parsed !== null) return Math.round(parsed);
+  }
+  return null;
+}
+
+function buildRecoveryContext(
+  rows: TrendContext['recoveryRows']
+): CoachRecoveryContext {
+  const health = (rows.health ?? {}) as Record<string, unknown>;
+  const sleep = (rows.sleep ?? {}) as Record<string, unknown>;
+  const hrv = (rows.hrv ?? {}) as Record<string, unknown>;
+  const muscleMap = new Map<string, CoachMuscleLoad>();
+  for (const raw of rows.muscles as Array<Record<string, unknown>>) {
+    const date = dayString(raw.entry_date as Date | string);
+    const volume = finiteNumber(raw.volume_kg) ?? 0;
+    const duration = finiteNumber(raw.duration_minutes) ?? 0;
+    const primary = parseMuscles(raw.primary_muscles);
+    const secondary = parseMuscles(raw.secondary_muscles);
+    for (const [muscle, weight] of [
+      ...primary.map((name) => [name, 1] as const),
+      ...secondary.map((name) => [name, 0.5] as const),
+    ]) {
+      const previous = muscleMap.get(muscle);
+      const weightedLoad = Math.round(
+        (volume > 0 ? volume : duration * 10) * weight
+      );
+      muscleMap.set(muscle, {
+        muscle,
+        lastTrainedOn:
+          previous && previous.lastTrainedOn > date
+            ? previous.lastTrainedOn
+            : date,
+        weightedLoad: (previous?.weightedLoad ?? 0) + weightedLoad,
+      });
+    }
+  }
+  return {
+    observedOn:
+      health.entry_date || sleep.entry_date || hrv.entry_date
+        ? dayString(
+            (health.entry_date ?? sleep.entry_date ?? hrv.entry_date) as
+              | Date
+              | string
+          )
+        : null,
+    sleepHours: rounded(
+      finiteNumber(sleep.duration_in_seconds) === null
+        ? null
+        : (finiteNumber(sleep.duration_in_seconds) as number) / 3600
+    ),
+    sleepScore: rounded(finiteNumber(sleep.sleep_score)),
+    restingHeartRate: rounded(finiteNumber(health.resting_heart_rate)),
+    hrvRmssdMs: latestHrvRmssd(hrv.samples),
+    vo2Max: finiteNumber(health.vo2_max),
+    recoveryTimeHours: rounded(finiteNumber(health.recovery_time_hours)),
+    trainingReadinessScore: rounded(
+      finiteNumber(health.training_readiness_score)
+    ),
+    acuteTrainingLoad: rounded(finiteNumber(health.acute_training_load)),
+    chronicTrainingLoad: rounded(finiteNumber(health.chronic_training_load)),
+    acwrRatio: finiteNumber(health.acwr_ratio),
+    stressLevel: rounded(finiteNumber(health.avg_stress_level)),
+    bodyBatteryHighest: rounded(finiteNumber(health.body_battery_highest)),
+    bodyBatteryLowest: rounded(finiteNumber(health.body_battery_lowest)),
+    recentMuscleLoad: [...muscleMap.values()]
+      .sort((a, b) => b.weightedLoad - a.weightedLoad)
+      .slice(0, 8),
+  };
+}
+
+async function getTrendContext(
+  userId: string,
+  today: string,
+  weekStart: string,
+  longStart: string,
+  longDates: string[]
+): Promise<TrendContext> {
+  const key = `${userId}:${today}`;
+  const cached = trendCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const value = Promise.all([
+    foodRepository.getDailyNutritionSummariesByDates(userId, longDates),
+    measurementRepository.getWaterIntakesByDates(userId, longDates),
+    goalService.getUserGoalsForRange(userId, longStart, today, true),
+    coachRepository.getExerciseAggregates(userId, weekStart, today),
+    coachRepository.getExerciseAggregates(userId, longStart, today),
+    coachRepository.getWeightSeries(userId, 29, today),
+    coachRepository.getRecoverySignals(userId, today),
+  ]).then(
+    ([
+      nutritionRows,
+      waterRows,
+      goalsByDate,
+      weekExercise,
+      longExercise,
+      weightRows,
+      recoveryRows,
+    ]) => ({
+      nutritionRows: nutritionRows as NutritionRow[],
+      waterRows: waterRows as WaterRow[],
+      goalsByDate: goalsByDate as Record<string, GoalRecord>,
+      weekExercise: weekExercise as { workout_count?: unknown },
+      longExercise: longExercise as { workout_count?: unknown },
+      weightRows: weightRows as WeightRow[],
+      recoveryRows,
+    })
+  );
+  trendCache.set(key, { expiresAt: Date.now() + TREND_CACHE_TTL_MS, value });
+  if (trendCache.size > 500)
+    trendCache.delete(trendCache.keys().next().value ?? '');
+  return value;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -221,16 +403,7 @@ export async function getCoachContextSnapshot(
   const longDates = buildDateRange(longStart, today);
   const weekDates = longDates.slice(-7);
 
-  const [
-    canonicalGoals,
-    dailySummary,
-    nutritionRows,
-    waterRows,
-    goalsByDate,
-    weekExercise,
-    longExercise,
-    weightRows,
-  ] = await Promise.all([
+  const [canonicalGoals, dailySummary, trend] = await Promise.all([
     getCanonicalCoachGoals(userId, tz),
     getDailySummary({
       actorUserId: userId,
@@ -238,13 +411,18 @@ export async function getCoachContextSnapshot(
       date: today,
       includeCheckin: true,
     }),
-    foodRepository.getDailyNutritionSummariesByDates(userId, longDates),
-    measurementRepository.getWaterIntakesByDates(userId, longDates),
-    goalService.getUserGoalsForRange(userId, longStart, today, true),
-    coachRepository.getExerciseAggregates(userId, weekStart, today),
-    coachRepository.getExerciseAggregates(userId, longStart, today),
-    coachRepository.getWeightSeries(userId, 29, today),
+    getTrendContext(userId, today, weekStart, longStart, longDates),
   ]);
+
+  const {
+    nutritionRows,
+    waterRows,
+    goalsByDate,
+    weekExercise,
+    longExercise,
+    weightRows,
+    recoveryRows,
+  } = trend;
 
   const nutritionByDate = new Map<
     string,
@@ -304,12 +482,18 @@ export async function getCoachContextSnapshot(
       proteinRemainingG:
         canonicalGoals.proteinTargetG === null
           ? null
-          : Math.round(canonicalGoals.proteinTargetG - proteinConsumed),
+          : Math.max(
+              0,
+              Math.round(canonicalGoals.proteinTargetG - proteinConsumed)
+            ),
       waterConsumedMl: waterConsumed,
       waterRemainingMl:
         canonicalGoals.waterTargetMl === null
           ? null
-          : Math.round(canonicalGoals.waterTargetMl - waterConsumed),
+          : Math.max(
+              0,
+              Math.round(canonicalGoals.waterTargetMl - waterConsumed)
+            ),
     },
     week: buildPeriodProgress(
       weekDates,
@@ -334,6 +518,7 @@ export async function getCoachContextSnapshot(
           ? null
           : Math.round((latestWeight - firstWeight) * 100) / 100,
     },
+    recovery: buildRecoveryContext(recoveryRows),
   };
 }
 
@@ -342,7 +527,7 @@ function valueOrUnknown(value: number | null, suffix: string): string {
 }
 
 export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
-  const { today, week, longTerm, weight30Days } = snapshot;
+  const { today, week, longTerm, weight30Days, recovery } = snapshot;
   const lines = [
     `Canonical primary goal: ${today.primaryGoal ?? 'not set'}`,
     `Canonical targets for ${today.date}: ${valueOrUnknown(today.calorieTarget, ' kcal')}, ${valueOrUnknown(today.proteinTargetG, ' g protein')}, ${valueOrUnknown(today.waterTargetMl, ' ml water')}`,
@@ -360,11 +545,132 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
       `30-day weight development: insufficient data (${weight30Days.entries} measurements)`
     );
   }
+  const recoveryValues = [
+    recovery.sleepHours === null ? null : `${recovery.sleepHours} h sleep`,
+    recovery.sleepScore === null ? null : `sleep score ${recovery.sleepScore}`,
+    recovery.hrvRmssdMs === null ? null : `HRV ${recovery.hrvRmssdMs} ms RMSSD`,
+    recovery.restingHeartRate === null
+      ? null
+      : `resting HR ${recovery.restingHeartRate} bpm`,
+    recovery.vo2Max === null ? null : `VO2max ${recovery.vo2Max}`,
+    recovery.trainingReadinessScore === null
+      ? null
+      : `training readiness ${recovery.trainingReadinessScore}`,
+    recovery.recoveryTimeHours === null
+      ? null
+      : `recovery time ${recovery.recoveryTimeHours} h`,
+  ].filter((value): value is string => value !== null);
+  if (recoveryValues.length > 0) {
+    lines.push(`Latest recovery signals: ${recoveryValues.join('; ')}`);
+  }
+  if (recovery.recentMuscleLoad.length > 0) {
+    lines.push(
+      `Recent muscle load (relative, last 4 calendar days): ${recovery.recentMuscleLoad
+        .map(
+          (item) =>
+            `${item.muscle}=${item.weightedLoad} (${item.lastTrainedOn})`
+        )
+        .join(', ')}`
+    );
+  }
   return lines;
+}
+
+function nextTodayAction(
+  snapshot: CoachContextSnapshot,
+  language: string
+): string {
+  const { today, recovery } = snapshot;
+  const de = language.toLowerCase().startsWith('de');
+  if ((recovery.trainingReadinessScore ?? 100) < 40) {
+    return de
+      ? 'Heute Erholung priorisieren und Training bewusst leicht halten.'
+      : 'Prioritize recovery and keep training deliberately easy today.';
+  }
+  if ((today.waterRemainingMl ?? 0) > 750) {
+    return de
+      ? `Als Nächstes etwa ${Math.min(500, today.waterRemainingMl ?? 0)} ml Wasser trinken.`
+      : `Drink about ${Math.min(500, today.waterRemainingMl ?? 0)} ml water next.`;
+  }
+  if ((today.proteinRemainingG ?? 0) > 25) {
+    return de
+      ? `Die nächste Mahlzeit auf ungefähr ${Math.min(40, today.proteinRemainingG ?? 0)} g Protein ausrichten.`
+      : `Aim for about ${Math.min(40, today.proteinRemainingG ?? 0)} g protein in the next meal.`;
+  }
+  if ((today.caloriesRemaining ?? 0) < 0) {
+    return de
+      ? 'Das Kalorienziel ist erreicht; die nächste Entscheidung an Hunger und Erholung ausrichten.'
+      : 'The calorie target is reached; base the next choice on hunger and recovery.';
+  }
+  return de
+    ? 'Die aktuellen Ziele sind gut abgedeckt; normal weiterloggen und den Verlauf beobachten.'
+    : 'Current targets are well covered; keep logging normally and watch the trend.';
+}
+
+export function coachTodayStatusFromSnapshot(
+  snapshot: CoachContextSnapshot,
+  language = 'de'
+): CoachTodayStatusResponse {
+  const { today } = snapshot;
+  return {
+    date: today.date,
+    timezone: snapshot.timezone,
+    caloriesConsumed: today.caloriesConsumed,
+    caloriesBurned: today.caloriesBurned,
+    netCalories: today.netCalories,
+    calorieTarget: today.calorieTarget,
+    caloriesRemaining: today.caloriesRemaining,
+    proteinConsumedG: today.proteinConsumedG,
+    proteinTargetG: today.proteinTargetG,
+    proteinRemainingG: today.proteinRemainingG,
+    waterConsumedMl: today.waterConsumedMl,
+    waterTargetMl: today.waterTargetMl,
+    waterRemainingMl: today.waterRemainingMl,
+    nextAction: nextTodayAction(snapshot, language),
+  };
+}
+
+export function renderCoachTodayStatus(
+  status: CoachTodayStatusResponse,
+  language = 'de'
+): string {
+  const de = language.toLowerCase().startsWith('de');
+  const calorieTarget = status.calorieTarget ?? '–';
+  const proteinTarget = status.proteinTargetG ?? '–';
+  const waterTarget = status.waterTargetMl ?? '–';
+  if (!de) {
+    return [
+      `Today (${status.date})`,
+      `Calories: ${status.caloriesConsumed} eaten − ${status.caloriesBurned} burned = ${status.netCalories} net; target ${calorieTarget}, ${status.caloriesRemaining ?? '–'} remaining.`,
+      `Protein: ${status.proteinConsumedG} / ${proteinTarget} g; ${status.proteinRemainingG ?? '–'} g remaining.`,
+      `Water: ${status.waterConsumedMl} / ${waterTarget} ml; ${status.waterRemainingMl ?? '–'} ml remaining.`,
+      `Next useful step: ${status.nextAction}`,
+    ].join('\n');
+  }
+  return [
+    `Heute (${status.date})`,
+    `Kalorien: ${status.caloriesConsumed} gegessen − ${status.caloriesBurned} verbrannt = ${status.netCalories} netto; Ziel ${calorieTarget}, ${status.caloriesRemaining ?? '–'} verbleibend.`,
+    `Protein: ${status.proteinConsumedG} / ${proteinTarget} g; ${status.proteinRemainingG ?? '–'} g verbleibend.`,
+    `Wasser: ${status.waterConsumedMl} / ${waterTarget} ml; ${status.waterRemainingMl ?? '–'} ml verbleibend.`,
+    `Nächster sinnvoller Schritt: ${status.nextAction}`,
+  ].join('\n');
+}
+
+export async function getCoachTodayStatus(
+  userId: string,
+  language = 'de'
+): Promise<CoachTodayStatusResponse> {
+  return coachTodayStatusFromSnapshot(
+    await getCoachContextSnapshot(userId),
+    language
+  );
 }
 
 export default {
   getCanonicalCoachGoals,
   getCoachContextSnapshot,
   formatCoachContext,
+  coachTodayStatusFromSnapshot,
+  renderCoachTodayStatus,
+  getCoachTodayStatus,
 };

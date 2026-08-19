@@ -152,6 +152,32 @@ async function claimIncomingUpdate(
   }
 }
 
+async function getConnectionByChatId(
+  telegramChatId: string
+): Promise<{ userId: string; telegramUserId: string | null } | null> {
+  const client = await getSystemClient();
+  try {
+    const { rows } = await client.query(
+      `SELECT user_id, telegram_user_id::text
+       FROM coach_telegram_connections
+       WHERE telegram_chat_id = $1::bigint
+         AND enabled = TRUE
+       LIMIT 1`,
+      [telegramChatId]
+    );
+    return rows[0]?.user_id
+      ? {
+          userId: String(rows[0].user_id),
+          telegramUserId: rows[0].telegram_user_id
+            ? String(rows[0].telegram_user_id)
+            : null,
+        }
+      : null;
+  } finally {
+    client.release();
+  }
+}
+
 async function getConnectedChatId(userId: string): Promise<string | null> {
   const client = await getClient(userId, userId);
   try {
@@ -216,6 +242,7 @@ export default {
   storeLinkToken,
   claimLinkToken,
   claimIncomingUpdate,
+  getConnectionByChatId,
   getConnectedChatId,
   disconnectUser,
   disconnectChat,

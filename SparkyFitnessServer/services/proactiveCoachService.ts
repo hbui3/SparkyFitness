@@ -1,4 +1,5 @@
 import { dayOfWeek, instantHourMinute, instantToDay } from '@workspace/shared';
+import { createHash } from 'node:crypto';
 import coachProfileRepository, {
   type ProactiveCoachCandidate,
   type ProactiveCoachMessageKind,
@@ -6,7 +7,7 @@ import coachProfileRepository, {
 import coachContextService, {
   type CoachContextSnapshot,
 } from './coachContextService.js';
-import telegramCoachService from './telegramCoachService.js';
+import coachEventService from './coachEventService.js';
 import { log } from '../config/logging.js';
 
 export const ADAPTIVE_COACH_START_MINUTES = 7 * 60;
@@ -40,18 +41,16 @@ export function getAdaptiveDeliverySlot(
   if (!candidate.adaptiveCheckInsEnabled) return null;
   const local = instantHourMinute(now, candidate.timezone);
   const localMinutes = local.hour * 60 + local.minute;
-  if (
-    localMinutes < ADAPTIVE_COACH_START_MINUTES ||
-    localMinutes > ADAPTIVE_COACH_END_MINUTES
-  ) {
+  const startMinutes = timeToMinutes(candidate.adaptiveStartTime);
+  const endMinutes = timeToMinutes(candidate.adaptiveEndTime);
+  const intervalMinutes = candidate.adaptiveIntervalMinutes;
+  if (localMinutes < startMinutes || localMinutes > endMinutes) {
     return null;
   }
-  const elapsed = localMinutes - ADAPTIVE_COACH_START_MINUTES;
+  const elapsed = localMinutes - startMinutes;
   const slotMinutes =
-    ADAPTIVE_COACH_START_MINUTES +
-    Math.floor(elapsed / ADAPTIVE_COACH_INTERVAL_MINUTES) *
-      ADAPTIVE_COACH_INTERVAL_MINUTES;
-  if (slotMinutes > ADAPTIVE_COACH_END_MINUTES) return null;
+    startMinutes + Math.floor(elapsed / intervalMinutes) * intervalMinutes;
+  if (slotMinutes > endMinutes) return null;
   return `${instantToDay(now, candidate.timezone)}T${minuteLabel(slotMinutes)}`;
 }
 
@@ -97,36 +96,94 @@ function targetValue(value: number | null, suffix: string): string {
 
 function adaptiveMetricsDe(snapshot: CoachContextSnapshot): string {
   const { today } = snapshot;
-  return `Aktuell: ${today.caloriesConsumed} / ${targetValue(today.calorieTarget, 'kcal')}, ${today.proteinConsumedG} / ${targetValue(today.proteinTargetG, 'g Protein')} und ${today.waterConsumedMl} / ${targetValue(today.waterTargetMl, 'ml Wasser')}. Noch offen: ${today.caloriesRemaining ?? '–'} kcal, ${today.proteinRemainingG ?? '–'} g Protein und ${today.waterRemainingMl ?? '–'} ml Wasser.`;
+  return `Aktuell: ${today.caloriesConsumed} kcal gegessen − ${today.caloriesBurned} kcal verbrannt = ${today.netCalories} kcal netto; Ziel ${targetValue(today.calorieTarget, 'kcal')}, noch ${today.caloriesRemaining ?? '–'} kcal. Protein ${today.proteinConsumedG} / ${targetValue(today.proteinTargetG, 'g')}; Wasser ${today.waterConsumedMl} / ${targetValue(today.waterTargetMl, 'ml')}.`;
 }
 
 function adaptiveMetricsEn(snapshot: CoachContextSnapshot): string {
   const { today } = snapshot;
-  return `Right now: ${today.caloriesConsumed} / ${targetValue(today.calorieTarget, 'kcal')}, ${today.proteinConsumedG} / ${targetValue(today.proteinTargetG, 'g protein')}, and ${today.waterConsumedMl} / ${targetValue(today.waterTargetMl, 'ml water')}. Remaining: ${today.caloriesRemaining ?? '–'} kcal, ${today.proteinRemainingG ?? '–'} g protein, and ${today.waterRemainingMl ?? '–'} ml water.`;
+  return `Right now: ${today.caloriesConsumed} kcal eaten − ${today.caloriesBurned} kcal burned = ${today.netCalories} kcal net; target ${targetValue(today.calorieTarget, 'kcal')}, ${today.caloriesRemaining ?? '–'} kcal remaining. Protein ${today.proteinConsumedG} / ${targetValue(today.proteinTargetG, 'g')}; water ${today.waterConsumedMl} / ${targetValue(today.waterTargetMl, 'ml')}.`;
+}
+
+export function adaptiveStateSignature(
+  snapshot: CoachContextSnapshot,
+  categories: readonly string[],
+  deliverySlot?: string
+): string {
+  const slotMinutes = deliverySlot ? slotMinutesFromKey(deliverySlot) : 12 * 60;
+  const state = {
+    date: snapshot.today.date,
+    phase:
+      slotMinutes < 10 * 60
+        ? 'morning'
+        : slotMinutes < 13 * 60
+          ? 'midday'
+          : slotMinutes < 17 * 60
+            ? 'afternoon'
+            : 'evening',
+    categories: [...categories].sort(),
+    nutrition: categories.includes('nutrition')
+      ? {
+          caloriesConsumed: snapshot.today.caloriesConsumed,
+          caloriesBurned: snapshot.today.caloriesBurned,
+          proteinConsumedG: snapshot.today.proteinConsumedG,
+        }
+      : null,
+    hydration: categories.includes('hydration')
+      ? snapshot.today.waterConsumedMl
+      : null,
+    training: categories.includes('training')
+      ? snapshot.week.workoutCount
+      : null,
+    recovery: categories.includes('recovery')
+      ? {
+          sleepScore: snapshot.recovery.sleepScore,
+          readiness: snapshot.recovery.trainingReadinessScore,
+          recoveryHours: snapshot.recovery.recoveryTimeHours,
+          muscleLoad: snapshot.recovery.recentMuscleLoad,
+        }
+      : null,
+  };
+  return createHash('sha256').update(JSON.stringify(state)).digest('hex');
 }
 
 function adaptiveFocusDe(
   snapshot: CoachContextSnapshot,
-  slotMinutes: number
+  slotMinutes: number,
+  categories: readonly string[]
 ): string {
   const { today } = snapshot;
   const slot = minuteLabel(slotMinutes);
-  if (today.caloriesConsumed === 0) {
+  if (
+    categories.includes('recovery') &&
+    ((snapshot.recovery.trainingReadinessScore ?? 100) < 40 ||
+      (snapshot.recovery.sleepScore ?? 100) < 50)
+  ) {
+    return 'Deine Erholungswerte sind heute niedrig. Priorisiere Schlaf, lockere Bewegung und reduziere die Trainingsintensität.';
+  }
+  if (categories.includes('nutrition') && today.caloriesConsumed === 0) {
     if (slotMinutes >= 10 * 60) {
       return `Bis ${slot} ist noch keine Mahlzeit erfasst. Falls du schon gegessen hast, trage sie jetzt nach; sonst plane die erste Mahlzeit passend zu deinem Ziel von ${targetValue(today.calorieTarget, 'kcal')}.`;
     }
     return `Plane deinen Tag jetzt grob: Ziel sind ${targetValue(today.calorieTarget, 'kcal')}, ${targetValue(today.proteinTargetG, 'g Protein')} und ${targetValue(today.waterTargetMl, 'ml Wasser')}.`;
   }
-  if (today.waterConsumedMl === 0 && slotMinutes >= 9 * 60) {
+  if (
+    categories.includes('hydration') &&
+    today.waterConsumedMl === 0 &&
+    slotMinutes >= 9 * 60
+  ) {
     return `Bis ${slot} ist noch kein Wasser erfasst. Starte jetzt und behalte die verbleibenden ${today.waterRemainingMl ?? '–'} ml im Blick.`;
   }
-  if ((today.caloriesRemaining ?? 0) < 0) {
+  if (categories.includes('nutrition') && (today.caloriesRemaining ?? 0) < 0) {
     return `Du liegst ${Math.abs(today.caloriesRemaining ?? 0)} kcal über deinem heutigen Ziel. Kein Ausgleich durch extremes Sparen – halte die nächste Mahlzeit einfach und proteinreich.`;
   }
-  if (slotMinutes >= 12 * 60 && (today.proteinRemainingG ?? 0) > 20) {
+  if (
+    categories.includes('nutrition') &&
+    slotMinutes >= 12 * 60 &&
+    (today.proteinRemainingG ?? 0) > 20
+  ) {
     return `Es fehlen noch ${today.proteinRemainingG} g Protein. Plane die nächste Mahlzeit gezielt darum, statt den Rest am Abend nachholen zu müssen.`;
   }
-  if ((today.waterRemainingMl ?? 0) > 500) {
+  if (categories.includes('hydration') && (today.waterRemainingMl ?? 0) > 500) {
     return `Beim Wasser fehlen noch ${today.waterRemainingMl} ml. Teile das auf die verbleibenden Stunden auf.`;
   }
   if (slotMinutes >= 16 * 60 && (today.caloriesRemaining ?? 0) > 400) {
@@ -137,26 +194,42 @@ function adaptiveFocusDe(
 
 function adaptiveFocusEn(
   snapshot: CoachContextSnapshot,
-  slotMinutes: number
+  slotMinutes: number,
+  categories: readonly string[]
 ): string {
   const { today } = snapshot;
   const slot = minuteLabel(slotMinutes);
-  if (today.caloriesConsumed === 0) {
+  if (
+    categories.includes('recovery') &&
+    ((snapshot.recovery.trainingReadinessScore ?? 100) < 40 ||
+      (snapshot.recovery.sleepScore ?? 100) < 50)
+  ) {
+    return 'Your recovery signals are low today. Prioritize sleep and easy movement, and reduce training intensity.';
+  }
+  if (categories.includes('nutrition') && today.caloriesConsumed === 0) {
     if (slotMinutes >= 10 * 60) {
       return `No meal is logged by ${slot}. If you already ate, log it now; otherwise plan the first meal around your ${targetValue(today.calorieTarget, 'kcal')} target.`;
     }
     return `Sketch out today now: targets are ${targetValue(today.calorieTarget, 'kcal')}, ${targetValue(today.proteinTargetG, 'g protein')}, and ${targetValue(today.waterTargetMl, 'ml water')}.`;
   }
-  if (today.waterConsumedMl === 0 && slotMinutes >= 9 * 60) {
+  if (
+    categories.includes('hydration') &&
+    today.waterConsumedMl === 0 &&
+    slotMinutes >= 9 * 60
+  ) {
     return `No water is logged by ${slot}. Start now and keep the remaining ${today.waterRemainingMl ?? '–'} ml in view.`;
   }
-  if ((today.caloriesRemaining ?? 0) < 0) {
+  if (categories.includes('nutrition') && (today.caloriesRemaining ?? 0) < 0) {
     return `You are ${Math.abs(today.caloriesRemaining ?? 0)} kcal above today's target. Do not compensate aggressively; keep the next meal simple and protein-rich.`;
   }
-  if (slotMinutes >= 12 * 60 && (today.proteinRemainingG ?? 0) > 20) {
+  if (
+    categories.includes('nutrition') &&
+    slotMinutes >= 12 * 60 &&
+    (today.proteinRemainingG ?? 0) > 20
+  ) {
     return `${today.proteinRemainingG} g protein remain. Build the next meal around that instead of leaving it all for the evening.`;
   }
-  if ((today.waterRemainingMl ?? 0) > 500) {
+  if (categories.includes('hydration') && (today.waterRemainingMl ?? 0) > 500) {
     return `${today.waterRemainingMl} ml water remain. Spread that across the hours left today.`;
   }
   if (slotMinutes >= 16 * 60 && (today.caloriesRemaining ?? 0) > 400) {
@@ -172,7 +245,13 @@ function slotMinutesFromKey(slot: string): number {
 export function renderAdaptiveCoachMessage(
   snapshot: CoachContextSnapshot,
   language: string,
-  slot: string
+  slot: string,
+  categories: readonly string[] = [
+    'nutrition',
+    'hydration',
+    'training',
+    'recovery',
+  ]
 ): string {
   const slotMinutes = slotMinutesFromKey(slot);
   if (language.toLowerCase().startsWith('de')) {
@@ -181,7 +260,7 @@ export function renderAdaptiveCoachMessage(
       '',
       adaptiveMetricsDe(snapshot),
       '',
-      `**Jetzt sinnvoll:** ${adaptiveFocusDe(snapshot, slotMinutes)}`,
+      `**Jetzt sinnvoll:** ${adaptiveFocusDe(snapshot, slotMinutes, categories)}`,
     ].join('\n');
   }
   return [
@@ -189,7 +268,7 @@ export function renderAdaptiveCoachMessage(
     '',
     adaptiveMetricsEn(snapshot),
     '',
-    `**Useful now:** ${adaptiveFocusEn(snapshot, slotMinutes)}`,
+    `**Useful now:** ${adaptiveFocusEn(snapshot, slotMinutes, categories)}`,
   ].join('\n');
 }
 
@@ -329,12 +408,32 @@ export async function processDueProactiveCoachMessages(
               ? getAdaptiveDeliverySlot(candidate, now)
               : localDate;
           if (!deliveryKey) continue;
+          const stateSignature =
+            kind === 'adaptive'
+              ? adaptiveStateSignature(
+                  snapshot,
+                  candidate.proactiveCategories,
+                  deliveryKey
+                )
+              : undefined;
+          if (
+            kind === 'adaptive' &&
+            stateSignature === candidate.adaptiveLastSignature
+          ) {
+            await coachProfileRepository.markAdaptiveSlotObserved(
+              candidate.userId,
+              deliveryKey,
+              stateSignature
+            );
+            continue;
+          }
           const content =
             kind === 'adaptive'
               ? renderAdaptiveCoachMessage(
                   snapshot,
                   candidate.language,
-                  deliveryKey
+                  deliveryKey,
+                  candidate.proactiveCategories
                 )
               : kind === 'daily'
                 ? renderDailyCoachMessage(snapshot, candidate.language)
@@ -343,22 +442,12 @@ export async function processDueProactiveCoachMessages(
             candidate.userId,
             kind,
             deliveryKey,
-            content
+            content,
+            stateSignature
           );
           if (!saved) continue;
           delivered++;
-          try {
-            await telegramCoachService.sendProactiveCoachMessage(
-              candidate.userId,
-              content
-            );
-          } catch (error) {
-            log(
-              'error',
-              `Failed to send proactive coach message to Telegram for user ${candidate.userId}:`,
-              error
-            );
-          }
+          coachEventService.publish(candidate.userId, 'chat');
         }
       } catch (error) {
         log(

@@ -321,3 +321,81 @@ describe('measurementRepository.incrementWaterData', () => {
     expect(values[2]).toBe(59.147000000000006);
   });
 });
+
+describe('measurementRepository.deleteWaterIntakeLogAndReconcile', () => {
+  const mockClient = {
+    query: vi.fn(),
+    release: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getClient).mockResolvedValue(mockClient as never);
+  });
+
+  it('deletes and rebuilds the matching aggregate in one transaction', async () => {
+    mockClient.query.mockImplementation((text: string) => {
+      if (text.includes('DELETE FROM water_intake_entries')) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: 'water-1',
+              water_ml: 300,
+              entry_date: '2026-08-19',
+              source: 'telegram',
+            },
+          ],
+        });
+      }
+      if (text.includes('COALESCE(SUM(water_ml)')) {
+        return Promise.resolve({ rows: [{ total_ml: '700' }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const deleted =
+      await measurementRepository.deleteWaterIntakeLogAndReconcile(
+        'water-1',
+        'user-1',
+        'actor-1'
+      );
+
+    expect(deleted).toMatchObject({ id: 'water-1', water_ml: 300 });
+    expect(getClient).toHaveBeenCalledWith('user-1', 'actor-1');
+    const statements = mockClient.query.mock.calls.map(([text]) => text);
+    expect(statements[0]).toBe('BEGIN');
+    expect(
+      statements.some((text) => text.includes('INSERT INTO water_intake'))
+    ).toBe(true);
+    expect(statements.at(-1)).toBe('COMMIT');
+  });
+
+  it('rolls back both changes when rebuilding the aggregate fails', async () => {
+    mockClient.query.mockImplementation((text: string) => {
+      if (text.includes('DELETE FROM water_intake_entries')) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: 'water-1',
+              entry_date: '2026-08-19',
+              source: 'telegram',
+            },
+          ],
+        });
+      }
+      if (text.includes('COALESCE(SUM(water_ml)')) {
+        return Promise.reject(new Error('aggregate failed'));
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    await expect(
+      measurementRepository.deleteWaterIntakeLogAndReconcile(
+        'water-1',
+        'user-1',
+        'actor-1'
+      )
+    ).rejects.toThrow('aggregate failed');
+    expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
+  });
+});

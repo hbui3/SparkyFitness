@@ -1815,6 +1815,65 @@ async function deleteWaterIntakeLog(id: string, userId: string) {
   }
 }
 
+/**
+ * Deletes one itemized hydration entry and rebuilds the matching aggregate in
+ * the same transaction. This keeps the dashboard total consistent even when a
+ * process or database call fails halfway through an undo/delete operation.
+ */
+async function deleteWaterIntakeLogAndReconcile(
+  id: string,
+  userId: string,
+  actingUserId: string
+) {
+  const client = await getClient(userId, actingUserId);
+  try {
+    await client.query('BEGIN');
+    const deleted = await client.query(
+      `DELETE FROM water_intake_entries
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, water_ml, entry_date, source`,
+      [id, userId]
+    );
+    const row = deleted.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const total = await client.query(
+      `SELECT COALESCE(SUM(water_ml), 0) AS total_ml
+       FROM water_intake_entries
+       WHERE user_id = $1 AND entry_date = $2 AND source = $3`,
+      [userId, row.entry_date, row.source || 'manual']
+    );
+    await client.query(
+      `INSERT INTO water_intake
+         (user_id, entry_date, water_ml, source, created_by_user_id,
+          updated_by_user_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $5, now(), now())
+       ON CONFLICT (user_id, entry_date, source)
+       DO UPDATE SET
+         water_ml = EXCLUDED.water_ml,
+         updated_by_user_id = EXCLUDED.updated_by_user_id,
+         updated_at = now()`,
+      [
+        userId,
+        row.entry_date,
+        Number(total.rows[0]?.total_ml ?? 0),
+        row.source || 'manual',
+        actingUserId,
+      ]
+    );
+    await client.query('COMMIT');
+    return row;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function getWaterIntakeLogEntryOwnerId(id: string, userId: string) {
   const client = await getClient(userId);
   try {
@@ -1898,6 +1957,7 @@ export default {
   getWaterIntakeLogByDate,
   getWaterIntakeLogsByDates,
   deleteWaterIntakeLog,
+  deleteWaterIntakeLogAndReconcile,
   getWaterIntakeLogEntryOwnerId,
   updateWaterIntakeLogTime,
   getWaterTotalsByDateRange,

@@ -612,7 +612,8 @@ async function logWaterIntakeAmount(
   actingUserId: string,
   entryDate: string,
   waterMl: number,
-  source = 'manual'
+  source = 'manual',
+  sourceId: string | null = null
 ) {
   try {
     // Use the sample writer because it updates the itemized entry and the
@@ -627,7 +628,7 @@ async function logWaterIntakeAmount(
           waterMl,
           containerName: null,
           source,
-          sourceId: null,
+          sourceId,
         },
       ]
     );
@@ -1795,37 +1796,15 @@ async function deleteWaterIntakeLogEntry(
   logId: string
 ) {
   try {
-    // 1. Verify ownership
-    const ownerId = await measurementRepository.getWaterIntakeLogEntryOwnerId(
-      logId,
-      authenticatedUserId
-    );
-    if (!ownerId) {
-      throw new Error('Water intake log entry not found.');
-    }
-    if (ownerId !== authenticatedUserId) {
-      throw new Error(
-        'Forbidden: You do not have permission to delete this water intake log entry.'
+    const deleted =
+      await measurementRepository.deleteWaterIntakeLogAndReconcile(
+        logId,
+        authenticatedUserId,
+        actingUserId
       );
-    }
-
-    // 2. Delete the log entry and get the ml amount + date + source
-    const deleted = await measurementRepository.deleteWaterIntakeLog(
-      logId,
-      authenticatedUserId
-    );
     if (!deleted) {
       throw new Error('Water intake log entry not found.');
     }
-
-    // 3. Subtract the deleted amount from the daily total
-    await measurementRepository.incrementWaterData(
-      authenticatedUserId,
-      actingUserId,
-      -Number(deleted.water_ml),
-      deleted.entry_date,
-      deleted.source || 'manual'
-    );
 
     return { message: 'Water intake log entry deleted successfully.' };
   } catch (error) {

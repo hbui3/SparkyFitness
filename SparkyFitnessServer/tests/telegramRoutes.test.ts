@@ -3,10 +3,10 @@ import express from 'express';
 // @ts-expect-error TS(7016): supertest has no declaration in this workspace.
 import request from 'supertest';
 import telegramRoutes from '../routes/telegramRoutes.js';
-import telegramCoachService from '../services/telegramCoachService.js';
+import telegramQueueRepository from '../models/telegramQueueRepository.js';
 
-vi.mock('../services/telegramCoachService.js', () => ({
-  default: { handleTelegramUpdate: vi.fn() },
+vi.mock('../models/telegramQueueRepository.js', () => ({
+  default: { enqueueUpdate: vi.fn() },
 }));
 vi.mock('../services/telegramApiService.js', () => ({
   getTelegramWebhookSecret: vi.fn(() => 'secret_123'),
@@ -26,11 +26,11 @@ describe('telegram webhook route', () => {
       .send({ update_id: 1 });
 
     expect(response.statusCode).toBe(401);
-    expect(telegramCoachService.handleTelegramUpdate).not.toHaveBeenCalled();
+    expect(telegramQueueRepository.enqueueUpdate).not.toHaveBeenCalled();
   });
 
-  it('acknowledges a valid update before processing it asynchronously', async () => {
-    vi.mocked(telegramCoachService.handleTelegramUpdate).mockResolvedValue();
+  it('acknowledges a valid update only after persisting it', async () => {
+    vi.mocked(telegramQueueRepository.enqueueUpdate).mockResolvedValue(true);
     const update = { update_id: 1, message: { chat: { id: 2 }, text: 'Hi' } };
 
     const response = await request(app)
@@ -39,8 +39,6 @@ describe('telegram webhook route', () => {
       .send(update);
 
     expect(response.statusCode).toBe(200);
-    expect(telegramCoachService.handleTelegramUpdate).toHaveBeenCalledWith(
-      update
-    );
+    expect(telegramQueueRepository.enqueueUpdate).toHaveBeenCalledWith(update);
   });
 });

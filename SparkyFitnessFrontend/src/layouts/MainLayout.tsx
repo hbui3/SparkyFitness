@@ -42,6 +42,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useMealTypes } from '@/hooks/Diary/useMealTypes';
 import { useCurrentVersionQuery } from '@/hooks/useGeneralQueries';
 import { useCycleSettings } from '@/hooks/useCycle';
+import { useCoachEvents } from '@/hooks/useCoachEvents';
 import { cn } from '@/lib/utils';
 import { getGridClassNormal } from '@/utils/layout';
 
@@ -65,6 +66,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
 }) => {
   const { t } = useTranslation();
   const { user, signOut } = useAuth();
+  useCoachEvents();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const {

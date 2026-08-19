@@ -5,6 +5,7 @@ interface TelegramApiEnvelope<T> {
   ok: boolean;
   result?: T;
   description?: string;
+  parameters?: { retry_after?: number };
 }
 
 interface TelegramBotIdentity {
@@ -21,7 +22,18 @@ export interface TelegramDownloadedImage {
   mimeType: string;
 }
 
+export interface TelegramDownloadedAudio {
+  bytes: Buffer;
+  mimeType: string;
+}
+
+export interface TelegramInlineButton {
+  text: string;
+  callback_data: string;
+}
+
 const MAX_TELEGRAM_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_TELEGRAM_AUDIO_BYTES = 20 * 1024 * 1024;
 const TELEGRAM_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -29,6 +41,10 @@ const TELEGRAM_IMAGE_MIME_TYPES = new Set([
 ]);
 
 let cachedBotIdentity: { token: string; username: string | null } | undefined;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function getTelegramBotToken(): Promise<string | null> {
   return (await getTelegramRuntimeConfig()).botToken;
@@ -50,31 +66,52 @@ async function callTelegramApi<T>(
 ): Promise<T> {
   const token = explicitToken ?? (await getTelegramBotToken());
   if (!token) throw new Error('Telegram bot token is not configured.');
-  let response: Response;
-  try {
-    response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body ?? {}),
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
-    // Fetch errors can include the request URL. Do not let the bot token from
-    // that URL escape into caller logs.
-    throw new Error(`Telegram API ${method} request failed.`);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      if (attempt < 3) {
+        await delay(500 * 2 ** attempt);
+        continue;
+      }
+      // Fetch errors can include the request URL. Do not let the bot token from
+      // that URL escape into caller logs.
+      throw new Error(`Telegram API ${method} request failed.`);
+    }
+
+    let envelope: TelegramApiEnvelope<T> | null = null;
+    try {
+      envelope = (await response.json()) as TelegramApiEnvelope<T>;
+    } catch {
+      // Telegram normally returns JSON even for errors. A non-JSON response is
+      // still retryable when the upstream status is transient.
+    }
+    if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
+      const retryMs = envelope?.parameters?.retry_after
+        ? envelope.parameters.retry_after * 1_000
+        : 500 * 2 ** attempt;
+      await delay(Math.min(retryMs, 15_000));
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Telegram API ${method} failed with status ${response.status}.`
+      );
+    }
+    if (!envelope?.ok || envelope.result === undefined) {
+      throw new Error(
+        `Telegram API ${method} rejected the request: ${envelope?.description ?? 'unknown error'}.`
+      );
+    }
+    return envelope.result;
   }
-  if (!response.ok) {
-    throw new Error(
-      `Telegram API ${method} failed with status ${response.status}.`
-    );
-  }
-  const envelope = (await response.json()) as TelegramApiEnvelope<T>;
-  if (!envelope.ok || envelope.result === undefined) {
-    throw new Error(
-      `Telegram API ${method} rejected the request: ${envelope.description ?? 'unknown error'}.`
-    );
-  }
-  return envelope.result;
+  throw new Error(`Telegram API ${method} request failed.`);
 }
 
 export async function getTelegramBotUsername(): Promise<string | null> {
@@ -116,33 +153,49 @@ function telegramPlainText(value: string): string {
 
 function splitTelegramText(value: string): string[] {
   const text = telegramPlainText(value);
-  if (text.length <= 4_000) return [text];
+  const characters = Array.from(text);
+  if (characters.length <= 4_000) return [text];
   const chunks: string[] = [];
-  let remaining = text;
+  let remaining = characters;
   while (remaining.length > 4_000) {
-    const candidate = remaining.slice(0, 4_000);
+    const candidate = remaining.slice(0, 4_000).join('');
     const splitAt = Math.max(
       candidate.lastIndexOf('\n\n'),
       candidate.lastIndexOf('\n')
     );
     const end = splitAt > 2_500 ? splitAt : 4_000;
-    chunks.push(remaining.slice(0, end).trim());
-    remaining = remaining.slice(end).trim();
+    chunks.push(remaining.slice(0, end).join('').trim());
+    remaining = Array.from(remaining.slice(end).join('').trim());
   }
-  if (remaining) chunks.push(remaining);
+  if (remaining.length > 0) chunks.push(remaining.join(''));
   return chunks;
 }
 
 export async function sendTelegramMessage(
   telegramChatId: string,
-  text: string
+  text: string,
+  buttons: TelegramInlineButton[][] = []
 ): Promise<void> {
-  for (const chunk of splitTelegramText(text)) {
+  const chunks = splitTelegramText(text);
+  for (let index = 0; index < chunks.length; index += 1) {
     await callTelegramApi<unknown>('sendMessage', {
       chat_id: telegramChatId,
-      text: chunk,
+      text: chunks[index],
+      ...(buttons.length > 0 && index === chunks.length - 1
+        ? { reply_markup: { inline_keyboard: buttons } }
+        : {}),
     });
   }
+}
+
+export async function answerTelegramCallbackQuery(
+  callbackQueryId: string,
+  text?: string
+): Promise<void> {
+  await callTelegramApi<unknown>('answerCallbackQuery', {
+    callback_query_id: callbackQueryId,
+    ...(text ? { text: text.slice(0, 200) } : {}),
+  });
 }
 
 export async function sendTelegramTyping(
@@ -244,6 +297,94 @@ export async function downloadTelegramImage(
   };
 }
 
+function inferTelegramAudioMimeType(
+  contentType: string | null,
+  filePath: string
+): string | null {
+  const declared = contentType?.split(';', 1)[0].trim().toLowerCase();
+  if (
+    declared &&
+    new Set([
+      'audio/ogg',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/webm',
+      'audio/wav',
+      'audio/x-wav',
+    ]).has(declared)
+  ) {
+    return declared;
+  }
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  if (extension === 'oga' || extension === 'ogg' || extension === 'opus')
+    return 'audio/ogg';
+  if (extension === 'mp3') return 'audio/mpeg';
+  if (extension === 'm4a' || extension === 'mp4') return 'audio/mp4';
+  if (extension === 'webm') return 'audio/webm';
+  if (extension === 'wav') return 'audio/wav';
+  return null;
+}
+
+export async function downloadTelegramAudio(
+  fileId: string
+): Promise<TelegramDownloadedAudio> {
+  const token = await getTelegramBotToken();
+  if (!token) throw new Error('Telegram bot token is not configured.');
+  const remoteFile = await callTelegramApi<TelegramRemoteFile>('getFile', {
+    file_id: fileId,
+  });
+  const filePath = remoteFile.file_path?.trim();
+  if (!filePath) throw new Error('Telegram did not return an audio file path.');
+  if (
+    remoteFile.file_size !== undefined &&
+    remoteFile.file_size > MAX_TELEGRAM_AUDIO_BYTES
+  ) {
+    throw new Error('Telegram audio exceeds the 20 MB processing limit.');
+  }
+  const pathSegments = filePath.split('/').filter(Boolean);
+  if (
+    pathSegments.length === 0 ||
+    pathSegments.some((segment) => segment === '.' || segment === '..')
+  ) {
+    throw new Error('Telegram returned an invalid audio file path.');
+  }
+  const safePath = pathSegments.map(encodeURIComponent).join('/');
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.telegram.org/file/bot${token}/${safePath}`,
+      {
+        method: 'GET',
+        redirect: 'error',
+        signal: AbortSignal.timeout(20_000),
+      }
+    );
+  } catch {
+    throw new Error('Telegram audio download request failed.');
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Telegram audio download failed with status ${response.status}.`
+    );
+  }
+  const declaredLength = Number(response.headers.get('content-length') ?? 0);
+  if (declaredLength > MAX_TELEGRAM_AUDIO_BYTES) {
+    throw new Error('Telegram audio exceeds the 20 MB processing limit.');
+  }
+  const mimeType = inferTelegramAudioMimeType(
+    response.headers.get('content-type'),
+    filePath
+  );
+  if (!mimeType)
+    throw new Error('Telegram returned an unsupported audio type.');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0) throw new Error('Telegram returned empty audio.');
+  if (bytes.length > MAX_TELEGRAM_AUDIO_BYTES) {
+    throw new Error('Telegram audio exceeds the 20 MB processing limit.');
+  }
+  return { bytes, mimeType };
+}
+
 export function getTelegramWebhookUrl(): string | null {
   const baseUrl = (
     process.env.SPARKY_FITNESS_TELEGRAM_WEBHOOK_URL ||
@@ -274,7 +415,8 @@ export async function configureTelegramWebhook(): Promise<void> {
     {
       url: webhookUrl,
       secret_token: config.webhookSecret,
-      allowed_updates: ['message'],
+      allowed_updates: ['message', 'callback_query'],
+      max_connections: 1,
     },
     config.botToken
   );

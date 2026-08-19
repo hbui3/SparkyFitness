@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import proactiveCoachService from '../services/proactiveCoachService.js';
-import coachProfileRepository from '../models/coachProfileRepository.js';
-import coachContextService from '../services/coachContextService.js';
-import telegramCoachService from '../services/telegramCoachService.js';
+import coachProfileRepository, {
+  type ProactiveCoachCandidate,
+} from '../models/coachProfileRepository.js';
+import coachContextService, {
+  type CoachContextSnapshot,
+} from '../services/coachContextService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
     listProactiveCoachCandidates: vi.fn(),
     saveProactiveMessageIfDue: vi.fn(),
+    markAdaptiveSlotObserved: vi.fn(),
   },
 }));
 vi.mock('../services/coachContextService.js', () => ({
@@ -15,19 +19,19 @@ vi.mock('../services/coachContextService.js', () => ({
     getCoachContextSnapshot: vi.fn(),
   },
 }));
-vi.mock('../services/telegramCoachService.js', () => ({
-  default: {
-    sendProactiveCoachMessage: vi.fn(),
-  },
-}));
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
-const candidate = {
+const candidate: ProactiveCoachCandidate = {
   userId: 'user-1',
   timezone: 'Europe/Berlin',
   language: 'de',
   adaptiveCheckInsEnabled: false,
   adaptiveLastSentSlot: null,
+  adaptiveStartTime: '07:00',
+  adaptiveEndTime: '20:00',
+  adaptiveIntervalMinutes: 120,
+  proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
+  adaptiveLastSignature: null,
   dailyCheckInEnabled: true,
   dailyCheckInTime: '20:00',
   dailyLastSentOn: null,
@@ -37,7 +41,7 @@ const candidate = {
   weeklyLastSentOn: null,
 };
 
-const snapshot = {
+const snapshot: CoachContextSnapshot = {
   timezone: 'Europe/Berlin',
   today: {
     date: '2026-08-23',
@@ -90,6 +94,23 @@ const snapshot = {
     latestWeightKg: 80.8,
     changeKg: 0.8,
   },
+  recovery: {
+    observedOn: null,
+    sleepHours: null,
+    sleepScore: null,
+    restingHeartRate: null,
+    hrvRmssdMs: null,
+    vo2Max: null,
+    recoveryTimeHours: null,
+    trainingReadinessScore: null,
+    acuteTrainingLoad: null,
+    chronicTrainingLoad: null,
+    acwrRatio: null,
+    stressLevel: null,
+    bodyBatteryHighest: null,
+    bodyBatteryLowest: null,
+    recentMuscleLoad: [],
+  },
 };
 
 describe('proactiveCoachService', () => {
@@ -104,9 +125,6 @@ describe('proactiveCoachService', () => {
     vi.mocked(
       coachProfileRepository.saveProactiveMessageIfDue
     ).mockResolvedValue(true);
-    vi.mocked(telegramCoachService.sendProactiveCoachMessage).mockResolvedValue(
-      true
-    );
   });
 
   it('claims local two-hour slots only between 07:00 and 20:00', () => {
@@ -153,8 +171,8 @@ describe('proactiveCoachService', () => {
       '2026-08-23T17:00'
     );
 
-    expect(message).toContain('1800 / 3000 kcal');
-    expect(message).toContain('110 / 160 g Protein');
+    expect(message).toContain('1800 kcal gegessen');
+    expect(message).toContain('110 / 160 g');
     expect(message).toContain('50 g Protein');
   });
 
@@ -192,7 +210,8 @@ describe('proactiveCoachService', () => {
       'user-1',
       'daily',
       '2026-08-23',
-      expect.stringContaining('täglicher Coach-Check-in')
+      expect.stringContaining('täglicher Coach-Check-in'),
+      undefined
     );
     expect(
       coachProfileRepository.saveProactiveMessageIfDue
@@ -200,14 +219,8 @@ describe('proactiveCoachService', () => {
       'user-1',
       'weekly',
       '2026-08-23',
-      expect.stringContaining('Wochenrückblick')
-    );
-    expect(
-      telegramCoachService.sendProactiveCoachMessage
-    ).toHaveBeenCalledTimes(2);
-    expect(telegramCoachService.sendProactiveCoachMessage).toHaveBeenCalledWith(
-      'user-1',
-      expect.stringContaining('1800 / 3000 kcal')
+      expect.stringContaining('Wochenrückblick'),
+      undefined
     );
   });
 

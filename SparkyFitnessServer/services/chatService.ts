@@ -76,6 +76,10 @@ import {
   type ChatToolProfile,
 } from '../ai/tools/index.js';
 import { CATEGORY_SUMMARIES } from '../ai/tools/metaTools.js';
+import { isToolErrorText } from '../ai/tools/errors.js';
+import coachEventService, {
+  type CoachEventDomain,
+} from './coachEventService.js';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -225,6 +229,21 @@ async function getActiveAiServiceSetting(
     );
     return null; // Return null on error
   }
+}
+
+async function getActiveAiServiceSettingForBackend(
+  authenticatedUserId: string,
+  targetUserId: string
+) {
+  const active = await getActiveAiServiceSetting(
+    authenticatedUserId,
+    targetUserId
+  );
+  if (!active?.id) return null;
+  return chatRepository.getAiServiceSettingForBackend(
+    String(active.id),
+    targetUserId
+  );
 }
 
 async function deleteAiServiceSetting(authenticatedUserId: string, id: string) {
@@ -1490,11 +1509,8 @@ async function processChatMessage(
       buildLlmWindow(conversationMessages, toolProfile)
     );
 
-    const executedToolsList: Array<{
-      name: string;
-      args: Record<string, unknown>;
-    }> = [];
-    const toolOutputs: string[] = [];
+    const executedToolsList: ExecutedToolCall[] = [];
+    const toolOutcomes: ChatToolOutcome[] = [];
 
     const result = await generateText({
       model: modelInstance,
@@ -1523,24 +1539,13 @@ async function processChatMessage(
           : MAX_PROVIDER_RETRIES,
       abortSignal: AbortSignal.timeout(CHAT_REQUEST_TIMEOUT_MS),
       onStepFinish({ toolCalls, toolResults }) {
-        if (toolCalls && toolCalls.length > 0) {
-          toolCalls.forEach((call) => {
-            log(
-              'info',
-              `Agent executed tool call: ${call.toolName} with args: ${JSON.stringify(call.input)}`
-            );
-            executedToolsList.push({
-              name: call.toolName,
-              args: call.input as Record<string, unknown>,
-            });
-          });
-        }
+        collectToolOutcomes(
+          toolCalls ?? [],
+          toolResults ?? [],
+          executedToolsList,
+          toolOutcomes
+        );
         if (toolResults && toolResults.length > 0) {
-          toolResults.forEach((r) => {
-            if (r.output && typeof r.output === 'string') {
-              toolOutputs.push(r.output);
-            }
-          });
           const sizes = toolResults
             .map((r) => `${r.toolName}=${String(r.output ?? '').length}c`)
             .join(' ');
@@ -1575,34 +1580,11 @@ async function processChatMessage(
 
     let finalContent = result.text.trim();
     if (!finalContent) {
-      if (executedToolsList.length > 0) {
-        const lastTool = executedToolsList[executedToolsList.length - 1];
-        if (lastTool.name === 'sparky_manage_food') {
-          if (lastTool.args?.action === 'log_water') {
-            finalContent = "I've logged your water intake.";
-          } else {
-            finalContent = "I've logged that food for you.";
-          }
-        } else if (lastTool.name === 'sparky_manage_exercise') {
-          finalContent = "I've logged your exercise.";
-        } else if (lastTool.name === 'sparky_manage_checkin') {
-          if (lastTool.args?.action === 'log_mood') {
-            finalContent = "I've recorded your mood.";
-          } else if (lastTool.args?.action === 'log_sleep') {
-            finalContent = "I've logged your sleep.";
-          } else if (lastTool.args?.action === 'log_biometrics') {
-            finalContent = "I've updated your biometrics.";
-          } else if (lastTool.args?.action === 'log_fasting') {
-            finalContent = "I've logged your fasting window.";
-          } else {
-            finalContent = "I've updated your wellness diary.";
-          }
-        } else {
-          finalContent = "I've recorded that for you!";
-        }
+      if (toolOutcomes.length > 0) {
+        finalContent = fallbackFromToolOutcomes(toolOutcomes);
         log(
           'info',
-          `[chat] LLM returned empty text; generated generic fallback confirmation: "${finalContent}"`
+          '[chat] LLM returned empty text; used the verified tool result as fallback.'
         );
       } else {
         finalContent = EMPTY_RESPONSE_ERROR_TEXT;
@@ -1622,50 +1604,17 @@ async function processChatMessage(
         );
     }
 
-    // Determine the general action type based on executed tools
-    let actionType = 'advice';
-    if (executedToolsList.some((t) => t.name === 'sparky_manage_food')) {
-      const logFoodCall = executedToolsList.find(
-        (t) => t.name === 'sparky_manage_food' && t.args?.action === 'log_food'
-      );
-      actionType = logFoodCall ? 'food_added' : 'advice';
-    } else if (
-      executedToolsList.some((t) => t.name === 'sparky_manage_exercise')
-    ) {
-      actionType = 'exercise_added';
-    } else if (
-      executedToolsList.some((t) => t.name === 'sparky_manage_checkin')
-    ) {
-      actionType = 'measurement_added';
-    } else if (
-      executedToolsList.some((t) => t.name === 'sparky_manage_habits')
-    ) {
-      actionType = 'habit_logged';
-    }
-
-    if (executedToolsList.some((t) => t.name === 'sparky_manage_food')) {
-      const foodCall = executedToolsList.find(
-        (t) => t.name === 'sparky_manage_food'
-      );
-      if (foodCall && foodCall.args?.action === 'food_options') {
-        actionType = 'food_options';
-      }
-    } else if (
-      executedToolsList.some((t) => t.name === 'sparky_manage_exercise')
-    ) {
-      const exerciseCall = executedToolsList.find(
-        (t) => t.name === 'sparky_manage_exercise'
-      );
-      if (exerciseCall && exerciseCall.args?.action === 'exercise_options') {
-        actionType = 'exercise_options';
-        // Exercise options could be processed here similarly
-      }
+    const mutationDomains = successfulMutationDomains(toolOutcomes);
+    for (const domain of mutationDomains) {
+      coachEventService.publish(authenticatedUserId, domain);
     }
 
     return {
       content: finalContent,
-      action: actionType,
+      action: actionFromOutcomes(toolOutcomes),
       executedTools: executedToolsList,
+      toolOutcomes,
+      mutationDomains,
     };
   } catch (error) {
     log('error', `Error processing chat message for user ${userId}:`, error);
@@ -1882,32 +1831,230 @@ async function testAiServiceConnection(
 const EMPTY_RESPONSE_ERROR_TEXT =
   'The AI service returned an empty response. Please try again.';
 
+interface ExecutedToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface ChatToolOutcome {
+  toolCallId: string;
+  name: string;
+  action: string | null;
+  success: boolean;
+  mutationDomain: CoachEventDomain | null;
+  output: string;
+}
+
+const FOOD_MUTATIONS = new Set([
+  'log_food',
+  'log_external_food',
+  'create_food',
+  'log_meal',
+  'delete_entry',
+  'delete_food',
+  'update_entry',
+  'update_food_variant',
+  'copy_from_yesterday',
+  'save_as_meal_template',
+  'log_water',
+]);
+const EXERCISE_MUTATIONS = new Set([
+  'create_exercise',
+  'log_exercise',
+  'log_workout_preset',
+  'update_exercise_entry',
+  'delete_exercise_entry',
+  'create_workout_preset',
+]);
+const CHECKIN_MUTATIONS = new Set([
+  'log_biometrics',
+  'log_custom_metric',
+  'create_category',
+  'log_mood',
+  'log_fasting',
+  'log_sleep',
+]);
+
+function mutationDomainFor(
+  toolName: string,
+  action: string | null
+): CoachEventDomain | null {
+  if (!action) return null;
+  if (toolName === 'sparky_manage_food' && FOOD_MUTATIONS.has(action)) {
+    return action === 'log_water' ? 'water' : 'nutrition';
+  }
+  if (toolName === 'sparky_manage_exercise' && EXERCISE_MUTATIONS.has(action)) {
+    return 'exercise';
+  }
+  if (toolName === 'sparky_manage_checkin' && CHECKIN_MUTATIONS.has(action)) {
+    return 'checkin';
+  }
+  if (toolName === 'sparky_manage_habits' && action === 'log_habit') {
+    return 'checkin';
+  }
+  if (toolName === 'sparky_manage_coach_memory' && action !== 'list') {
+    return 'coach';
+  }
+  return null;
+}
+
+function collectToolOutcomes(
+  calls: readonly {
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+  }[],
+  results: readonly {
+    toolCallId: string;
+    toolName: string;
+    output: unknown;
+  }[],
+  executedTools: ExecutedToolCall[],
+  outcomes: ChatToolOutcome[]
+): void {
+  for (const call of calls) {
+    const args =
+      call.input && typeof call.input === 'object'
+        ? (call.input as Record<string, unknown>)
+        : {};
+    executedTools.push({ name: call.toolName, args });
+    // Do not log arguments: meals, measurements, notes, and memories may
+    // contain private health information.
+    log('info', `Agent executed tool call: ${call.toolName}`);
+  }
+  for (const result of results) {
+    const call = calls.find(
+      (candidate) => candidate.toolCallId === result.toolCallId
+    );
+    const args =
+      call?.input && typeof call.input === 'object'
+        ? (call.input as Record<string, unknown>)
+        : {};
+    const output = typeof result.output === 'string' ? result.output : '';
+    const action = typeof args.action === 'string' ? args.action : null;
+    outcomes.push({
+      toolCallId: result.toolCallId,
+      name: result.toolName,
+      action,
+      success: Boolean(output) && !isToolErrorText(output),
+      mutationDomain: mutationDomainFor(result.toolName, action),
+      output,
+    });
+  }
+}
+
+function successfulMutationDomains(
+  outcomes: readonly ChatToolOutcome[]
+): CoachEventDomain[] {
+  return [
+    ...new Set(
+      outcomes.flatMap((outcome) =>
+        outcome.success && outcome.mutationDomain
+          ? [outcome.mutationDomain]
+          : []
+      )
+    ),
+  ];
+}
+
+function fallbackFromToolOutcomes(
+  outcomes: readonly ChatToolOutcome[]
+): string {
+  const successfulMutation = [...outcomes]
+    .reverse()
+    .find((outcome) => outcome.success && outcome.mutationDomain);
+  if (successfulMutation) return successfulMutation.output;
+  const failedMutation = [...outcomes]
+    .reverse()
+    .find((outcome) => !outcome.success && outcome.mutationDomain);
+  if (failedMutation) return failedMutation.output || EMPTY_RESPONSE_ERROR_TEXT;
+  const successfulResult = [...outcomes]
+    .reverse()
+    .find((outcome) => outcome.success);
+  return successfulResult?.output || EMPTY_RESPONSE_ERROR_TEXT;
+}
+
+function actionFromOutcomes(outcomes: readonly ChatToolOutcome[]): string {
+  const successful = outcomes.filter((outcome) => outcome.success);
+  if (
+    successful.some(
+      (outcome) =>
+        outcome.name === 'sparky_manage_food' &&
+        ['log_food', 'log_external_food', 'log_meal'].includes(
+          outcome.action ?? ''
+        )
+    )
+  ) {
+    return 'food_added';
+  }
+  if (successful.some((outcome) => outcome.mutationDomain === 'exercise')) {
+    return 'exercise_added';
+  }
+  if (
+    successful.some(
+      (outcome) =>
+        outcome.name === 'sparky_manage_habits' &&
+        outcome.action === 'log_habit'
+    )
+  ) {
+    return 'habit_logged';
+  }
+  if (successful.some((outcome) => outcome.mutationDomain === 'checkin')) {
+    return 'measurement_added';
+  }
+  if (
+    successful.some(
+      (outcome) =>
+        outcome.name === 'sparky_manage_food' &&
+        outcome.action === 'food_options'
+    )
+  ) {
+    return 'food_options';
+  }
+  if (
+    successful.some(
+      (outcome) =>
+        outcome.name === 'sparky_manage_exercise' &&
+        outcome.action === 'exercise_options'
+    )
+  ) {
+    return 'exercise_options';
+  }
+  return 'advice';
+}
+
 // Some providers (notably Gemini via MALFORMED_FUNCTION_CALL) end a tool-calling
 // turn with finishReason 'error' and an empty completion instead of a thrown
 // error, so the stream closes cleanly and clients render nothing. Inject an
 // explicit error chunk so the UI surfaces a failure instead of staying silent.
 function withEmptyCompletionGuard(
-  stream: ReadableStream<UIMessageChunk>
+  stream: ReadableStream<UIMessageChunk>,
+  toolOutcomes: readonly ChatToolOutcome[]
 ): ReadableStream<UIMessageChunk> {
-  let sawContent = false;
+  let sawText = false;
   return stream.pipeThrough(
     new TransformStream<UIMessageChunk, UIMessageChunk>({
       transform(chunk, controller) {
-        if (
-          chunk.type === 'text-delta' ||
-          chunk.type === 'reasoning-delta' ||
-          chunk.type.startsWith('tool-')
-        ) {
-          sawContent = true;
+        if (chunk.type === 'text-delta' && chunk.delta.trim()) {
+          sawText = true;
         }
-        if (
-          chunk.type === 'finish' &&
-          (chunk.finishReason === 'error' || !sawContent)
-        ) {
-          controller.enqueue({
-            type: 'error',
-            errorText: EMPTY_RESPONSE_ERROR_TEXT,
-          });
+        if (chunk.type === 'finish' && !sawText) {
+          const fallback = fallbackFromToolOutcomes(toolOutcomes);
+          if (
+            toolOutcomes.length > 0 &&
+            fallback !== EMPTY_RESPONSE_ERROR_TEXT
+          ) {
+            const id = `verified-tool-result-${Date.now()}`;
+            controller.enqueue({ type: 'text-start', id });
+            controller.enqueue({ type: 'text-delta', id, delta: fallback });
+            controller.enqueue({ type: 'text-end', id });
+            sawText = true;
+          } else {
+            controller.enqueue({
+              type: 'error',
+              errorText: EMPTY_RESPONSE_ERROR_TEXT,
+            });
+          }
         }
         controller.enqueue(chunk);
       },
@@ -2038,6 +2185,8 @@ async function processChatMessageStream(
       llmMessages[llmMessages.length - 1]
     );
 
+    const executedToolsList: ExecutedToolCall[] = [];
+    const toolOutcomes: ChatToolOutcome[] = [];
     const result = streamText({
       model: modelInstance,
       system: systemPromptContent,
@@ -2064,7 +2213,13 @@ async function processChatMessageStream(
           ? CORE_PROFILE_MAX_PROVIDER_RETRIES
           : MAX_PROVIDER_RETRIES,
       abortSignal: AbortSignal.timeout(CHAT_REQUEST_TIMEOUT_MS),
-      onStepFinish({ toolResults }) {
+      onStepFinish({ toolCalls, toolResults }) {
+        collectToolOutcomes(
+          toolCalls ?? [],
+          toolResults ?? [],
+          executedToolsList,
+          toolOutcomes
+        );
         if (toolResults && toolResults.length > 0) {
           const sizes = toolResults
             .map((r) => `${r.toolName}=${String(r.output ?? '').length}c`)
@@ -2079,6 +2234,11 @@ async function processChatMessageStream(
         totalUsage,
         toolCalls,
       }) => {
+        const verifiedText =
+          text.trim() ||
+          (toolOutcomes.length > 0
+            ? fallbackFromToolOutcomes(toolOutcomes)
+            : '');
         const observedUsage = totalUsage ?? usage;
         log(
           'info',
@@ -2120,7 +2280,7 @@ async function processChatMessageStream(
           (call) => call.toolName === ASK_USER_TOOL_NAME
         );
 
-        if (!text.trim() && !askCall) {
+        if (!verifiedText && !askCall) {
           log(
             'warn',
             `Skipping empty assistant chat history for user ${userId} (finishReason: ${finishReason})`
@@ -2129,7 +2289,9 @@ async function processChatMessageStream(
         }
 
         const assistantParts: Record<string, unknown>[] = [];
-        if (text.trim()) assistantParts.push({ type: 'text', text });
+        if (verifiedText) {
+          assistantParts.push({ type: 'text', text: verifiedText });
+        }
         if (askCall) {
           assistantParts.push({
             type: ASK_USER_PART_TYPE,
@@ -2146,7 +2308,7 @@ async function processChatMessageStream(
             // The question is the user-visible content when the model let the
             // chips speak for it.
             content:
-              text.trim() ||
+              verifiedText ||
               askUserPartToText({
                 type: ASK_USER_PART_TYPE,
                 input: askCall?.input,
@@ -2158,6 +2320,10 @@ async function processChatMessageStream(
           .catch((err: unknown) =>
             log('error', 'Failed to save assistant chat history:', err)
           );
+
+        for (const domain of successfulMutationDomains(toolOutcomes)) {
+          coachEventService.publish(authenticatedUserId, domain);
+        }
       },
     });
 
@@ -2168,7 +2334,8 @@ async function processChatMessageStream(
             part.type === 'finish'
               ? mapUsageToMetadata(part.totalUsage)
               : undefined,
-        })
+        }),
+        toolOutcomes
       ),
     };
   } catch (error) {
@@ -2183,6 +2350,7 @@ async function processChatMessageStream(
 export { handleAiServiceSettings };
 export { getAiServiceSettings };
 export { getActiveAiServiceSetting };
+export { getActiveAiServiceSettingForBackend };
 export { deleteAiServiceSetting };
 export { clearOldChatHistory };
 export { getSparkyChatHistory };
@@ -2199,6 +2367,7 @@ export default {
   handleAiServiceSettings,
   getAiServiceSettings,
   getActiveAiServiceSetting,
+  getActiveAiServiceSettingForBackend,
   deleteAiServiceSetting,
   clearOldChatHistory,
   getSparkyChatHistory,
