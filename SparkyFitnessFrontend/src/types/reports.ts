@@ -75,6 +75,8 @@ export interface DailyExerciseEntry {
   entry_date: string;
   duration_minutes: number;
   calories_burned: number;
+  source?: string | null;
+  source_id?: string | null;
   notes?: string;
   exercises: Exercise; // Use the comprehensive Exercise interface
   exercise_entry_id?: string; // New field
@@ -90,7 +92,17 @@ export interface DailyExerciseEntry {
     rest_time?: number; // seconds
     notes?: string;
   }[];
-  [key: string]: string | number | boolean | object | undefined;
+  [key: string]: string | number | boolean | object | null | undefined;
+}
+
+export interface ExerciseCaloriesByDate {
+  entry_date: string;
+  calories_burned: number;
+}
+
+export interface WorkoutDuplicateSummary {
+  hiddenCount: number;
+  hiddenBySource: Record<string, number>;
 }
 
 export interface ExerciseDashboardData {
@@ -217,6 +229,8 @@ export interface ReportResponse {
   nutritionData: NutritionData[];
   tabularData: DailyFoodEntry[];
   exerciseEntries: DailyExerciseEntry[];
+  exerciseCaloriesByDate?: ExerciseCaloriesByDate[];
+  exerciseDuplicateSummary?: WorkoutDuplicateSummary;
   measurementData: CheckInMeasurementsResponse[];
   customCategories: CustomCategoriesResponse[];
   customMeasurementsData: CustomMeasurementsResponse[];

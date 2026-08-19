@@ -7,6 +7,7 @@ import foodRepository from '../models/foodMisc.js';
 import measurementRepository from '../models/measurementRepository.js';
 import coachRepository from '../models/coachRepository.js';
 import goalService from '../services/goalService.js';
+import workoutDeduplicationService from '../services/workoutDeduplicationService.js';
 import { getDailySummary } from '../services/dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 
@@ -34,6 +35,9 @@ vi.mock('../services/goalService.js', () => ({
     getUserGoals: vi.fn(),
     getUserGoalsForRange: vi.fn(),
   },
+}));
+vi.mock('../services/workoutDeduplicationService.js', () => ({
+  default: { getCanonicalWorkoutAggregates: vi.fn() },
 }));
 vi.mock('../services/dailySummaryService.js', () => ({
   getDailySummary: vi.fn(),
@@ -137,9 +141,17 @@ describe('coachContextService', () => {
       { entry_date: addDays(today, -1), water_ml: 3000 },
       { entry_date: today, water_ml: 1800 },
     ]);
-    vi.mocked(coachRepository.getExerciseAggregates)
-      .mockResolvedValueOnce({ workout_count: 3 })
-      .mockResolvedValueOnce({ workout_count: 11 });
+    vi.mocked(workoutDeduplicationService.getCanonicalWorkoutAggregates)
+      .mockResolvedValueOnce({
+        workout_count: 3,
+        total_calories_burned: 0,
+        active_days: 2,
+      })
+      .mockResolvedValueOnce({
+        workout_count: 11,
+        total_calories_burned: 0,
+        active_days: 9,
+      });
     vi.mocked(coachRepository.getWeightSeries).mockResolvedValue([
       { entry_date: longStart, weight: 80 },
       { entry_date: today, weight: 81.2 },

@@ -5,6 +5,7 @@ import reportRepository from '../models/reportRepository.js';
 import measurementRepository from '../models/measurementRepository.js';
 import userRepository from '../models/userRepository.js';
 import preferenceRepository from '../models/preferenceRepository.js';
+import workoutDeduplicationService from '../services/workoutDeduplicationService.js';
 
 vi.mock('../services/goalService.js', () => ({
   default: { getUserGoals: vi.fn() },
@@ -13,8 +14,11 @@ vi.mock('../services/goalService.js', () => ({
 vi.mock('../models/reportRepository.js', () => ({
   default: {
     getNutritionData: vi.fn(),
-    getExerciseEntries: vi.fn(),
   },
+}));
+
+vi.mock('../services/workoutDeduplicationService.js', () => ({
+  default: { getCanonicalWorkoutEntries: vi.fn() },
 }));
 
 vi.mock('../models/measurementRepository.js', () => ({
@@ -66,7 +70,13 @@ beforeEach(() => {
   vi.mocked(reportRepository.getNutritionData).mockResolvedValue([
     { calories: '1500' },
   ]);
-  vi.mocked(reportRepository.getExerciseEntries).mockResolvedValue([]);
+  vi.mocked(
+    workoutDeduplicationService.getCanonicalWorkoutEntries
+  ).mockResolvedValue({
+    allEntries: [],
+    workoutEntries: [],
+    duplicateSummary: { hiddenCount: 0, hiddenBySource: {} },
+  });
   vi.mocked(userRepository.getUserProfile).mockResolvedValue(baseProfile);
   vi.mocked(preferenceRepository.getUserPreferences).mockResolvedValue(
     basePreferences

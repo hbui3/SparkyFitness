@@ -142,6 +142,8 @@ const Reports = () => {
     nutritionData = [],
     tabularData = [],
     exerciseEntries = [],
+    exerciseCaloriesByDate,
+    exerciseDuplicateSummary,
     measurementData = [],
     customCategories = [],
     customMeasurementsData = [],
@@ -200,6 +202,7 @@ const Reports = () => {
                 customNutrients={customNutrients}
                 goals={goalData}
                 exerciseEntries={exerciseEntries}
+                exerciseCaloriesByDate={exerciseCaloriesByDate}
               />
             </ChartErrorBoundary>
             <ChartErrorBoundary>
@@ -304,6 +307,7 @@ const Reports = () => {
             <ReportsTables
               tabularData={tabularData}
               exerciseEntries={exerciseEntries}
+              exerciseDuplicateSummary={exerciseDuplicateSummary}
               measurementData={measurementData}
               customCategories={customCategories}
               customMeasurementsData={customMeasurementsData}

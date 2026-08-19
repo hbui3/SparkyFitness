@@ -15,6 +15,7 @@ import {
 import { getClient } from '../db/poolManager.js';
 import { log } from '../config/logging.js';
 import { EXERCISE_ENTRY_TELEMETRY_COLUMNS } from '../models/exerciseEntry.js';
+import workoutDeduplicationService from './workoutDeduplicationService.js';
 
 /** Convert a pg date value to a YYYY-MM-DD string, or return null. */
 function _dateToString(value: unknown): string | null {
@@ -496,10 +497,20 @@ export async function getExerciseEntriesByDateV2(
 ): Promise<ExerciseSessionResponse[]> {
   const client = await getClient(targetUserId);
   try {
-    return await _getExerciseEntriesByDateWithClient(
-      client,
-      targetUserId,
-      selectedDate
+    const [sessions, canonicalWorkouts] = await Promise.all([
+      _getExerciseEntriesByDateWithClient(client, targetUserId, selectedDate),
+      workoutDeduplicationService.getCanonicalWorkoutEntries(
+        targetUserId,
+        selectedDate,
+        selectedDate
+      ),
+    ]);
+    const canonicalEntryIds = new Set(
+      canonicalWorkouts.allEntries.map((entry) => entry.id)
+    );
+    return sessions.filter(
+      (session) =>
+        session.type === 'preset' || canonicalEntryIds.has(session.id)
     );
   } catch (error) {
     log('error', 'Error fetching v2 exercise entries by date:', error);

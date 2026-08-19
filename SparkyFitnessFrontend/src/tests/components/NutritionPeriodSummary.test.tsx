@@ -212,6 +212,73 @@ describe('NutritionPeriodSummary', () => {
     expect(screen.getByText(/Total Goal: 19725 kcal/i)).toBeInTheDocument();
   });
 
+  it('uses canonical daily exercise calories instead of summing mirrored rows', () => {
+    mockAdjustmentMode = 'dynamic';
+    const nutritionData = [
+      {
+        date: '2026-08-19',
+        calories: 2000,
+        protein: 150,
+        carbs: 200,
+        fat: 70,
+        saturated_fat: 0,
+        polyunsaturated_fat: 0,
+        monounsaturated_fat: 0,
+        trans_fat: 0,
+        cholesterol: 0,
+        sodium: 0,
+        potassium: 0,
+        dietary_fiber: 0,
+        sugars: 0,
+        vitamin_a: 0,
+        vitamin_c: 0,
+        calcium: 0,
+        iron: 0,
+      },
+    ] satisfies NutritionData[];
+    const goals = {
+      '2026-08-19': {
+        calories: 1800,
+        protein: 140,
+        carbs: 180,
+        fat: 60,
+      } as ExpandedGoals,
+    };
+    const mirroredRows = [
+      {
+        id: 'igps',
+        entry_date: '2026-08-19',
+        duration_minutes: 13,
+        calories_burned: 119,
+        exercises: { id: 'cycling', name: 'Outdoor Cycling' },
+        sets: [],
+      },
+      {
+        id: 'healthkit',
+        entry_date: '2026-08-19',
+        duration_minutes: 13,
+        calories_burned: 119,
+        exercises: { id: 'cycling', name: 'Cycling' },
+        sets: [],
+      },
+    ] as unknown as DailyExerciseEntry[];
+
+    render(
+      <NutritionPeriodSummary
+        nutritionData={nutritionData}
+        customNutrients={[]}
+        goals={goals}
+        exerciseEntries={mirroredRows}
+        exerciseCaloriesByDate={[
+          { entry_date: '2026-08-19', calories_burned: 119 },
+        ]}
+      />
+    );
+
+    expect(screen.getByText(/Total Goal: 1919 kcal/i)).toBeInTheDocument();
+    expect(screen.getAllByText('+81 kcal')).toHaveLength(2);
+  });
+
   it('does not add exercise burned to calorie goal in adaptive mode', () => {
     mockAdjustmentMode = 'adaptive';
 

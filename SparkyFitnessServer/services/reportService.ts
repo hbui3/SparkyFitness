@@ -20,6 +20,7 @@ import {
 } from '@workspace/shared';
 import { userAge } from '../utils/dateHelpers.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import workoutDeduplicationService from './workoutDeduplicationService.js';
 
 interface CustomNutrientDefinition {
   id: string;
@@ -67,24 +68,21 @@ interface WorkoutEntry {
   entry_date: string | Date;
   exercise_name: string;
   exercise_id?: string;
-  exercise_category?: string;
-  exercise_calories_per_hour?: number;
-  exercise_equipment?: string;
-  exercise_primary_muscles?: string;
-  exercise_secondary_muscles?: string;
-  exercise_instructions?: string;
-  exercise_images?: string;
-  exercise_source?: string;
-  exercise_source_id?: string;
+  exercise_category?: string | null;
+  exercise_calories_per_hour?: number | string | null;
+  exercise_equipment?: string | null;
+  exercise_primary_muscles?: string | null;
+  exercise_secondary_muscles?: string | null;
+  exercise_instructions?: string | null;
+  exercise_images?: string | null;
+  exercise_source?: string | null;
+  exercise_source_id?: string | null;
   exercise_user_id?: string;
   exercise_is_custom?: boolean;
-  exercise_level?: string;
-  exercise_force?: string;
-  exercise_mechanic?: string;
-  sets?: Array<{
-    weight?: string | number;
-    reps?: string | number;
-  }>;
+  exercise_level?: string | null;
+  exercise_force?: string | null;
+  exercise_mechanic?: string | null;
+  sets?: Array<Record<string, unknown>>;
   exercises?: {
     primary_muscles?: string;
   };
@@ -127,7 +125,7 @@ async function getReportsData(
     const [
       fetchedNutritionData,
       tabularDataRaw,
-      exerciseEntriesRaw,
+      canonicalWorkoutResult,
       measurementData,
       customCategoriesResult,
       userProfile,
@@ -151,8 +149,11 @@ async function getReportsData(
         endDate,
         customNutrients
       ),
-      // @ts-expect-error TS(2554): Expected 6 arguments, but got 3.
-      reportRepository.getExerciseEntries(targetUserId, startDate, endDate),
+      workoutDeduplicationService.getCanonicalWorkoutEntries(
+        targetUserId,
+        startDate,
+        endDate
+      ),
       reportRepository.getMeasurementData(targetUserId, startDate, endDate),
       measurementRepository.getCustomCategories(targetUserId),
       userRepository.getUserProfile(targetUserId),
@@ -329,28 +330,38 @@ async function getReportsData(
           userPreferences.include_bmr_in_net_calories;
       });
     }
-    const exerciseEntries = exerciseEntriesRaw.map((entry: WorkoutEntry) => ({
-      ...entry,
+    const exerciseEntries = canonicalWorkoutResult.workoutEntries.map(
+      (entry) => ({
+        ...entry,
+        source: entry.exercise_source ?? null,
+        source_id: entry.exercise_source_id ?? null,
 
-      exercises: {
-        id: entry.exercise_id,
-        name: entry.exercise_name,
-        category: entry.exercise_category,
-        calories_per_hour: entry.exercise_calories_per_hour,
-        equipment: JSON.parse(entry.exercise_equipment || '[]'),
-        primary_muscles: JSON.parse(entry.exercise_primary_muscles || '[]'),
-        secondary_muscles: JSON.parse(entry.exercise_secondary_muscles || '[]'),
-        instructions: JSON.parse(entry.exercise_instructions || '[]'),
-        images: JSON.parse(entry.exercise_images || '[]'),
-        source: entry.exercise_source,
-        source_id: entry.exercise_source_id,
-        user_id: entry.exercise_user_id,
-        is_custom: entry.exercise_is_custom,
-        level: entry.exercise_level,
-        force: entry.exercise_force,
-        mechanic: entry.exercise_mechanic,
-      },
-    }));
+        exercises: {
+          id: entry.exercise_id,
+          name: entry.exercise_name,
+          category: entry.exercise_category,
+          calories_per_hour: entry.exercise_calories_per_hour,
+          equipment: JSON.parse(entry.exercise_equipment || '[]'),
+          primary_muscles: JSON.parse(entry.exercise_primary_muscles || '[]'),
+          secondary_muscles: JSON.parse(
+            entry.exercise_secondary_muscles || '[]'
+          ),
+          instructions: JSON.parse(entry.exercise_instructions || '[]'),
+          images: JSON.parse(entry.exercise_images || '[]'),
+          source: entry.exercise_source,
+          source_id: entry.exercise_source_id,
+          user_id: entry.exercise_user_id,
+          is_custom: entry.exercise_is_custom,
+          level: entry.exercise_level,
+          force: entry.exercise_force,
+          mechanic: entry.exercise_mechanic,
+        },
+      })
+    );
+    const exerciseCaloriesByDate =
+      workoutDeduplicationService.calculateExerciseCaloriesByDate(
+        canonicalWorkoutResult.allEntries
+      );
 
     // Fetch titration steps in a single query (avoid N+1 pattern)
     const medIds = new Set(medications.map((m: any) => m.id));
@@ -364,6 +375,8 @@ async function getReportsData(
       nutritionData,
       tabularData,
       exerciseEntries, // Include exercise entries
+      exerciseCaloriesByDate,
+      exerciseDuplicateSummary: canonicalWorkoutResult.duplicateSummary,
       measurementData,
       customCategories: customCategoriesResult,
       customMeasurementsData,
@@ -758,21 +771,16 @@ async function getExerciseDashboardData(
   exercise: any
 ) {
   try {
-    const allExerciseEntries = await reportRepository.getExerciseEntries(
-      targetUserId,
-      startDate,
-      endDate,
-      equipment,
-      muscle,
-      exercise
-    );
-    // Synced device calorie summaries (e.g. Apple Health "Active Calories") are
-    // logged as exercise entries but aren't true workouts — exclude them so
-    // every counter on the Exercise Reports dashboard matches user expectations.
-    const exerciseEntries = allExerciseEntries.filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (entry: any) => entry.exercise_name !== 'Active Calories'
-    );
+    const canonicalWorkoutResult =
+      await workoutDeduplicationService.getCanonicalWorkoutEntries(
+        targetUserId,
+        startDate,
+        endDate,
+        equipment,
+        muscle,
+        exercise
+      );
+    const exerciseEntries = canonicalWorkoutResult.workoutEntries;
     let totalVolume = 0;
     let totalReps = 0;
     const totalWorkouts = new Set(); // To count unique workout days

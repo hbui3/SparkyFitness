@@ -14,12 +14,12 @@ import type {
 import mealTypeRepository from '../models/mealType.js';
 import goalRepository from '../models/goalRepository.js';
 import measurementRepository from '../models/measurementRepository.js';
-import reportRepository from '../models/reportRepository.js';
 import { sanitizeCustomNutrients } from '../utils/foodUtils.js';
 
 import Papa from 'papaparse';
 import { isDayString } from '@workspace/shared';
 import customNutrientService from './customNutrientService.js';
+import workoutDeduplicationService from './workoutDeduplicationService.js';
 import { removeOrphanedImages } from '../middleware/imageUpload.js';
 import express from 'express';
 // Helper functions (already defined)
@@ -2811,12 +2811,12 @@ async function exportAllDiaryEntriesToCSVStream(
       const [
         nutritionSummaries,
         waterEntries,
-        exerciseEntries,
+        canonicalWorkoutResult,
         waterIntakeLogs,
       ] = await Promise.all([
         foodRepository.getDailyNutritionSummariesByDates(userId, uniqueDates),
         measurementRepository.getWaterIntakesByDates(userId, uniqueDates),
-        reportRepository.getExerciseEntries(
+        workoutDeduplicationService.getCanonicalWorkoutEntries(
           userId,
           minDate,
           maxDate,
@@ -2826,6 +2826,12 @@ async function exportAllDiaryEntriesToCSVStream(
         ),
         measurementRepository.getWaterIntakeLogsByDates(userId, uniqueDates),
       ]);
+
+      const exerciseCaloriesByDate = new Map(
+        workoutDeduplicationService
+          .calculateExerciseCaloriesByDate(canonicalWorkoutResult.allEntries)
+          .map((entry) => [entry.entry_date, entry.calories_burned])
+      );
 
       const summariesCache = new Map();
 
@@ -2841,17 +2847,7 @@ async function exportAllDiaryEntriesToCSVStream(
         );
         const waterTotal = parseFloat(String(water?.water_ml)) || 0;
 
-        let caloriesBurned = 0;
-        exerciseEntries.forEach(
-          (ex: {
-            entry_date: string | Date;
-            calories_burned: number | string;
-          }) => {
-            if (getDayString(ex.entry_date) === dateStr) {
-              caloriesBurned += Number(ex.calories_burned) || 0;
-            }
-          }
-        );
+        const caloriesBurned = exerciseCaloriesByDate.get(dateStr) ?? 0;
 
         const drinkLogs = waterIntakeLogs.filter(
           (l: { entry_date: string | Date }) =>
@@ -3175,24 +3171,20 @@ async function exportAllDiaryEntriesToCSVStream(
         userId,
         currentDateProcessed
       );
-      const exEntries = await reportRepository.getExerciseEntries(
-        userId,
-        currentDateProcessed,
-        currentDateProcessed,
-        null,
-        null,
-        null
-      );
+      const canonicalWorkoutResult =
+        await workoutDeduplicationService.getCanonicalWorkoutEntries(
+          userId,
+          currentDateProcessed,
+          currentDateProcessed,
+          null,
+          null,
+          null
+        );
 
-      let caloriesBurned = 0;
-      exEntries.forEach(
-        (ex: {
-          entry_date: string | Date;
-          calories_burned: number | string;
-        }) => {
-          caloriesBurned += Number(ex.calories_burned) || 0;
-        }
-      );
+      const caloriesBurned =
+        workoutDeduplicationService.calculateExerciseCaloriesByDate(
+          canonicalWorkoutResult.allEntries
+        )[0]?.calories_burned ?? 0;
 
       const lastDateDrinkLogs =
         await measurementRepository.getWaterIntakeLogsByDates(userId, [

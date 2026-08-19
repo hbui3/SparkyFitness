@@ -3,6 +3,7 @@ import { todayInZone } from '@workspace/shared';
 import { buildCoachTools } from '../ai/tools/coachTools.js';
 import coachRepository from '../models/coachRepository.js';
 import coachProfileService from '../services/coachProfileService.js';
+import workoutDeduplicationService from '../services/workoutDeduplicationService.js';
 
 vi.mock('../models/coachRepository', () => ({
   default: {
@@ -36,6 +37,9 @@ vi.mock('../services/coachProfileService', () => ({
       violations: [],
     })),
   },
+}));
+vi.mock('../services/workoutDeduplicationService', () => ({
+  default: { getCanonicalWorkoutAggregates: vi.fn() },
 }));
 
 const opts = { toolCallId: 'tc-1', messages: [] };
@@ -88,9 +92,12 @@ describe('sparky_get_health_summary', () => {
       avg_fat: '65.4321',
       entry_count: 21,
     });
-    vi.mocked(coachRepository.getExerciseAggregates).mockResolvedValue({
-      total_calories_burned: '3200',
+    vi.mocked(
+      workoutDeduplicationService.getCanonicalWorkoutAggregates
+    ).mockResolvedValue({
+      total_calories_burned: 3200,
       workout_count: 5,
+      active_days: 4,
     });
     vi.mocked(coachRepository.getLatestWeightInRange).mockResolvedValue({
       weight: '81.5',
@@ -152,9 +159,12 @@ describe('sparky_get_health_summary', () => {
       avg_fat: '0',
       entry_count: 0,
     });
-    vi.mocked(coachRepository.getExerciseAggregates).mockResolvedValue({
-      total_calories_burned: '0',
+    vi.mocked(
+      workoutDeduplicationService.getCanonicalWorkoutAggregates
+    ).mockResolvedValue({
+      total_calories_burned: 0,
       workout_count: 0,
+      active_days: 0,
     });
     vi.mocked(coachRepository.getLatestWeightInRange).mockResolvedValue({
       weight: '81.5',
@@ -206,9 +216,12 @@ describe('sparky_get_health_summary', () => {
       avg_fat: '0',
       entry_count: 0,
     });
-    vi.mocked(coachRepository.getExerciseAggregates).mockResolvedValue({
-      total_calories_burned: '0',
+    vi.mocked(
+      workoutDeduplicationService.getCanonicalWorkoutAggregates
+    ).mockResolvedValue({
+      total_calories_burned: 0,
       workout_count: 0,
+      active_days: 0,
     });
     vi.mocked(coachRepository.getLatestWeightInRange).mockResolvedValue(null);
     vi.mocked(coachRepository.getWaterIntakeTotal).mockResolvedValue({
@@ -261,10 +274,12 @@ describe('sparky_get_health_summary', () => {
       carbs: 200,
       fat: 70,
     });
-    vi.mocked(coachRepository.getExerciseAggregates).mockResolvedValue({
-      workouts: 1,
-      active_calories: 300,
-      duration_minutes: 45,
+    vi.mocked(
+      workoutDeduplicationService.getCanonicalWorkoutAggregates
+    ).mockResolvedValue({
+      total_calories_burned: 300,
+      workout_count: 1,
+      active_days: 1,
     });
     vi.mocked(coachRepository.getLatestWeightInRange).mockResolvedValue({
       weight: 75,
@@ -424,10 +439,12 @@ describe('sparky_get_30_day_trends', () => {
       avg_daily_calories: '2150.6',
       avg_daily_protein: '95.25',
     });
-    vi.mocked(coachRepository.get30DayExerciseAggregates).mockResolvedValue({
-      total_workouts: 8,
+    vi.mocked(
+      workoutDeduplicationService.getCanonicalWorkoutAggregates
+    ).mockResolvedValue({
+      workout_count: 8,
       active_days: 6,
-      total_calories_burned: '2400',
+      total_calories_burned: 2400,
     });
     vi.mocked(coachRepository.get30DayMoodAggregates).mockResolvedValue({
       entries: 10,
@@ -496,10 +513,12 @@ describe('sparky_get_30_day_trends', () => {
       avg_daily_calories: '0',
       avg_daily_protein: '0',
     });
-    vi.mocked(coachRepository.get30DayExerciseAggregates).mockResolvedValue({
-      total_workouts: 0,
+    vi.mocked(
+      workoutDeduplicationService.getCanonicalWorkoutAggregates
+    ).mockResolvedValue({
+      workout_count: 0,
       active_days: 0,
-      total_calories_burned: '0',
+      total_calories_burned: 0,
     });
     vi.mocked(coachRepository.get30DayMoodAggregates).mockResolvedValue({
       entries: 0,

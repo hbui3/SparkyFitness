@@ -38,6 +38,7 @@ import type {
   DailyFoodEntry,
   DailyExerciseEntry,
   PersonalRecordsMap,
+  WorkoutDuplicateSummary,
 } from '@/types/reports';
 import {
   CheckInMeasurementsResponse,
@@ -91,6 +92,7 @@ export type TableFilterValue =
 interface ReportsTablesProps {
   tabularData: DailyFoodEntry[];
   exerciseEntries: DailyExerciseEntry[];
+  exerciseDuplicateSummary?: WorkoutDuplicateSummary;
   measurementData: CheckInMeasurementsResponse[];
   customCategories: CustomCategoriesResponse[];
   customMeasurementsData: CustomMeasurementsResponse[];
@@ -107,6 +109,7 @@ interface ReportsTablesProps {
 const ReportsTables = ({
   tabularData,
   exerciseEntries,
+  exerciseDuplicateSummary,
   measurementData,
   customCategories,
   customMeasurementsData,
@@ -159,6 +162,13 @@ const ReportsTables = ({
     direction: 'ascending' | 'descending';
   } | null>(null);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+
+  const formatWorkoutSource = (entry: DailyExerciseEntry) => {
+    const source = entry.source ?? entry.exercises.source;
+    if (source?.toLowerCase() === 'healthkit') return 'Apple Health';
+    if (source?.toLowerCase() === 'health connect') return 'Health Connect';
+    return source || '-';
+  };
 
   info(loggingLevel, 'ReportsTables: Rendering component.');
 
@@ -585,12 +595,23 @@ const ReportsTables = ({
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>
-                {t(
-                  'reportsTables.exerciseEntriesTable',
-                  'Exercise Entries Table'
+              <div>
+                <CardTitle>
+                  {t(
+                    'reportsTables.exerciseEntriesTable',
+                    'Exercise Entries Table'
+                  )}
+                </CardTitle>
+                {(exerciseDuplicateSummary?.hiddenCount ?? 0) > 0 && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t(
+                      'reportsTables.mirroredWorkoutsHidden',
+                      '{{count}} mirrored provider entries are hidden; their raw imports remain stored.',
+                      { count: exerciseDuplicateSummary?.hiddenCount }
+                    )}
+                  </p>
                 )}
-              </CardTitle>
+              </div>
               <Button
                 onClick={onExportExerciseEntries}
                 variant="outline"
@@ -631,6 +652,7 @@ const ReportsTables = ({
                     <TableHead onClick={() => requestSort('exercise_name')}>
                       {t('reportsTables.exercise', 'Exercise')}
                     </TableHead>
+                    <TableHead>{t('reportsTables.source', 'Source')}</TableHead>
                     <TableHead onClick={() => requestSort('set_number')}>
                       {t('reportsTables.set', 'Set')}
                     </TableHead>
@@ -695,6 +717,9 @@ const ReportsTables = ({
                             )}
                           </TableCell>
                           <TableCell>{entry.exercises.name}</TableCell>
+                          <TableCell title={entry.source_id ?? undefined}>
+                            {formatWorkoutSource(entry)}
+                          </TableCell>
                           <TableCell>{entry.sets.length}</TableCell>
                           <TableCell></TableCell>
                           <TableCell>{formatRepRange(entry.sets)}</TableCell>
@@ -733,6 +758,7 @@ const ReportsTables = ({
                               key={`${entry.id}-set-${set.id || setIndex}`}
                               className="bg-gray-50 dark:bg-gray-800"
                             >
+                              <TableCell></TableCell>
                               <TableCell></TableCell>
                               <TableCell></TableCell>
                               <TableCell>{set.set_number}</TableCell>

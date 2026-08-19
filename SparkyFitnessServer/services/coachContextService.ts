@@ -9,6 +9,7 @@ import preferenceRepository from '../models/preferenceRepository.js';
 import foodRepository from '../models/foodMisc.js';
 import measurementRepository from '../models/measurementRepository.js';
 import coachRepository from '../models/coachRepository.js';
+import workoutDeduplicationService from './workoutDeduplicationService.js';
 import goalService from './goalService.js';
 import { getDailySummary } from './dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
@@ -233,8 +234,16 @@ async function getTrendContext(
     foodRepository.getDailyNutritionSummariesByDates(userId, longDates),
     measurementRepository.getWaterIntakesByDates(userId, longDates),
     goalService.getUserGoalsForRange(userId, longStart, today, true),
-    coachRepository.getExerciseAggregates(userId, weekStart, today),
-    coachRepository.getExerciseAggregates(userId, longStart, today),
+    workoutDeduplicationService.getCanonicalWorkoutAggregates(
+      userId,
+      weekStart,
+      today
+    ),
+    workoutDeduplicationService.getCanonicalWorkoutAggregates(
+      userId,
+      longStart,
+      today
+    ),
     coachRepository.getWeightSeries(userId, 29, today),
     coachRepository.getRecoverySignals(userId, today),
   ]).then(

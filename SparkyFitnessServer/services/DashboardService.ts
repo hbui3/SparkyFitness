@@ -10,6 +10,7 @@ import {
   userHourMinute,
 } from '@workspace/shared';
 import { userAge } from '../utils/dateHelpers.js';
+import workoutDeduplicationService from './workoutDeduplicationService.js';
 /**
  * Aggregates stats for external dashboards (like gethomepage.dev).
  * matches logic in DailyProgress.tsx
@@ -31,8 +32,11 @@ async function getDashboardStats(
     ] = await Promise.all([
       goalService.getUserGoals(userId, date, undefined, includeCheckin),
       reportRepository.getNutritionData(userId, date, date, []),
-      // @ts-expect-error TS(2554): Expected 6 arguments, but got 3.
-      reportRepository.getExerciseEntries(userId, date, date),
+      workoutDeduplicationService.getCanonicalWorkoutEntries(
+        userId,
+        date,
+        date
+      ),
       userRepository.getUserProfile(userId),
       preferenceRepository.getUserPreferences(userId),
       includeCheckin
@@ -69,7 +73,7 @@ async function getDashboardStats(
     let otherCalories = 0;
     let activitySteps = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    exerciseEntries.forEach((entry: any) => {
+    exerciseEntries.allEntries.forEach((entry: any) => {
       if (entry.exercise_name === 'Active Calories') {
         activeCalories += parseFloat(entry.calories_burned || 0);
       } else {
