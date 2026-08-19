@@ -171,6 +171,41 @@ describe('Measurement Service - Water Intake', () => {
       );
     });
   });
+  describe('logWaterIntakeAmount', () => {
+    it('writes the itemized entry and daily aggregate in one transaction', async () => {
+      vi.mocked(
+        measurementRepository.upsertWaterIntakeSamples
+      ).mockResolvedValue([
+        { id: 'entry-1', entry_date: '2026-08-19', water_ml: 300 },
+      ] as never);
+
+      await expect(
+        measurementService.logWaterIntakeAmount(
+          'test-user-id',
+          'test-user-id',
+          '2026-08-19',
+          300,
+          'manual'
+        )
+      ).resolves.toEqual(
+        expect.objectContaining({ id: 'entry-1', water_ml: 300 })
+      );
+
+      expect(
+        measurementRepository.upsertWaterIntakeSamples
+      ).toHaveBeenCalledWith('test-user-id', 'test-user-id', [
+        {
+          entryDate: '2026-08-19',
+          waterMl: 300,
+          containerName: null,
+          source: 'manual',
+          sourceId: null,
+        },
+      ]);
+      expect(measurementRepository.insertWaterIntakeLog).not.toHaveBeenCalled();
+      expect(measurementRepository.incrementWaterData).not.toHaveBeenCalled();
+    });
+  });
   describe('updateWaterIntake', () => {
     it('should pass userId to repository functions', async () => {
       const mockUserId = 'test-user-id';

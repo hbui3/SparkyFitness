@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import telegramCoachService from '../services/telegramCoachService.js';
+import telegramCoachService, {
+  parseDirectWaterLogCommand,
+} from '../services/telegramCoachService.js';
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import chatService from '../services/chatService.js';
 import {
@@ -8,6 +10,7 @@ import {
   sendTelegramMessage,
 } from '../services/telegramApiService.js';
 import { CHAT_TOOL_CATEGORY_SLUGS } from '@workspace/shared';
+import measurementService from '../services/measurementService.js';
 
 vi.mock('../models/coachTelegramRepository.js', () => ({
   default: {
@@ -31,7 +34,17 @@ vi.mock('../services/chatService.js', () => ({
     getSparkyChatHistory: vi.fn(),
     getActiveAiServiceSetting: vi.fn(),
     processChatMessage: vi.fn(),
+    saveSparkyChatHistory: vi.fn(),
   },
+}));
+vi.mock('../services/measurementService.js', () => ({
+  default: {
+    getWaterIntake: vi.fn(),
+    logWaterIntakeAmount: vi.fn(),
+  },
+}));
+vi.mock('../utils/timezoneLoader.js', () => ({
+  loadUserTimezone: vi.fn().mockResolvedValue('Europe/Berlin'),
 }));
 vi.mock('../services/telegramApiService.js', () => ({
   downloadTelegramImage: vi.fn(),
@@ -52,6 +65,26 @@ describe('telegramCoachService', () => {
       dataUrl: 'data:image/jpeg;base64,/9j/',
       mimeType: 'image/jpeg',
     });
+    vi.mocked(chatService.saveSparkyChatHistory).mockResolvedValue({
+      message: 'saved',
+    });
+  });
+
+  it('recognizes only unambiguous water log statements', () => {
+    expect(parseDirectWaterLogCommand('300ml Wasser')).toEqual({
+      amountMl: 300,
+      language: 'de',
+    });
+    expect(parseDirectWaterLogCommand('0,3 l Wasser getrunken')).toEqual({
+      amountMl: 300,
+      language: 'de',
+    });
+    expect(parseDirectWaterLogCommand('I drank 12 oz water')).toBeNull();
+    expect(parseDirectWaterLogCommand('Wie viel Wasser fehlt mir?')).toBeNull();
+    expect(
+      parseDirectWaterLogCommand('Mein Ziel ist 3000 ml Wasser')
+    ).toBeNull();
+    expect(parseDirectWaterLogCommand('Nicht 300 ml Wasser')).toBeNull();
   });
 
   it('creates a short-lived link without storing its plaintext token', async () => {
@@ -135,6 +168,126 @@ describe('telegramCoachService', () => {
       expect(sendTelegramMessage).toHaveBeenCalledWith(
         '12345',
         'Noch 35 g Protein. Plane jetzt Skyr ein.'
+      );
+    });
+  });
+
+  it('logs an explicit water amount without AI and confirms the database total', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(measurementService.getWaterIntake)
+      .mockResolvedValueOnce({ water_ml: 1200 } as never)
+      .mockResolvedValueOnce({ water_ml: 1500 } as never);
+    vi.mocked(measurementService.logWaterIntakeAmount).mockResolvedValue({
+      id: 'water-1',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 21,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: '300ml Wasser',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(measurementService.logWaterIntakeAmount).toHaveBeenCalledWith(
+        'user-1',
+        'user-1',
+        expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        300,
+        'manual'
+      );
+      expect(chatService.processChatMessage).not.toHaveBeenCalled();
+      expect(sendTelegramMessage).toHaveBeenCalledWith(
+        '12345',
+        expect.stringMatching(/Datenbank gelesener Stand: \*\*1500 ml\*\*/)
+      );
+      expect(chatService.saveSparkyChatHistory).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('never confirms a direct water log when persistence fails', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(measurementService.getWaterIntake).mockResolvedValue({
+      water_ml: 1200,
+    } as never);
+    vi.mocked(measurementService.logWaterIntakeAmount).mockRejectedValue(
+      new Error('database unavailable')
+    );
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 22,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: '300 ml Wasser',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(sendTelegramMessage).toHaveBeenCalledWith(
+        '12345',
+        expect.stringContaining('nicht speichern')
+      );
+      expect(sendTelegramMessage).not.toHaveBeenCalledWith(
+        '12345',
+        expect.stringContaining('Erfasst und gespeichert')
+      );
+      expect(chatService.processChatMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it('warns without suggesting a retry when the saved total cannot be verified', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(measurementService.getWaterIntake)
+      .mockResolvedValueOnce({ water_ml: 1200 } as never)
+      .mockResolvedValueOnce({ water_ml: 1200 } as never);
+    vi.mocked(measurementService.logWaterIntakeAmount).mockResolvedValue({
+      id: 'water-1',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 23,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: '300 ml Wasser',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(sendTelegramMessage).toHaveBeenCalledWith(
+        '12345',
+        expect.stringContaining('wurde gespeichert')
+      );
+      expect(sendTelegramMessage).toHaveBeenCalledWith(
+        '12345',
+        expect.stringContaining('bevor du ihn erneut sendest')
       );
     });
   });

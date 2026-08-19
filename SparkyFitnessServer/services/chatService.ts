@@ -1143,16 +1143,31 @@ function buildLlmWindow(
 }
 
 // Persistent coach context is application-controlled and may change whenever
-// the user edits their profile, so it is injected after history trimming. This
-// keeps it present on every turn without destabilizing the cacheable system
-// prompt or allowing old context to consume the history budget.
+// the user edits their profile, so it is injected after history trimming and
+// directly before the latest user request. Keeping the authoritative snapshot
+// near the current request prevents stale totals in older chat turns from
+// taking precedence without destabilizing the cacheable system prompt.
 export async function prependPersistentCoachContext(
   userId: string,
   messages: LlmMessage[]
 ): Promise<LlmMessage[]> {
   const context = await coachProfileService.getPersistentChatContext(userId);
   if (!context) return messages;
-  return [{ role: 'user', content: context }, ...messages];
+  let latestUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex < 0) {
+    return [...messages, { role: 'user', content: context }];
+  }
+  return [
+    ...messages.slice(0, latestUserIndex),
+    { role: 'user', content: context },
+    ...messages.slice(latestUserIndex),
+  ];
 }
 
 // Derives the display text and parts for saving a user message to history.

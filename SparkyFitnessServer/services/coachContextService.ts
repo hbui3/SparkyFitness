@@ -18,6 +18,8 @@ export interface CanonicalCoachGoals {
 export interface CoachDailyProgress extends CanonicalCoachGoals {
   date: string;
   caloriesConsumed: number;
+  caloriesBurned: number;
+  netCalories: number;
   caloriesRemaining: number | null;
   proteinConsumedG: number;
   proteinRemainingG: number | null;
@@ -292,6 +294,8 @@ export async function getCoachContextSnapshot(
       date: today,
       ...canonicalGoals,
       caloriesConsumed,
+      caloriesBurned: dailySummary.calorieBalance.burned,
+      netCalories: dailySummary.calorieBalance.net,
       caloriesRemaining:
         canonicalGoals.calorieTarget === null
           ? null
@@ -342,7 +346,8 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
   const lines = [
     `Canonical primary goal: ${today.primaryGoal ?? 'not set'}`,
     `Canonical targets for ${today.date}: ${valueOrUnknown(today.calorieTarget, ' kcal')}, ${valueOrUnknown(today.proteinTargetG, ' g protein')}, ${valueOrUnknown(today.waterTargetMl, ' ml water')}`,
-    `Today so far: ${today.caloriesConsumed} kcal consumed (${valueOrUnknown(today.caloriesRemaining, ' kcal remaining')}), ${today.proteinConsumedG} g protein (${valueOrUnknown(today.proteinRemainingG, ' g remaining')}), ${today.waterConsumedMl} ml water (${valueOrUnknown(today.waterRemainingMl, ' ml remaining')})`,
+    `Today so far: ${today.caloriesConsumed} kcal food/supplement intake; ${today.caloriesBurned} kcal burned according to the configured energy rules; ${today.netCalories} kcal net; ${valueOrUnknown(today.caloriesRemaining, ' kcal remaining')}; ${today.proteinConsumedG} g protein (${valueOrUnknown(today.proteinRemainingG, ' g remaining')}); ${today.waterConsumedMl} ml water (${valueOrUnknown(today.waterRemainingMl, ' ml remaining')})`,
+    'The live totals above already include every successfully stored entry mentioned earlier in the conversation. Never add calories, water, protein, or other values from chat history to them, and never count burned calories as intake.',
     `Last 7 days (${week.startDate} to ${week.endDate}): nutrition logged ${week.nutritionLoggedDays}/${week.totalDays} days; logged-day averages ${valueOrUnknown(week.averageCaloriesOnLoggedDays, ' kcal')} and ${valueOrUnknown(week.averageProteinOnLoggedDaysG, ' g protein')}; calorie target met within +/-10% on ${week.calorieTargetDays} logged days; water logged ${week.waterLoggedDays}/${week.totalDays} days with ${valueOrUnknown(week.averageWaterOnLoggedDaysMl, ' ml average')}; workouts ${week.workoutCount}`,
     `Last 30 days (${longTerm.startDate} to ${longTerm.endDate}): nutrition logged ${longTerm.nutritionLoggedDays}/${longTerm.totalDays} days; logged-day averages ${valueOrUnknown(longTerm.averageCaloriesOnLoggedDays, ' kcal')} and ${valueOrUnknown(longTerm.averageProteinOnLoggedDaysG, ' g protein')}; workouts ${longTerm.workoutCount}`,
   ];

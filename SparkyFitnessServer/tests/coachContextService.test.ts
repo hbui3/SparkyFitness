@@ -93,10 +93,10 @@ describe('coachContextService', () => {
       stepCalories: 0,
       calorieBalance: {
         eaten: 1800,
-        burned: 0,
-        remaining: 1200,
+        burned: 425,
+        remaining: 1625,
         goal: 3000,
-        net: 1800,
+        net: 1375,
         progress: 60,
         bmr: 0,
         bmrSource: 'formula',
@@ -144,7 +144,9 @@ describe('coachContextService', () => {
     expect(snapshot.today).toEqual(
       expect.objectContaining({
         caloriesConsumed: 1800,
-        caloriesRemaining: 1200,
+        caloriesBurned: 425,
+        netCalories: 1375,
+        caloriesRemaining: 1625,
         proteinConsumedG: 50,
         proteinRemainingG: 110,
         waterRemainingMl: 1200,
@@ -162,7 +164,12 @@ describe('coachContextService', () => {
     expect(snapshot.weight30Days.changeKg).toBe(1.2);
     expect(coachContextService.formatCoachContext(snapshot)).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('Today so far: 1800 kcal consumed'),
+        expect.stringContaining(
+          'Today so far: 1800 kcal food/supplement intake; 425 kcal burned'
+        ),
+        expect.stringContaining(
+          'Never add calories, water, protein, or other values from chat history'
+        ),
         expect.stringContaining('Last 7 days'),
         expect.stringContaining('Last 30 days'),
         expect.stringContaining('+1.2 kg'),

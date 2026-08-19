@@ -46,6 +46,8 @@ const snapshot = {
     proteinTargetG: 160,
     waterTargetMl: 3000,
     caloriesConsumed: 1800,
+    caloriesBurned: 0,
+    netCalories: 1800,
     caloriesRemaining: 1200,
     proteinConsumedG: 110,
     proteinRemainingG: 50,

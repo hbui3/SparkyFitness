@@ -90,11 +90,15 @@ describe('chatService', () => {
     );
   });
   describe('persistent coach context', () => {
-    it('prepends current application context without changing the conversation', async () => {
+    it('places current application context directly before the latest user request', async () => {
       vi.mocked(coachProfileService.getPersistentChatContext).mockResolvedValue(
         'Dietary pattern: vegetarian'
       );
-      const conversation = [{ role: 'user', content: 'Plan dinner' }];
+      const conversation = [
+        { role: 'user', content: 'I logged 500 kcal' },
+        { role: 'assistant', content: 'Your total is now 2000 kcal' },
+        { role: 'user', content: 'Plan dinner' },
+      ];
 
       const result = await prependPersistentCoachContext(
         mockUserId,
@@ -102,10 +106,16 @@ describe('chatService', () => {
       );
 
       expect(result).toEqual([
+        { role: 'user', content: 'I logged 500 kcal' },
+        { role: 'assistant', content: 'Your total is now 2000 kcal' },
         { role: 'user', content: 'Dietary pattern: vegetarian' },
-        ...conversation,
+        { role: 'user', content: 'Plan dinner' },
       ]);
-      expect(conversation).toEqual([{ role: 'user', content: 'Plan dinner' }]);
+      expect(conversation).toEqual([
+        { role: 'user', content: 'I logged 500 kcal' },
+        { role: 'assistant', content: 'Your total is now 2000 kcal' },
+        { role: 'user', content: 'Plan dinner' },
+      ]);
     });
 
     it('returns the existing message array when no profile context exists', async () => {
