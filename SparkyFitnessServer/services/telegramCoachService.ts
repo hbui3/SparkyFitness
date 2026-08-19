@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import {
   CHAT_TOOL_CATEGORY_SLUGS,
+  todayInZone,
   type ChatToolCategorySlug,
   type CoachTelegramConnectionStatus,
   type CoachTelegramDisconnectResponse,
@@ -9,7 +10,12 @@ import {
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
 import userRepository from '../models/userRepository.js';
 import chatService, { isImageFollowUpText } from './chatService.js';
-import { resolveChatToolCategoriesFromHistory } from './chatToolConfigurationService.js';
+import {
+  buildChatToolConfigurationMetadata,
+  resolveChatToolCategoriesFromHistory,
+  resolveEffectiveChatToolProfile,
+} from './chatToolConfigurationService.js';
+import measurementService from './measurementService.js';
 import {
   downloadTelegramImage,
   getTelegramBotUsername,
@@ -18,6 +24,7 @@ import {
   sendTelegramTyping,
 } from './telegramApiService.js';
 import { log } from '../config/logging.js';
+import { loadUserTimezone } from '../utils/timezoneLoader.js';
 
 const LINK_LIFETIME_MS = 15 * 60_000;
 const MAX_TELEGRAM_HISTORY_MESSAGES = 50;
@@ -76,7 +83,139 @@ interface TelegramChatInput {
   imageFileId?: string;
 }
 
+export interface DirectWaterLogCommand {
+  amountMl: number;
+  language: 'de' | 'en';
+}
+
 const userQueues = new Map<string, Promise<void>>();
+
+const WATER_COMMAND_EXCLUSION =
+  /(?:\?|\b(?:wie\s+viel|how\s+much|ziel|goal|verbleib|remaining|fehlt|left|brauche|need|soll|should|genug|enough|empfiehl|recommend|nicht|kein(?:e|en|er|es)?|not|no)\b)/i;
+
+/**
+ * Recognizes only unambiguous, positive water log statements. Questions and
+ * goal/advice requests stay in the regular AI path.
+ */
+export function parseDirectWaterLogCommand(
+  text: string
+): DirectWaterLogCommand | null {
+  const normalized = text.trim();
+  if (
+    !/\b(?:wasser|water)\b/i.test(normalized) ||
+    WATER_COMMAND_EXCLUSION.test(normalized)
+  ) {
+    return null;
+  }
+
+  const matches = [
+    ...normalized.matchAll(
+      /(?:^|\s)(\d+(?:[.,]\d+)?)\s*(ml|milliliter|millilitres?|l|liter|litre|litres?)(?=\s|$|[.!;,])/gi
+    ),
+  ];
+  if (matches.length !== 1) return null;
+
+  const amount = Number(matches[0]?.[1]?.replace(',', '.'));
+  const unit = matches[0]?.[2]?.toLowerCase();
+  if (!Number.isFinite(amount) || amount <= 0 || !unit) return null;
+
+  const amountMl = Math.round(
+    unit === 'ml' || unit.startsWith('milli') ? amount : amount * 1000
+  );
+  if (amountMl <= 0 || amountMl > 10_000) return null;
+
+  return {
+    amountMl,
+    language: /\bwater\b/i.test(normalized) ? 'en' : 'de',
+  };
+}
+
+function waterTotalMl(value: unknown): number {
+  if (!value || typeof value !== 'object') return 0;
+  const waterMl = (value as Record<string, unknown>).water_ml;
+  const parsed = Number(waterMl);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function saveDeterministicChatTurn(
+  userId: string,
+  userContent: string,
+  assistantContent: string,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  await chatService.saveSparkyChatHistory(userId, {
+    content: userContent,
+    messageType: 'user',
+    metadata,
+    parts: [{ type: 'text', text: userContent }],
+  });
+  await chatService.saveSparkyChatHistory(userId, {
+    content: assistantContent,
+    messageType: 'assistant',
+    parts: [{ type: 'text', text: assistantContent }],
+  });
+}
+
+async function answerDirectWaterLog(
+  userId: string,
+  telegramChatId: string,
+  text: string,
+  command: DirectWaterLogCommand,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  let response: string;
+  let writePersisted = false;
+  try {
+    const timezone = await loadUserTimezone(userId);
+    const entryDate = todayInZone(timezone);
+    const before = waterTotalMl(
+      await measurementService.getWaterIntake(userId, userId, entryDate)
+    );
+    await measurementService.logWaterIntakeAmount(
+      userId,
+      userId,
+      entryDate,
+      command.amountMl,
+      'manual'
+    );
+    writePersisted = true;
+    const after = waterTotalMl(
+      await measurementService.getWaterIntake(userId, userId, entryDate)
+    );
+    if (after < before + command.amountMl) {
+      throw new Error(
+        `Water verification failed: before=${before}, amount=${command.amountMl}, after=${after}`
+      );
+    }
+    response =
+      command.language === 'en'
+        ? `Logged and saved: **${command.amountMl} ml water** for today.\nCurrent total read from the database: **${after} ml**.`
+        : `Erfasst und gespeichert: **${command.amountMl} ml Wasser** für heute.\nAktueller, aus der Datenbank gelesener Stand: **${after} ml**.`;
+  } catch (error) {
+    log(
+      'error',
+      `Verified Telegram water log failed for user ${userId}:`,
+      error
+    );
+    response = writePersisted
+      ? command.language === 'en'
+        ? 'The water entry was saved, but I could not verify the new total. Please check the web diary before sending it again.'
+        : 'Der Wassereintrag wurde gespeichert, aber ich konnte den neuen Gesamtstand nicht verifizieren. Prüfe bitte das Web-Tagebuch, bevor du ihn erneut sendest.'
+      : command.language === 'en'
+        ? 'I could not save the water entry. Nothing has been confirmed; please try again.'
+        : 'Ich konnte den Wassereintrag nicht speichern. Es wurde nichts bestätigt; bitte versuche es erneut.';
+  }
+
+  await saveDeterministicChatTurn(userId, text, response, metadata).catch(
+    (error) =>
+      log(
+        'error',
+        `Failed to save deterministic Telegram turn for user ${userId}:`,
+        error
+      )
+  );
+  await sendTelegramMessage(telegramChatId, response);
+}
 
 function storedRuntimeParts(
   value: unknown
@@ -216,6 +355,27 @@ async function answerTelegramChat(
       String(activeSetting.service_type ?? ''),
       activeSetting.chat_tool_profile
     );
+    const chatToolMetadata = buildChatToolConfigurationMetadata(
+      String(activeSetting.id),
+      resolveEffectiveChatToolProfile(
+        String(activeSetting.service_type ?? ''),
+        activeSetting.chat_tool_profile
+      ),
+      toolCategories
+    );
+    const directWaterCommand = input.imageFileId
+      ? null
+      : parseDirectWaterLogCommand(input.text);
+    if (directWaterCommand) {
+      await answerDirectWaterLog(
+        userId,
+        telegramChatId,
+        input.text,
+        directWaterCommand,
+        chatToolMetadata
+      );
+      return;
+    }
     let imageDataUrl: string | undefined;
     if (input.imageFileId) {
       try {

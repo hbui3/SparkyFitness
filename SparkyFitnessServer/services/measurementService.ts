@@ -615,25 +615,25 @@ async function logWaterIntakeAmount(
   source = 'manual'
 ) {
   try {
-    // 1. Insert the itemized log entry.
-    const logEntry = await measurementRepository.insertWaterIntakeLog(
+    // Use the sample writer because it updates the itemized entry and the
+    // aggregated daily total in one transaction. The former two-call path
+    // could leave the tables out of sync if the second write failed.
+    const [logEntry] = await measurementRepository.upsertWaterIntakeSamples(
       authenticatedUserId,
       actingUserId,
-      entryDate,
-      waterMl,
-      null,
-      null,
-      source
+      [
+        {
+          entryDate,
+          waterMl,
+          containerName: null,
+          source,
+          sourceId: null,
+        },
+      ]
     );
-    // 2. Add the amount to the aggregated daily total for this source so the
-    //    dashboard (which SUMs water_intake) reflects the logged water.
-    await measurementRepository.incrementWaterData(
-      authenticatedUserId,
-      actingUserId,
-      waterMl,
-      entryDate,
-      source
-    );
+    if (!logEntry) {
+      throw new Error('Water intake was not persisted.');
+    }
     return logEntry;
   } catch (error) {
     log(

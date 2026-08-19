@@ -1585,7 +1585,7 @@ async function upsertWaterIntakeSamples(
     entryDate: string;
     waterMl: number;
     containerId?: number | null;
-    containerName: string;
+    containerName: string | null;
     source: string;
     sourceId?: string | null;
     loggedAt?: string | null;

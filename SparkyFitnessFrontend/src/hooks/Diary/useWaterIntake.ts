@@ -80,6 +80,13 @@ const waterIntakeTotalsOptions = (date: string, userId?: string) => ({
   queryKey: waterIntakeKeys.daily(date, userId!),
   queryFn: () => fetchWaterIntakeTotals(date, userId!),
   enabled: !!userId && !!date,
+  // Water can be logged through Telegram or an external provider while the
+  // web app is open. Keep this cross-channel total fresh instead of retaining
+  // the global five-minute cache value.
+  staleTime: 0,
+  refetchOnWindowFocus: 'always' as const,
+  refetchInterval: 30_000,
+  refetchIntervalInBackground: false,
 });
 
 export const useWaterIntakeQuery = (date: string, userId?: string) => {
