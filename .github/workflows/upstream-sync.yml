@@ -291,18 +291,23 @@ jobs:
               --body-file "${PR_BODY}"
             gh pr ready "${PR_NUMBER}" --undo || true
           else
-            gh pr create \
-              --base main \
-              --head "${SYNC_BRANCH}" \
-              --draft \
-              --title "chore: review latest SparkyFitness upstream changes" \
-              --body-file "${PR_BODY}"
-            PR_NUMBER="$(gh pr list \
-              --base main \
-              --head "${SYNC_BRANCH}" \
-              --state open \
-              --json number \
-              --jq '.[0].number')"
+            # gh pr create uses a GraphQL mutation that GitHub rejects for the
+            # repository GITHUB_TOKEN even when pull-requests: write and the
+            # Actions PR setting are enabled. The equivalent REST endpoint is
+            # supported for installation tokens and preserves the draft gate.
+            PR_CREATE_PAYLOAD="${RUNNER_TEMP}/upstream-sync-pr-create.json"
+            jq -n \
+              --arg title "chore: review latest SparkyFitness upstream changes" \
+              --arg head "${SYNC_BRANCH}" \
+              --arg base "main" \
+              --rawfile body "${PR_BODY}" \
+              '{title: $title, head: $head, base: $base, body: $body, draft: true}' \
+              > "${PR_CREATE_PAYLOAD}"
+            PR_NUMBER="$(gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/pulls" \
+              --input "${PR_CREATE_PAYLOAD}" \
+              --jq '.number')"
           fi
 
           gh pr edit "${PR_NUMBER}" --add-label upstream-sync
