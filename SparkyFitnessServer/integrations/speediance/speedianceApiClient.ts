@@ -27,6 +27,33 @@ interface SpeedianceTrainingRoute {
   detail: string;
 }
 
+export interface SpeedianceCustomWorkoutActionPayload {
+  groupId: number;
+  actionLibraryId: number;
+  templatePresetId: number;
+  setsAndReps: string;
+  breakTime: string;
+  breakTime2: string;
+  sportMode: string;
+  leftRight: string;
+  selectCompletionMethod: string;
+  completionMethod: string;
+  countType: string;
+  weights: string;
+  counterweight2: string;
+  counterweight: string;
+  level: string;
+  capacity: number;
+}
+
+export interface SpeedianceCustomWorkoutPayload {
+  name: string;
+  actionLibraryList: SpeedianceCustomWorkoutActionPayload[];
+  totalCapacity: number;
+  deviceType: number;
+  bgColor: number;
+}
+
 const TRAINING_ROUTES: Record<number, SpeedianceTrainingRoute> = {
   1: {
     info: 'freeTraining',
@@ -145,6 +172,15 @@ export class SpeedianceApiClient {
     return envelope.data;
   }
 
+  private unwrapWrite(responseBody: unknown, operation: string): unknown {
+    const envelope = asEnvelope(responseBody);
+    const data = this.unwrap(responseBody);
+    if (typeof envelope.code === 'number' && envelope.code !== 0) {
+      throw new SpeedianceApiError(`Speediance rejected ${operation}.`);
+    }
+    return data;
+  }
+
   async login(email: string, password: string): Promise<void> {
     try {
       const verifyResponse = await this.http.post(
@@ -258,6 +294,133 @@ export class SpeedianceApiClient {
     }
   }
 
+  async getActionLibraryTabs(deviceType = 1): Promise<unknown[]> {
+    try {
+      const response = await this.http.get('/api/app/actionLibraryTab/list', {
+        headers: this.authenticatedHeaders(),
+        params: { deviceType },
+      });
+      const data = this.unwrap(response.data);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.rethrowReadError(error, 'exercise categories');
+    }
+  }
+
+  async getActionLibraryGroups(
+    tabId: string,
+    deviceType = 1
+  ): Promise<unknown[]> {
+    try {
+      const response = await this.http.get(
+        '/api/app/actionLibraryGroup/trainingPartGroup',
+        {
+          headers: this.authenticatedHeaders(),
+          params: { tabId, deviceTypeList: deviceType },
+        }
+      );
+      const data = this.unwrap(response.data);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.rethrowReadError(error, 'exercise library');
+    }
+  }
+
+  async getAccessories(): Promise<unknown[]> {
+    try {
+      const response = await this.http.get('/api/app/accessories/list', {
+        headers: this.authenticatedHeaders(),
+      });
+      const data = this.unwrap(response.data);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.rethrowReadError(error, 'accessories');
+    }
+  }
+
+  async getCustomWorkouts(deviceType = 1): Promise<unknown[]> {
+    try {
+      const response = await this.http.get(
+        '/api/app/v4/customTrainingTemplate/appPage',
+        {
+          headers: this.authenticatedHeaders(),
+          params: { pageNo: 1, pageSize: -1, deviceTypes: deviceType },
+        }
+      );
+      const data = this.unwrap(response.data);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.rethrowReadError(error, 'custom workouts');
+    }
+  }
+
+  async getCustomWorkoutDetail(code: string): Promise<unknown> {
+    try {
+      const response = await this.http.get(
+        '/api/app/v3/customTrainingTemplate/detailByCode',
+        {
+          headers: this.authenticatedHeaders(),
+          params: { code },
+        }
+      );
+      return this.unwrap(response.data);
+    } catch (error) {
+      this.rethrowReadError(error, 'custom workout detail');
+    }
+  }
+
+  async createCustomWorkout(
+    payload: SpeedianceCustomWorkoutPayload
+  ): Promise<unknown> {
+    try {
+      const response = await this.http.post(
+        '/api/app/v2/customTrainingTemplate',
+        payload,
+        { headers: this.authenticatedHeaders() }
+      );
+      return this.unwrapWrite(response.data, 'custom workout creation');
+    } catch (error) {
+      this.rethrowWriteError(error, 'custom workout creation');
+    }
+  }
+
+  async getTrainingCalendarMonth(
+    month: string,
+    deviceType = 1
+  ): Promise<unknown[]> {
+    try {
+      const response = await this.http.get(
+        '/api/app/v5/trainingCalendar/monthNew',
+        {
+          headers: this.authenticatedHeaders(),
+          params: { date: month, selectedDeviceType: deviceType },
+        }
+      );
+      const data = this.unwrap(response.data);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.rethrowReadError(error, 'training calendar');
+    }
+  }
+
+  async setTemplateReservation(
+    day: string,
+    templateCode: string,
+    status: 0 | 1,
+    deviceType = 1
+  ): Promise<unknown> {
+    try {
+      const response = await this.http.post(
+        '/api/app/templateReservation',
+        { status, deviceType, thatDay: day, templateCode },
+        { headers: this.authenticatedHeaders() }
+      );
+      return this.unwrapWrite(response.data, 'workout scheduling');
+    } catch (error) {
+      this.rethrowWriteError(error, 'workout scheduling');
+    }
+  }
+
   private async getTrainingResource(
     trainingId: string,
     trainingType: number,
@@ -288,5 +451,20 @@ export class SpeedianceApiClient {
       );
     }
     throw new SpeedianceApiError(`Unable to load Speediance ${resource}.`);
+  }
+
+  private rethrowWriteError(error: unknown, operation: string): never {
+    if (
+      error instanceof SpeedianceAuthenticationError ||
+      error instanceof SpeedianceApiError
+    ) {
+      throw error;
+    }
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      throw new SpeedianceAuthenticationError(
+        'Speediance rejected the current session.'
+      );
+    }
+    throw new SpeedianceApiError(`Unable to perform ${operation}.`);
   }
 }

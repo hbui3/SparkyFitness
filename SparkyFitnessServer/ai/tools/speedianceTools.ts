@@ -1,0 +1,87 @@
+import { tool } from 'ai';
+import {
+  speedianceCreateAndScheduleWorkoutRequestSchema,
+  speedianceExerciseSearchRequestSchema,
+} from '@workspace/shared';
+import { log } from '../../config/logging.js';
+import speedianceWorkoutService, {
+  SpeedianceWorkoutConflictError,
+  SpeedianceWorkoutValidationError,
+} from '../../integrations/speediance/speedianceWorkoutService.js';
+import {
+  SpeedianceApiError,
+  SpeedianceAuthenticationError,
+} from '../../integrations/speediance/speedianceApiClient.js';
+import { formatJsonResult } from './formatting.js';
+import { toolError } from './errors.js';
+
+function speedianceToolError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  log('error', `[speedianceTools] Speediance operation failed: ${message}`);
+  if (
+    error instanceof SpeedianceWorkoutValidationError ||
+    error instanceof SpeedianceWorkoutConflictError
+  ) {
+    return toolError('SPEEDIANCE_VALIDATION', message);
+  }
+  if (error instanceof SpeedianceAuthenticationError) {
+    return toolError(
+      'SPEEDIANCE_AUTH',
+      'The configured Speediance account could not be authenticated.',
+      'Ask the user to verify the Speediance provider credentials and region in Settings.'
+    );
+  }
+  if (error instanceof SpeedianceApiError) {
+    return toolError(
+      'SPEEDIANCE_API',
+      message,
+      'Do not blindly retry a write. Report the failure and preserve the presented plan.'
+    );
+  }
+  return toolError(
+    'SPEEDIANCE_ERROR',
+    'The Speediance operation failed unexpectedly.'
+  );
+}
+
+export function buildSpeedianceTools(userId: string) {
+  return {
+    sparky_search_speediance_exercises: tool({
+      description:
+        "Search the authenticated owner's real Speediance Gym Monster exercise library. First read sparky_manage_training_feedback action=context, then use a specific query. The result includes exact groupId/title/variantId, accessories, unilateral behavior, and whether the exercise is compatible with workout creation.",
+      inputSchema: speedianceExerciseSearchRequestSchema,
+      execute: async (args) => {
+        try {
+          return formatJsonResult(
+            await speedianceWorkoutService.searchSpeedianceExercises(
+              userId,
+              args
+            )
+          );
+        } catch (error) {
+          return speedianceToolError(error);
+        }
+      },
+    }),
+
+    sparky_schedule_speediance_workout: tool({
+      description:
+        'Create (or idempotently reuse) a rep-based Speediance Gym Monster workout with the Gain Muscle preset, then schedule it on a YYYY-MM-DD date. This writes to the external Speediance account. Call only after the user explicitly asked to create/schedule the presented workout. First read sparky_manage_training_feedback action=context and adapt the plan to its volume/rest guidance and active preferences. Every expectedTitle, groupId, and variantId must come from sparky_search_speediance_exercises and compatibleForWorkout must be true. An avoided exercise is blocked unless the user explicitly overrides the listed preference and its ID is included in acknowledgedPreferenceIds. Existing same-name workouts are reused only when all exercises and sets match; conflicts and ambiguous calendar state are blocked.',
+      inputSchema: speedianceCreateAndScheduleWorkoutRequestSchema,
+      execute: async (args) => {
+        try {
+          return formatJsonResult(
+            await speedianceWorkoutService.createAndScheduleSpeedianceWorkout(
+              userId,
+              args
+            )
+          );
+        } catch (error) {
+          return speedianceToolError(error);
+        }
+      },
+    }),
+  };
+}
+
+export default { buildSpeedianceTools };

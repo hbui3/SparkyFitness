@@ -1,6 +1,10 @@
 import express from 'express';
 import { z } from 'zod';
 import {
+  speedianceCreateAndScheduleWorkoutRequestSchema,
+  speedianceCreateAndScheduleWorkoutResponseSchema,
+  speedianceExerciseSearchRequestSchema,
+  speedianceExerciseSearchResponseSchema,
   speedianceSyncRequestSchema,
   speedianceSyncResponseSchema,
   speedianceStatusResponseSchema,
@@ -12,6 +16,10 @@ import {
   SpeedianceApiError,
   SpeedianceAuthenticationError,
 } from '../integrations/speediance/speedianceApiClient.js';
+import speedianceWorkoutService, {
+  SpeedianceWorkoutConflictError,
+  SpeedianceWorkoutValidationError,
+} from '../integrations/speediance/speedianceWorkoutService.js';
 
 const router = express.Router();
 const statusQuerySchema = z.object({
@@ -20,6 +28,35 @@ const statusQuerySchema = z.object({
 
 function isOwnerContext(userId: string, authenticatedUserId?: string): boolean {
   return !authenticatedUserId || userId === authenticatedUserId;
+}
+
+function ownerOnlyResponse(res: express.Response): express.Response {
+  return res.status(403).json({
+    message:
+      'Speediance credentials and writes are available to the owner only.',
+  });
+}
+
+function speedianceErrorResponse(
+  res: express.Response,
+  error: unknown,
+  operation: string
+): express.Response {
+  const message = error instanceof Error ? error.message : String(error);
+  log('error', `[speedianceRoutes] ${operation} failed: ${message}`);
+  if (error instanceof SpeedianceWorkoutValidationError) {
+    return res.status(400).json({ message });
+  }
+  if (error instanceof SpeedianceWorkoutConflictError) {
+    return res.status(409).json({ message });
+  }
+  if (error instanceof SpeedianceAuthenticationError) {
+    return res.status(401).json({ message });
+  }
+  if (error instanceof SpeedianceApiError) {
+    return res.status(502).json({ message });
+  }
+  return res.status(500).json({ message: `Speediance ${operation} failed.` });
 }
 
 /**
@@ -63,6 +100,81 @@ router.post('/sync', authMiddleware.authenticate, async (req, res) => {
     return res.status(500).json({ message: 'Speediance sync failed.' });
   }
 });
+
+/**
+ * @swagger
+ * /integrations/speediance/exercises/search:
+ *   post:
+ *     summary: Search the authenticated owner's Speediance exercise library
+ *     tags: [External Integrations]
+ */
+router.post(
+  '/exercises/search',
+  authMiddleware.authenticate,
+  async (req, res) => {
+    if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+      return ownerOnlyResponse(res);
+    }
+    const parsed = speedianceExerciseSearchRequestSchema.safeParse(
+      req.body ?? {}
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: 'Invalid Speediance exercise search request.',
+        issues: parsed.error.issues,
+      });
+    }
+    try {
+      const result = await speedianceWorkoutService.searchSpeedianceExercises(
+        req.userId,
+        parsed.data
+      );
+      return res
+        .status(200)
+        .json(speedianceExerciseSearchResponseSchema.parse(result));
+    } catch (error) {
+      return speedianceErrorResponse(res, error, 'exercise search');
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /integrations/speediance/workouts/schedule:
+ *   post:
+ *     summary: Create or reuse and schedule a verified Speediance workout
+ *     tags: [External Integrations]
+ */
+router.post(
+  '/workouts/schedule',
+  authMiddleware.authenticate,
+  async (req, res) => {
+    if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+      return ownerOnlyResponse(res);
+    }
+    const parsed = speedianceCreateAndScheduleWorkoutRequestSchema.safeParse(
+      req.body ?? {}
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: 'Invalid Speediance workout request.',
+        issues: parsed.error.issues,
+      });
+    }
+    try {
+      const result =
+        await speedianceWorkoutService.createAndScheduleSpeedianceWorkout(
+          req.userId,
+          parsed.data
+        );
+      return res
+        .status(200)
+        .json(speedianceCreateAndScheduleWorkoutResponseSchema.parse(result));
+    } catch (error) {
+      return speedianceErrorResponse(res, error, 'workout scheduling');
+    }
+  }
+);
 
 /**
  * @swagger

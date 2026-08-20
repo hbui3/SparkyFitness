@@ -1884,6 +1884,12 @@ function mutationDomainFor(
   toolName: string,
   action: string | null
 ): CoachEventDomain | null {
+  if (toolName === 'sparky_schedule_speediance_workout') {
+    return 'exercise';
+  }
+  if (toolName === 'sparky_manage_training_feedback' && action !== 'context') {
+    return 'exercise';
+  }
   if (!action) return null;
   if (toolName === 'sparky_manage_food' && FOOD_MUTATIONS.has(action)) {
     return action === 'log_water' ? 'water' : 'nutrition';

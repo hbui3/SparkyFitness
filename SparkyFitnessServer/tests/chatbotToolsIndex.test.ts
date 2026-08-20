@@ -52,9 +52,12 @@ const EXPECTED_TOOLS = [
   'sparky_manage_habits',
   'sparky_manage_medications',
   'sparky_manage_profile',
+  'sparky_manage_training_feedback',
   'sparky_scan_label',
+  'sparky_schedule_speediance_workout',
   'sparky_search_exercises',
   'sparky_search_foods',
+  'sparky_search_speediance_exercises',
   'sparky_validate_meal_suggestion',
 ];
 
@@ -83,8 +86,11 @@ const EXPECTED_CORE_TOOLS = [
   'sparky_manage_exercise',
   'sparky_manage_food',
   'sparky_manage_goals',
+  'sparky_manage_training_feedback',
+  'sparky_schedule_speediance_workout',
   'sparky_search_exercises',
   'sparky_search_foods',
+  'sparky_search_speediance_exercises',
   'sparky_validate_meal_suggestion',
 ];
 
