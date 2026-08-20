@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import {
   CHAT_TOOL_CATEGORY_SLUGS,
+  ASK_USER_TOOL_NAME,
   todayInZone,
   type ChatToolCategorySlug,
   type CoachTelegramConnectionStatus,
@@ -90,9 +91,13 @@ interface StoredChatMessage {
 }
 
 interface RuntimeChatMessagePart {
-  type: 'text' | 'image';
+  type: string;
   text?: string;
   image?: string;
+  input?: unknown;
+  output?: unknown;
+  toolCallId?: string;
+  state?: string;
 }
 
 interface RuntimeChatMessage {
@@ -282,6 +287,25 @@ function storedRuntimeParts(
       candidate.image.startsWith('data:image/')
     ) {
       return [{ type: 'image', image: candidate.image }];
+    }
+    if (
+      candidate.type === `tool-${ASK_USER_TOOL_NAME}` &&
+      candidate.input &&
+      typeof candidate.input === 'object'
+    ) {
+      return [
+        {
+          type: candidate.type,
+          input: candidate.input,
+          output: candidate.output,
+          ...(typeof candidate.toolCallId === 'string' && {
+            toolCallId: candidate.toolCallId,
+          }),
+          ...(typeof candidate.state === 'string' && {
+            state: candidate.state,
+          }),
+        },
+      ];
     }
     return [];
   });
@@ -480,7 +504,8 @@ async function answerTelegramChat(
       userId,
       userId,
       user?.role === 'admin',
-      toolCategories
+      toolCategories,
+      { allowAskUser: !input.imageFileId }
     );
     await telegramQueueService.queueTelegramDelivery({
       userId,

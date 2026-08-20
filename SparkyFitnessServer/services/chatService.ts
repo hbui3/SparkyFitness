@@ -33,6 +33,7 @@ import {
   ChatToolCategorySlug,
   CHAT_TOOL_CATEGORY_SLUGS,
   isChatToolCategorySlug,
+  type AskUserInput,
 } from '@workspace/shared';
 
 interface ChatMessagePart {
@@ -519,7 +520,8 @@ async function prepareChatContext(
   // auto-classified selection stays self-healing (escalation tool + widening
   // prepareStep) since there's no human-set limit to respect.
   categoriesAreManual = false,
-  serviceSystemPrompt?: string | null
+  serviceSystemPrompt?: string | null,
+  allowAskUser = true
 ) {
   const { chatTz, customCategoriesList } =
     await chatContextInputsCache.getOrLoad(authenticatedUserId, async () => {
@@ -582,7 +584,7 @@ async function prepareChatContext(
       toolCategories,
       // Quick-reply chips: full profile only (the small local models 'core'
       // exists for pick tools unreliably from a wider surface).
-      toolProfile === 'full'
+      allowAskUser && toolProfile === 'full'
     );
     activeToolNames = undefined; // every composed tool is sent
     prepareStep = undefined; // no mid-request widening
@@ -602,7 +604,7 @@ async function prepareChatContext(
       ENABLE_TOOLS_TOOL_NAME,
       // Quick-reply chips: full profile only. The tool belongs to no category,
       // so it is never pulled in by the classifier — it has to be added here.
-      ...(toolProfile === 'full' ? [ASK_USER_TOOL_NAME] : []),
+      ...(allowAskUser && toolProfile === 'full' ? [ASK_USER_TOOL_NAME] : []),
     ];
     prepareStep = buildEscalationPrepareStep(
       surface.toolNamesByCategory,
@@ -1040,6 +1042,56 @@ function askUserPartToText(part: ChatMessagePart): string | null {
     : asked;
 }
 
+function normalizeQuickReplyText(value: string): string {
+  return value
+    .toLocaleLowerCase('de-DE')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+function latestUserAnsweredQuickReply(
+  messages: readonly ChatMessage[]
+): boolean {
+  let latestUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex < 0) return false;
+
+  const answer = normalizeQuickReplyText(
+    extractMessageText(messages[latestUserIndex])
+  );
+  if (!answer) return false;
+
+  for (let index = latestUserIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    const parts = Array.isArray(message.parts)
+      ? message.parts
+      : Array.isArray(message.content)
+        ? message.content
+        : [];
+    for (const part of parts) {
+      if (part.type !== ASK_USER_PART_TYPE) continue;
+      const options = (part.input as { options?: unknown } | undefined)
+        ?.options;
+      if (!Array.isArray(options)) continue;
+      return options.some((option) => {
+        if (typeof option !== 'string') return false;
+        const normalizedOption = normalizeQuickReplyText(option);
+        return (
+          normalizedOption.length > 0 &&
+          ` ${answer} `.includes(` ${normalizedOption} `)
+        );
+      });
+    }
+  }
+  return false;
+}
+
 // How much of a past tool result to replay. Enough to carry the identifiers a
 // follow-up turn needs (a food's id, the matched name, its serving units)
 // without dragging whole diaries back into every subsequent request.
@@ -1425,7 +1477,8 @@ async function processChatMessage(
   userId: string,
   authenticatedUserId: string,
   actorIsAdmin = false,
-  toolCategories?: readonly string[]
+  toolCategories?: readonly string[],
+  interactionOptions?: { allowAskUser?: boolean }
 ) {
   try {
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -1492,7 +1545,9 @@ async function processChatMessage(
       aiService.chat_tool_profile,
       activeCategories,
       categoriesAreManual,
-      aiService.system_prompt
+      aiService.system_prompt,
+      interactionOptions?.allowAskUser !== false &&
+        !latestUserAnsweredQuickReply(messages)
     );
     const chatToolMetadata = buildChatToolConfigurationMetadata(
       serviceConfigId,
@@ -1583,7 +1638,10 @@ async function processChatMessage(
         log('error', 'Failed to save user chat history:', err)
       );
 
-    let finalContent = result.text.trim();
+    const quickReply = quickReplyFromToolCalls(executedToolsList, toolOutcomes);
+    let finalContent = quickReply
+      ? renderQuickReply(quickReply.input)
+      : result.text.trim();
     if (!finalContent) {
       if (toolOutcomes.length > 0) {
         finalContent = fallbackFromToolOutcomes(toolOutcomes);
@@ -1597,12 +1655,24 @@ async function processChatMessage(
     }
 
     if (finalContent) {
+      const assistantParts: Record<string, unknown>[] = [
+        { type: 'text', text: finalContent },
+      ];
+      if (quickReply) {
+        assistantParts.push({
+          type: ASK_USER_PART_TYPE,
+          toolCallId: quickReply.toolCallId,
+          state: 'output-available',
+          input: quickReply.input,
+          output: '',
+        });
+      }
       await chatRepository
         .saveChatHistory({
           user_id: userId,
           content: finalContent,
           messageType: 'assistant',
-          parts: [{ type: 'text', text: finalContent }],
+          parts: assistantParts,
         })
         .catch((err: unknown) =>
           log('error', 'Failed to save assistant chat history:', err)
@@ -1620,6 +1690,7 @@ async function processChatMessage(
       executedTools: executedToolsList,
       toolOutcomes,
       mutationDomains,
+      quickReply: quickReply?.input ?? null,
     };
   } catch (error) {
     log('error', `Error processing chat message for user ${userId}:`, error);
@@ -1841,6 +1912,11 @@ interface ExecutedToolCall {
   args: Record<string, unknown>;
 }
 
+interface ParsedQuickReply {
+  toolCallId: string;
+  input: AskUserInput;
+}
+
 export interface ChatToolOutcome {
   toolCallId: string;
   name: string;
@@ -1954,6 +2030,56 @@ function collectToolOutcomes(
   }
 }
 
+function parseAskUserInput(
+  value: Record<string, unknown>
+): AskUserInput | null {
+  const mode = value.mode;
+  const question = value.question;
+  const options = value.options;
+  if (
+    (mode !== 'ask' && mode !== 'choose') ||
+    typeof question !== 'string' ||
+    !question.trim() ||
+    !Array.isArray(options) ||
+    options.length < 2 ||
+    !options.every((option): option is string =>
+      Boolean(typeof option === 'string' && option.trim())
+    )
+  ) {
+    return null;
+  }
+  return {
+    mode,
+    question: question.trim(),
+    options: options.map((option) => option.trim()),
+  };
+}
+
+function quickReplyFromToolCalls(
+  calls: readonly ExecutedToolCall[],
+  outcomes: readonly ChatToolOutcome[]
+): ParsedQuickReply | null {
+  const call = [...calls]
+    .reverse()
+    .find((candidate) => candidate.name === ASK_USER_TOOL_NAME);
+  if (!call) return null;
+  const input = parseAskUserInput(call.args);
+  if (!input) return null;
+  const outcome = [...outcomes]
+    .reverse()
+    .find((candidate) => candidate.name === ASK_USER_TOOL_NAME);
+  if (!outcome) return null;
+  return { toolCallId: outcome.toolCallId, input };
+}
+
+function renderQuickReply(input: AskUserInput): string {
+  return [
+    input.question,
+    '',
+    ...input.options.map((option, index) => `${index + 1}. ${option}`),
+  ].join('\n');
+}
+
 function successfulMutationDomains(
   outcomes: readonly ChatToolOutcome[]
 ): CoachEventDomain[] {
@@ -1971,15 +2097,18 @@ function successfulMutationDomains(
 function fallbackFromToolOutcomes(
   outcomes: readonly ChatToolOutcome[]
 ): string {
-  const successfulMutation = [...outcomes]
+  const userVisibleOutcomes = outcomes.filter(
+    (outcome) => outcome.name !== ASK_USER_TOOL_NAME
+  );
+  const successfulMutation = [...userVisibleOutcomes]
     .reverse()
     .find((outcome) => outcome.success && outcome.mutationDomain);
   if (successfulMutation) return successfulMutation.output;
-  const failedMutation = [...outcomes]
+  const failedMutation = [...userVisibleOutcomes]
     .reverse()
     .find((outcome) => !outcome.success && outcome.mutationDomain);
   if (failedMutation) return failedMutation.output || EMPTY_RESPONSE_ERROR_TEXT;
-  const successfulResult = [...outcomes]
+  const successfulResult = [...userVisibleOutcomes]
     .reverse()
     .find((outcome) => outcome.success);
   return successfulResult?.output || EMPTY_RESPONSE_ERROR_TEXT;
@@ -2050,6 +2179,12 @@ function withEmptyCompletionGuard(
           sawText = true;
         }
         if (chunk.type === 'finish' && !sawText) {
+          if (
+            toolOutcomes.some((outcome) => outcome.name === ASK_USER_TOOL_NAME)
+          ) {
+            controller.enqueue(chunk);
+            return;
+          }
           const fallback = fallbackFromToolOutcomes(toolOutcomes);
           if (
             toolOutcomes.length > 0 &&
@@ -2165,7 +2300,8 @@ async function processChatMessageStream(
       aiService.chat_tool_profile,
       activeCategories,
       categoriesAreManual,
-      aiService.system_prompt
+      aiService.system_prompt,
+      !latestUserAnsweredQuickReply(messages)
     );
     const chatToolMetadata = buildChatToolConfigurationMetadata(
       serviceConfigId,
