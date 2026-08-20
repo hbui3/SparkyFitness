@@ -1,4 +1,8 @@
 import { getClient } from '../db/poolManager.js';
+import {
+  selectCanonicalSleepEntry,
+  type CanonicalSleepCandidate,
+} from '../utils/canonicalSleep.js';
 
 // Aggregate queries backing the chatbot coach tools (sparky_get_health_summary,
 // sparky_analyze_trends, sparky_get_30day_trends, sparky_detect_patterns,
@@ -318,11 +322,11 @@ async function getRecoverySignals(userId: string, today: string) {
         [userId, today]
       ),
       client.query(
-        `SELECT entry_date, duration_in_seconds, sleep_score
+        `SELECT entry_date, duration_in_seconds, time_asleep_in_seconds,
+                sleep_score, source, updated_at
          FROM sleep_entries
-         WHERE user_id = $1 AND entry_date <= $2::date
-         ORDER BY entry_date DESC, updated_at DESC NULLS LAST
-         LIMIT 1`,
+         WHERE user_id = $1
+           AND entry_date BETWEEN $2::date - 1 AND $2::date`,
         [userId, today]
       ),
       client.query(
@@ -350,7 +354,7 @@ async function getRecoverySignals(userId: string, today: string) {
     ]);
     return {
       health: health.rows[0] ?? null,
-      sleep: sleep.rows[0] ?? null,
+      sleep: selectCanonicalSleepEntry(sleep.rows as CanonicalSleepCandidate[]),
       hrv: hrv.rows[0] ?? null,
       muscles: muscles.rows,
     };

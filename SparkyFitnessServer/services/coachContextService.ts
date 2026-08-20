@@ -15,6 +15,10 @@ import goalService from './goalService.js';
 import { getDailySummary } from './dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import adaptiveTrainingService from './adaptiveTrainingService.js';
+import {
+  canonicalSleepScore,
+  canonicalSleepSeconds,
+} from '../utils/canonicalSleep.js';
 
 export interface CanonicalCoachGoals {
   primaryGoal: string | null;
@@ -152,6 +156,8 @@ function buildRecoveryContext(
   const health = (rows.health ?? {}) as Record<string, unknown>;
   const sleep = (rows.sleep ?? {}) as Record<string, unknown>;
   const hrv = (rows.hrv ?? {}) as Record<string, unknown>;
+  const sleepSeconds =
+    rows.sleep === null ? null : canonicalSleepSeconds(rows.sleep);
   return {
     observedOn:
       health.entry_date || sleep.entry_date || hrv.entry_date
@@ -161,12 +167,10 @@ function buildRecoveryContext(
               | string
           )
         : null,
-    sleepHours: rounded(
-      finiteNumber(sleep.duration_in_seconds) === null
-        ? null
-        : (finiteNumber(sleep.duration_in_seconds) as number) / 3600
+    sleepHours: rounded(sleepSeconds === null ? null : sleepSeconds / 3600),
+    sleepScore: rounded(
+      rows.sleep === null ? null : canonicalSleepScore(rows.sleep)
     ),
-    sleepScore: rounded(finiteNumber(sleep.sleep_score)),
     restingHeartRate: rounded(finiteNumber(health.resting_heart_rate)),
     hrvRmssdMs: latestHrvRmssd(hrv.samples),
     vo2Max: finiteNumber(health.vo2_max),
