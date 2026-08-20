@@ -350,7 +350,7 @@ describe('createAndScheduleSpeedianceWorkout', () => {
     );
   });
 
-  it('reuses an identical workout and existing reservation without duplicate writes', async () => {
+  it('reuses a workout after Speediance normalizes managed action fields', async () => {
     const expected = workoutRequest();
     expected.exercises = [expected.exercises[0]];
     const action = {
@@ -361,8 +361,8 @@ describe('createAndScheduleSpeedianceWorkout', () => {
       breakTime2: '90,90',
       sportMode: '1,3',
       leftRight: '0,0',
-      completionMethod: '1,1',
-      countType: '1,1',
+      completionMethod: '1',
+      countType: '2',
       counterweight2: '12,12',
     };
     mocks.getCustomWorkouts.mockResolvedValue([
