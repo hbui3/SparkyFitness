@@ -1568,51 +1568,77 @@ async function processChatMessage(
       authenticatedUserId,
       buildLlmWindow(conversationMessages, toolProfile)
     );
+    const { content: userMessageContent, parts: userMessageParts } =
+      describeUserMessage(
+        conversationMessages[conversationMessages.length - 1]
+      );
 
     const executedToolsList: ExecutedToolCall[] = [];
     const toolOutcomes: ChatToolOutcome[] = [];
+    type BlockingGenerationMessages = NonNullable<
+      Parameters<typeof generateText>[0]['messages']
+    >;
+    const captureStep: NonNullable<
+      Parameters<typeof generateText>[0]['onStepFinish']
+    > = ({ toolCalls, toolResults }) => {
+      collectToolOutcomes(
+        toolCalls ?? [],
+        toolResults ?? [],
+        executedToolsList,
+        toolOutcomes
+      );
+      if (toolResults && toolResults.length > 0) {
+        const sizes = toolResults
+          .map(
+            (toolResult) =>
+              `${toolResult.toolName}=${String(toolResult.output ?? '').length}c`
+          )
+          .join(' ');
+        log('info', `[chat] tool result sizes: ${sizes}`);
+      }
+    };
+    const runGeneration = (generationMessages: BlockingGenerationMessages) =>
+      generateText({
+        model: modelInstance,
+        system: systemPromptContent,
+        messages: generationMessages,
+        tools,
+        // Narrows the published/sent tool schemas to this turn's classified
+        // categories; sparky_enable_tools lets the model escalate mid-request
+        // via prepareStep if it turns out to need a dormant category.
+        activeTools: activeToolNames,
+        prepareStep,
+        providerOptions: chatProviderOptions,
+        // Low temperature only for small local models (core profile); cloud and
+        // full-profile Ollama keep provider defaults.
+        ...(toolProfile === 'core' && {
+          temperature: CORE_PROFILE_CHAT_TEMPERATURE,
+        }),
+        // Tighter retry ceiling for cache-less core-profile backends, where every
+        // retry re-processes the full prefix.
+        stopWhen: buildChatStopConditions(toolProfile),
+        maxRetries:
+          toolProfile === 'core'
+            ? CORE_PROFILE_MAX_PROVIDER_RETRIES
+            : MAX_PROVIDER_RETRIES,
+        abortSignal: AbortSignal.timeout(CHAT_REQUEST_TIMEOUT_MS),
+        onStepFinish: captureStep,
+      });
 
-    const result = await generateText({
-      model: modelInstance,
-      system: systemPromptContent,
-      messages: llmMessages as NonNullable<
-        Parameters<typeof generateText>[0]['messages']
-      >,
-      tools,
-      // Narrows the published/sent tool schemas to this turn's classified
-      // categories; sparky_enable_tools lets the model escalate mid-request
-      // via prepareStep if it turns out to need a dormant category.
-      activeTools: activeToolNames,
-      prepareStep,
-      providerOptions: chatProviderOptions,
-      // Low temperature only for small local models (core profile); cloud and
-      // full-profile Ollama keep provider defaults.
-      ...(toolProfile === 'core' && {
-        temperature: CORE_PROFILE_CHAT_TEMPERATURE,
-      }),
-      // Tighter retry ceiling for cache-less core-profile backends, where every
-      // retry re-processes the full prefix.
-      stopWhen: buildChatStopConditions(toolProfile),
-      maxRetries:
-        toolProfile === 'core'
-          ? CORE_PROFILE_MAX_PROVIDER_RETRIES
-          : MAX_PROVIDER_RETRIES,
-      abortSignal: AbortSignal.timeout(CHAT_REQUEST_TIMEOUT_MS),
-      onStepFinish({ toolCalls, toolResults }) {
-        collectToolOutcomes(
-          toolCalls ?? [],
-          toolResults ?? [],
-          executedToolsList,
-          toolOutcomes
-        );
-        if (toolResults && toolResults.length > 0) {
-          const sizes = toolResults
-            .map((r) => `${r.toolName}=${String(r.output ?? '').length}c`)
-            .join(' ');
-          log('info', `[chat] tool result sizes: ${sizes}`);
-        }
-      },
-    });
+    let result = await runGeneration(llmMessages as BlockingGenerationMessages);
+    let repairedFoodDiaryWrite = false;
+    if (needsFoodDiaryRepair(messages, result.text, toolOutcomes)) {
+      repairedFoodDiaryWrite = true;
+      log(
+        'warn',
+        '[chat] Assistant claimed a food diary write without a verified entry; retrying the tool workflow once.'
+      );
+      result = await runGeneration([
+        ...llmMessages,
+        ...result.response.messages,
+        { role: 'user', content: FOOD_LOG_REPAIR_PROMPT },
+      ] as BlockingGenerationMessages);
+    }
 
     const usage = result.totalUsage ?? result.usage;
     log(
@@ -1621,11 +1647,6 @@ async function processChatMessage(
     );
 
     // Save history dynamically to DB (replacing frontend client-side saves)
-    const { content: userMessageContent, parts: userMessageParts } =
-      describeUserMessage(
-        conversationMessages[conversationMessages.length - 1]
-      );
-
     await chatRepository
       .saveChatHistory({
         user_id: userId,
@@ -1651,6 +1672,21 @@ async function processChatMessage(
         );
       } else {
         finalContent = EMPTY_RESPONSE_ERROR_TEXT;
+      }
+    }
+    if (repairedFoodDiaryWrite) {
+      const verifiedFoodDiaryWrite =
+        latestSuccessfulFoodDiaryWrite(toolOutcomes);
+      if (verifiedFoodDiaryWrite) {
+        // After a repair attempt, only the tool's write confirmation may claim
+        // success. This prevents a second fluent hallucination from masking a
+        // missing diary row.
+        finalContent = verifiedFoodDiaryWrite.output;
+      } else if (
+        !result.text.trim() ||
+        assistantClaimsFoodDiaryWrite(result.text)
+      ) {
+        finalContent = unconfirmedFoodLogText(result.text);
       }
     }
 
@@ -1921,6 +1957,7 @@ export interface ChatToolOutcome {
   toolCallId: string;
   name: string;
   action: string | null;
+  foodDiaryWrite: boolean;
   success: boolean;
   mutationDomain: CoachEventDomain | null;
   output: string;
@@ -1939,6 +1976,18 @@ const FOOD_MUTATIONS = new Set([
   'save_as_meal_template',
   'log_water',
 ]);
+const FOOD_DIARY_WRITE_ACTIONS = new Set([
+  'log_food',
+  'log_external_food',
+  'log_meal',
+  'copy_from_yesterday',
+]);
+const FOOD_LOG_REPAIR_PROMPT =
+  "Internal execution check: the previous answer claimed that food was logged, but no successful diary write was confirmed. Continue the user's original request now. If create_food already succeeded without logging, use the Food ID from its tool result and call log_food; do not create the food again. Call sparky_manage_food until its result explicitly confirms the diary entry. Never claim success from a catalog-only creation or from your own text.";
+const UNCONFIRMED_FOOD_LOG_TEXT =
+  'The food diary entry could not be confirmed, so nothing is being reported as logged. Please try again.';
+const UNCONFIRMED_FOOD_LOG_TEXT_DE =
+  'Der Tagebucheintrag konnte nicht bestätigt werden. Deshalb melde ich das Essen nicht als geloggt. Bitte versuche es erneut.';
 const EXERCISE_MUTATIONS = new Set([
   'create_exercise',
   'log_exercise',
@@ -2023,11 +2072,108 @@ function collectToolOutcomes(
       toolCallId: result.toolCallId,
       name: result.toolName,
       action,
+      foodDiaryWrite:
+        result.toolName === 'sparky_manage_food' &&
+        (FOOD_DIARY_WRITE_ACTIONS.has(action ?? '') ||
+          (action === 'create_food' &&
+            Boolean(args.meal_type_id || args.meal_type))),
       success: Boolean(output) && !isToolErrorText(output),
       mutationDomain: mutationDomainFor(result.toolName, action),
       output,
     });
   }
+}
+
+function isSuccessfulFoodDiaryWrite(outcome: ChatToolOutcome): boolean {
+  return outcome.success && outcome.foodDiaryWrite;
+}
+
+function latestSuccessfulFoodDiaryWrite(
+  outcomes: readonly ChatToolOutcome[]
+): ChatToolOutcome | null {
+  return [...outcomes].reverse().find(isSuccessfulFoodDiaryWrite) ?? null;
+}
+
+function assistantClaimsFoodDiaryWrite(text: string): boolean {
+  const mutationWord =
+    '(?:logged|recorded|added|saved|geloggt|eingetragen|erfasst)';
+  const negative = new RegExp(
+    `\\b(?:not|never|nicht|kein(?:e|en|er|es)?|couldn['’]?t|could not|failed|fehlgeschlagen|konnte[^.!?\\n]{0,20}nicht)\\b[^.!?\\n]{0,80}\\b${mutationWord}\\b`,
+    'i'
+  );
+  if (negative.test(text)) return false;
+  return (
+    new RegExp(`(?:^|\\n)\\s*(?:✅\\s*)?${mutationWord}\\b`, 'im').test(text) ||
+    new RegExp(
+      `\\b(?:i(?:['’]ve| have)?|ich habe|successfully|erfolgreich|wurde)\\b[^.!?\\n]{0,120}\\b${mutationWord}\\b`,
+      'i'
+    ).test(text)
+  );
+}
+
+function userRequestedFoodDiaryWrite(
+  messages: readonly ChatMessage[]
+): boolean {
+  let latestUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex < 0) return false;
+
+  const userText = extractMessageText(messages[latestUserIndex]).trim();
+  if (
+    /\?$/.test(userText) &&
+    /\b(?:was|wann|wie|welche|what|when|which|did|habe ich)\b/i.test(userText)
+  ) {
+    return false;
+  }
+  if (
+    /\b(?:logged|log(?:ge|gen|ging)?|logg(?:e|en|t|te)?|eintrag(?:en|e|t)?|erfass(?:e|en|t)?|gegessen|verzehrt|consum(?:e|ed)|ate|eaten|add|record|track)\b/i.test(
+      userText
+    ) ||
+    /\b\d+(?:[.,]\d+)?\s*(?:g|kg|ml|l|stück|stueck|pieces?|slices?|servings?|portion(?:en)?|brötchen|broetchen)\b/i.test(
+      userText
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    !/^(?:ja|yes|yep|ok(?:ay)?|passt|mach(?: das)?|bitte|genau)[.! ]*$/i.test(
+      userText
+    )
+  ) {
+    return false;
+  }
+  for (let index = latestUserIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    return /\b(?:log\w*|logg\w*|eintrag\w*|erfass\w*|tagebuch|diary)\b/i.test(
+      extractMessageText(message)
+    );
+  }
+  return false;
+}
+
+function needsFoodDiaryRepair(
+  messages: readonly ChatMessage[],
+  assistantText: string,
+  outcomes: readonly ChatToolOutcome[]
+): boolean {
+  return (
+    userRequestedFoodDiaryWrite(messages) &&
+    assistantClaimsFoodDiaryWrite(assistantText) &&
+    !latestSuccessfulFoodDiaryWrite(outcomes)
+  );
+}
+
+function unconfirmedFoodLogText(assistantText: string): string {
+  return /\b(?:ich|geloggt|eingetragen|erfasst|tagebuch)\b/i.test(assistantText)
+    ? UNCONFIRMED_FOOD_LOG_TEXT_DE
+    : UNCONFIRMED_FOOD_LOG_TEXT;
 }
 
 function parseAskUserInput(

@@ -145,7 +145,7 @@ const createFoodSchema = z
     action: z
       .literal('create_food')
       .describe(
-        "Create a food. AI clients: you MUST search the web and populate as many micro-nutrients (fat details, fiber, sugar, sodium, potassium, calcium, iron, vitamins), GI classification, and brand ('Homemade' or 'Traditional' if generic) as possible rather than just core macros."
+        "Create a food. AI clients: you MUST search the web and populate as many micro-nutrients (fat details, fiber, sugar, sodium, potassium, calcium, iron, vitamins), GI classification, and brand ('Homemade' or 'Traditional' if generic) as possible rather than just core macros. When the user asked to log/eat/add this food, meal_type (or meal_type_id) is REQUIRED so creation and diary logging happen atomically."
       ),
     food_name: z.string().min(1).max(200).describe('Name of the new food item'),
     brand: z.string().max(200).optional().describe('Brand name of the food'),
@@ -258,15 +258,15 @@ const createFoodSchema = z
     meal_type: mealTypeEnum
       .optional()
       .describe(
-        'Optional built-in meal type fallback for automatic logging; ignored when meal_type_id is provided'
+        'Built-in meal type for automatic logging. REQUIRED for create_food when the user asked to log/eat/add the food; omit only for an explicit catalog-only creation. Ignored when meal_type_id is provided.'
       ),
     meal_type_id: uuidSchema
       .optional()
       .describe(
-        'Optional meal type UUID for automatic logging, including custom meal types'
+        'Meal type UUID for automatic logging, including custom meal types. REQUIRED instead of meal_type for a custom meal when create_food must also log.'
       ),
     entry_date: optionalDateSchema.describe(
-      'Optional: Date for automatic log (YYYY-MM-DD)'
+      'Date for automatic logging (YYYY-MM-DD); include it when create_food must also log.'
     ),
     entry_time: optionalEntryTimeSchema,
   })
@@ -724,12 +724,12 @@ export const manageFoodInput = z.object({
   meal_type: mealTypeEnum
     .optional()
     .describe(
-      'Built-in fallback: breakfast | lunch | dinner | snacks. Ignored when meal_type_id is provided.'
+      'Built-in fallback: breakfast | lunch | dinner | snacks. For create_food this is REQUIRED when the user asked to log/eat/add the food; omit only for catalog-only creation. Ignored when meal_type_id is provided.'
     ),
   meal_type_id: uuidSchema
     .optional()
     .describe(
-      'Meal type UUID for logging or moving entries, including custom meal types'
+      'Meal type UUID for logging or moving entries, including custom meal types. For create_food it atomically creates and logs.'
     ),
   entry_date: dateSchema.optional().describe('Date for the entry (YYYY-MM-DD)'),
   entry_time: optionalEntryTimeSchema,
