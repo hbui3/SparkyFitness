@@ -45,7 +45,6 @@ interface CanonicalRemoteAction {
   sportMode: string;
   leftRight: string;
   completionMethod: string;
-  countType: string;
   counterweight2: string;
 }
 
@@ -94,6 +93,14 @@ function numericRemoteId(value: string, label: string): number {
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+}
+
+function normalizeUniformList(value: unknown): string {
+  const serialized = String(value ?? '');
+  const parts = serialized.split(',');
+  return parts.length > 0 && parts.every((part) => part === parts[0])
+    ? parts[0]
+    : serialized;
 }
 
 function parseRemoteIds(value: unknown): string[] {
@@ -436,8 +443,7 @@ function canonicalAction(value: unknown): CanonicalRemoteAction | null {
     breakTime2: String(value.breakTime2 ?? value.breakTime ?? ''),
     sportMode: String(value.sportMode ?? ''),
     leftRight: String(value.leftRight ?? ''),
-    completionMethod: String(value.completionMethod ?? ''),
-    countType: String(value.countType ?? ''),
+    completionMethod: normalizeUniformList(value.completionMethod),
     counterweight2: String(value.counterweight2 ?? value.counterweight ?? ''),
   };
 }
@@ -453,8 +459,7 @@ function canonicalPayloadActions(
     breakTime2: action.breakTime2,
     sportMode: action.sportMode,
     leftRight: action.leftRight,
-    completionMethod: action.completionMethod,
-    countType: action.countType,
+    completionMethod: normalizeUniformList(action.completionMethod),
     counterweight2: action.counterweight2,
   }));
 }
