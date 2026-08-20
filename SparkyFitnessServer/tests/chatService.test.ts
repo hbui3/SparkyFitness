@@ -419,14 +419,17 @@ describe('chatService', () => {
       outputTokens: { total: 5, text: 5, reasoning: 0 },
     };
 
-    const toolCallStep = (input: Record<string, unknown>) => ({
+    const toolCallStep = (
+      input: Record<string, unknown>,
+      toolName = 'sparky_manage_food'
+    ) => ({
       finishReason: { unified: 'tool-calls' as const, raw: undefined },
       usage,
       content: [
         {
           type: 'tool-call' as const,
           toolCallId: 'call-1',
-          toolName: 'sparky_manage_food',
+          toolName,
           input: JSON.stringify(input),
         },
       ],
@@ -579,6 +582,42 @@ describe('chatService', () => {
           user_id: activeUserId,
           messageType: 'assistant',
           content: 'Logged 2 eggs for breakfast!',
+        })
+      );
+    });
+
+    it('renders and persists a blocking quick reply without exposing its internal tool result', async () => {
+      const askInput = {
+        mode: 'choose',
+        question: 'Welches Brötchen meinst du?',
+        options: ['Vollkornbrötchen', 'Weizenbrötchen', 'Laugenbrötchen'],
+      };
+      scriptModel([toolCallStep(askInput, ASK_USER_TOOL_NAME)]);
+
+      const result = await chatService.processChatMessage(
+        [{ role: 'user', content: 'Ich hatte ein Brötchen.' }],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+
+      expect(result.content).toBe(
+        'Welches Brötchen meinst du?\n\n1. Vollkornbrötchen\n2. Weizenbrötchen\n3. Laugenbrötchen'
+      );
+      expect(result.content).not.toContain('Presented 3 options');
+      expect(result.quickReply).toEqual(askInput);
+      expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageType: 'assistant',
+          content: result.content,
+          parts: [
+            { type: 'text', text: result.content },
+            expect.objectContaining({
+              type: `tool-${ASK_USER_TOOL_NAME}`,
+              input: askInput,
+              output: '',
+            }),
+          ],
         })
       );
     });
@@ -1030,6 +1069,7 @@ describe('chatService', () => {
       const sent = JSON.stringify(model.doGenerateCalls[0].prompt);
       expect(sent).toContain('How big were they?');
       expect(sent).toContain('75g each — small');
+      expect(modelToolNames(model)).not.toContain(ASK_USER_TOOL_NAME);
     });
 
     // Without this the model forgets what it already looked up: after the user
@@ -1110,6 +1150,23 @@ describe('chatService', () => {
       );
 
       expect(modelToolNames(model)).toContain(ASK_USER_TOOL_NAME);
+    });
+
+    it('withholds quick replies when the channel marks the turn as directly actionable', async () => {
+      const model = scriptModel([textStep('Logged from the label.')]);
+
+      await chatService.processChatMessage(
+        [{ role: 'user', content: '3 Brötchen from this label' }],
+        'svc-1',
+        activeUserId,
+        actorUserId,
+        false,
+        ['food'],
+        { allowAskUser: false }
+      );
+
+      expect(modelToolNames(model)).not.toContain(ASK_USER_TOOL_NAME);
+      expect(modelToolNames(model)).toContain('sparky_manage_food');
     });
   });
 

@@ -237,7 +237,8 @@ describe('telegramCoachService', () => {
         'user-1',
         'user-1',
         false,
-        [...CHAT_TOOL_CATEGORY_SLUGS]
+        [...CHAT_TOOL_CATEGORY_SLUGS],
+        { allowAskUser: true }
       );
       expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -412,7 +413,8 @@ describe('telegramCoachService', () => {
         'user-1',
         'user-1',
         false,
-        ['reports', 'coaching']
+        ['reports', 'coaching'],
+        { allowAskUser: true }
       );
     });
   });
@@ -477,7 +479,8 @@ describe('telegramCoachService', () => {
         'user-1',
         'user-1',
         false,
-        ['food', 'reports']
+        ['food', 'reports'],
+        { allowAskUser: false }
       );
       expect(telegramQueueService.queueTelegramDelivery).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -544,7 +547,80 @@ describe('telegramCoachService', () => {
         'user-1',
         'user-1',
         false,
-        CHAT_TOOL_CATEGORY_SLUGS.filter((slug) => slug !== 'vision')
+        CHAT_TOOL_CATEGORY_SLUGS.filter((slug) => slug !== 'vision'),
+        { allowAskUser: true }
+      );
+    });
+  });
+
+  it('restores a pending quick-reply tool so a typed option resolves it', async () => {
+    vi.mocked(coachTelegramRepository.claimIncomingUpdate).mockResolvedValue({
+      userId: 'user-1',
+      claimed: true,
+    });
+    const askInput = {
+      mode: 'choose',
+      question: 'Welches Brötchen meinst du?',
+      options: ['Vollkornbrötchen', 'Weizenbrötchen', 'Laugenbrötchen'],
+    };
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([
+      {
+        message_type: 'assistant',
+        content: 'Welches Brötchen meinst du?',
+        parts: [
+          { type: 'text', text: 'Welches Brötchen meinst du?' },
+          {
+            type: 'tool-sparky_ask_user',
+            toolCallId: 'ask-1',
+            state: 'output-available',
+            input: askInput,
+            output: '',
+          },
+        ],
+      },
+    ] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(chatService.processChatMessage).mockResolvedValue({
+      content: 'Das Weizenbrötchen wurde eingetragen.',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 15,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: 'Weizenbrötchen habe ich gegessen',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(chatService.processChatMessage).toHaveBeenCalledWith(
+        [
+          {
+            role: 'assistant',
+            content: 'Welches Brötchen meinst du?',
+            parts: [
+              { type: 'text', text: 'Welches Brötchen meinst du?' },
+              {
+                type: 'tool-sparky_ask_user',
+                toolCallId: 'ask-1',
+                state: 'output-available',
+                input: askInput,
+                output: '',
+              },
+            ],
+          },
+          { role: 'user', content: 'Weizenbrötchen habe ich gegessen' },
+        ],
+        'ai-1',
+        'user-1',
+        'user-1',
+        false,
+        [...CHAT_TOOL_CATEGORY_SLUGS],
+        { allowAskUser: true }
       );
     });
   });
@@ -640,7 +716,8 @@ describe('telegramCoachService', () => {
       'user-1',
       'user-1',
       false,
-      [...CHAT_TOOL_CATEGORY_SLUGS]
+      [...CHAT_TOOL_CATEGORY_SLUGS],
+      { allowAskUser: true }
     );
   });
 });
