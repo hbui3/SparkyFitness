@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getCustomWorkouts: vi.fn(),
   getCustomWorkoutDetail: vi.fn(),
   createCustomWorkout: vi.fn(),
+  updateCustomWorkout: vi.fn(),
   getCalendar: vi.fn(),
   setReservation: vi.fn(),
   getCredentials: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('../integrations/speediance/speedianceApiClient.js', () => ({
       getCustomWorkouts: mocks.getCustomWorkouts,
       getCustomWorkoutDetail: mocks.getCustomWorkoutDetail,
       createCustomWorkout: mocks.createCustomWorkout,
+      updateCustomWorkout: mocks.updateCustomWorkout,
       getTrainingCalendarMonth: mocks.getCalendar,
       setTemplateReservation: mocks.setReservation,
     };
@@ -144,7 +146,10 @@ beforeEach(() => {
         dataStatType: 0,
         completionMethod: 1,
         accessories: '2,5',
-        actionLibraryList: [{ id: 9001 }],
+        actionLibraryList: [
+          { id: 8001, coachLanguage: 'en', coach: { name: 'Mike' } },
+          { id: 9001, coachLanguage: 'de', coach: { name: 'Daniel' } },
+        ],
       };
     }
     return {
@@ -153,7 +158,10 @@ beforeEach(() => {
       dataStatType: 0,
       completionMethod: 1,
       accessories: '5',
-      actionLibraryList: [{ id: 9002 }],
+      actionLibraryList: [
+        { id: 8002, coachLanguage: 'en', coach: { name: 'Mike' } },
+        { id: 9002, coachLanguage: 'de', coach: { name: 'Daniel' } },
+      ],
     };
   });
 });
@@ -203,6 +211,43 @@ describe('searchSpeedianceExercises', () => {
     });
     expect(mocks.getGroups).toHaveBeenCalledWith('1', 1);
     expect(mocks.getGroups).toHaveBeenCalledWith('2', 1);
+  });
+
+  it('marks an exercise without a German coach video as unavailable for workout creation', async () => {
+    mocks.getTabs.mockResolvedValue([{ id: 1, name: 'Upper Body' }]);
+    mocks.getGroups.mockResolvedValue([
+      {
+        name: 'Chest',
+        actionLibraryGroupList: [
+          {
+            id: 116,
+            title: 'Barbell Bench Press',
+            accessories: '2,5',
+            deviceTypeList: [1],
+          },
+        ],
+      },
+    ]);
+    mocks.getGroupDetail.mockResolvedValueOnce({
+      title: 'Barbell Bench Press',
+      isLeftRight: 0,
+      dataStatType: 0,
+      completionMethod: 1,
+      accessories: '2,5',
+      actionLibraryList: [
+        { id: 8001, coachLanguage: 'en', coach: { name: 'Mike' } },
+      ],
+    });
+
+    const result = await searchSpeedianceExercises('user-1', {
+      query: 'bench press',
+      limit: 20,
+    });
+
+    expect(result.exercises[0]).toMatchObject({
+      variantId: '8001',
+      compatibleForWorkout: false,
+    });
   });
 });
 
@@ -391,6 +436,64 @@ describe('createAndScheduleSpeedianceWorkout', () => {
     expect(result.workout.created).toBe(false);
     expect(result.schedule.status).toBe('already_scheduled');
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.setReservation).not.toHaveBeenCalled();
+  });
+
+  it('updates an existing workout when only its coach video variants differ', async () => {
+    const expected = workoutRequest();
+    expected.exercises = [expected.exercises[0]];
+    const englishAction = {
+      groupId: 116,
+      actionLibraryId: 8001,
+      templatePresetId: 1,
+      setsAndReps: '10,10',
+      breakTime2: '90,90',
+      sportMode: '1,3',
+      leftRight: '0,0',
+      completionMethod: '1',
+      counterweight2: '12,12',
+    };
+    let updatedPayload: SpeedianceCustomWorkoutPayload | null = null;
+    mocks.getCustomWorkouts.mockResolvedValue([
+      { id: 501, code: 'sparky-code', name: expected.name },
+    ]);
+    mocks.getCustomWorkoutDetail.mockImplementation(async () => ({
+      name: expected.name,
+      actionLibraryList: updatedPayload?.actionLibraryList ?? [englishAction],
+    }));
+    mocks.updateCustomWorkout.mockImplementation(
+      async (_templateId: number, payload: SpeedianceCustomWorkoutPayload) => {
+        updatedPayload = payload;
+        return { id: 501, code: 'sparky-code' };
+      }
+    );
+    mocks.getCalendar.mockResolvedValue([
+      {
+        date: scheduleDate,
+        trainingPlanList: [
+          {
+            id: 701,
+            code: 'sparky-code',
+            title: expected.name,
+            isReservation: true,
+          },
+        ],
+      },
+    ]);
+
+    const result = await createAndScheduleSpeedianceWorkout('user-1', expected);
+
+    expect(result.workout.created).toBe(false);
+    expect(result.schedule.status).toBe('already_scheduled');
+    expect(mocks.updateCustomWorkout).toHaveBeenCalledWith(
+      501,
+      expect.objectContaining({
+        name: expected.name,
+        actionLibraryList: [expect.objectContaining({ actionLibraryId: 9001 })],
+      })
+    );
+    expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
   });
 
@@ -412,6 +515,37 @@ describe('createAndScheduleSpeedianceWorkout', () => {
     await expect(
       createAndScheduleSpeedianceWorkout('user-1', request)
     ).rejects.toThrow('No compatible Speediance exercise variant');
+    expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.setReservation).not.toHaveBeenCalled();
+  });
+
+  it('blocks a non-German coach variant before any remote write', async () => {
+    const request = workoutRequest();
+    request.exercises[0].variantId = '8001';
+
+    await expect(
+      createAndScheduleSpeedianceWorkout('user-1', request)
+    ).rejects.toThrow('is not the default German coach video');
+    expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.setReservation).not.toHaveBeenCalled();
+  });
+
+  it('blocks workout creation when Speediance offers no German coach video', async () => {
+    mocks.getGroupDetail.mockResolvedValueOnce({
+      title: 'Barbell Bench Press',
+      isLeftRight: 0,
+      dataStatType: 0,
+      completionMethod: 1,
+      actionLibraryList: [
+        { id: 8001, coachLanguage: 'en', coach: { name: 'Mike' } },
+      ],
+    });
+    const request = workoutRequest();
+    request.exercises[0].variantId = '8001';
+
+    await expect(
+      createAndScheduleSpeedianceWorkout('user-1', request)
+    ).rejects.toThrow('No German Speediance coach video is available');
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
   });
@@ -454,6 +588,7 @@ describe('createAndScheduleSpeedianceWorkout', () => {
       createAndScheduleSpeedianceWorkout('user-1', workoutRequest())
     ).rejects.toThrow('exists with different exercises or sets');
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
   });
 });

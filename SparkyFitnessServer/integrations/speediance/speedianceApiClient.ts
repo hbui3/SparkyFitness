@@ -384,6 +384,22 @@ export class SpeedianceApiClient {
     }
   }
 
+  async updateCustomWorkout(
+    templateId: number,
+    payload: SpeedianceCustomWorkoutPayload
+  ): Promise<unknown> {
+    try {
+      const response = await this.http.post(
+        '/api/app/v2/customTrainingTemplate',
+        { ...payload, id: templateId },
+        { headers: this.authenticatedHeaders() }
+      );
+      return this.unwrapWrite(response.data, 'custom workout update');
+    } catch (error) {
+      this.rethrowWriteError(error, 'custom workout update');
+    }
+  }
+
   async getTrainingCalendarMonth(
     month: string,
     deviceType = 1

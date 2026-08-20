@@ -231,6 +231,9 @@ describe('SpeedianceApiClient', () => {
       .mockResolvedValueOnce({
         data: { code: 0, data: { id: 99, code: 'template-99' } },
       })
+      .mockResolvedValueOnce({
+        data: { code: 0, data: { id: 99, code: 'template-99' } },
+      })
       .mockResolvedValueOnce({ data: { code: 0, data: true } });
     const client = new SpeedianceApiClient({
       region: 'EU',
@@ -269,6 +272,10 @@ describe('SpeedianceApiClient', () => {
       id: 99,
       code: 'template-99',
     });
+    await expect(client.updateCustomWorkout(99, payload)).resolves.toEqual({
+      id: 99,
+      code: 'template-99',
+    });
     await expect(
       client.setTemplateReservation('2026-08-20', 'template-99', 1)
     ).resolves.toBe(true);
@@ -283,6 +290,14 @@ describe('SpeedianceApiClient', () => {
     );
     expect(post).toHaveBeenNthCalledWith(
       4,
+      '/api/app/v2/customTrainingTemplate',
+      { ...payload, id: 99 },
+      expect.objectContaining({
+        headers: expect.objectContaining({ Token: 'token-1' }),
+      })
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      5,
       '/api/app/templateReservation',
       {
         status: 1,
