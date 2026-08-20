@@ -38,8 +38,14 @@ library, create a repetition-based custom workout with Speediance's **Gain
 Muscle** preset, and reserve it for a calendar day after the owner explicitly
 asks it to do so. Exercise group, variant, title, accessory requirements, and
 set configuration are verified against Speediance before and after the write.
+Speediance can provide several coach/video versions of the same exercise.
+SparkyFitness selects the explicitly German (`coachLanguage: de`) version by
+default and blocks automated workout creation for an exercise when no German
+coach video is available.
 An identically named workout is reused only when its complete exercise and set
-content matches; ambiguous or conflicting remote state is not overwritten.
+content matches. If only its coach/video variants are outdated, SparkyFitness
+updates the existing template to the current German variants. Other ambiguous
+or conflicting remote state is not overwritten.
 Before proposing or scheduling the next workout, the coach reads the owner's
 recent structured workout feedback and active training preferences. It can use
 bounded volume/rest guidance and preferred exercises, while an exercise marked

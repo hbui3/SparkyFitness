@@ -22,6 +22,7 @@ import { getSpeedianceProviderCredentials } from './speedianceRepository.js';
 
 const GYM_MONSTER_DEVICE_TYPE = 1;
 const GAIN_MUSCLE_PRESET_ID = 1;
+const DEFAULT_WORKOUT_COACH_LANGUAGE = 'de';
 const CREATE_VISIBILITY_RETRY_MS = 300;
 const CREATE_VISIBILITY_ATTEMPTS = 3;
 
@@ -79,6 +80,31 @@ function stringValue(value: unknown): string | null {
 function remoteId(value: unknown): string | null {
   const candidate = stringValue(value);
   return candidate && /^\d+$/.test(candidate) ? candidate : null;
+}
+
+function normalizeLanguage(value: unknown): string | null {
+  const language = stringValue(value);
+  if (!language) return null;
+  return language.replace(/_/g, '-').split('-')[0]?.toLowerCase() ?? null;
+}
+
+function variantCoachLanguage(variant: Record<string, unknown>): string | null {
+  const coach = isRecord(variant.coach) ? variant.coach : null;
+  return normalizeLanguage(
+    variant.coachLanguage ?? coach?.coachLanguage ?? coach?.language
+  );
+}
+
+function germanCoachVariant(
+  variants: Record<string, unknown>[]
+): Record<string, unknown> | null {
+  return (
+    variants.find(
+      (variant) =>
+        remoteId(variant.id) !== null &&
+        variantCoachLanguage(variant) === DEFAULT_WORKOUT_COACH_LANGUAGE
+    ) ?? null
+  );
 }
 
 function numericRemoteId(value: string, label: string): number {
@@ -197,7 +223,12 @@ async function enrichLibraryExercise(
   const detail = await api.getActionLibraryGroup(exercise.groupId);
   if (!isRecord(detail)) return null;
   const title = stringValue(detail.title) ?? stringValue(detail.name);
-  const variantId = remoteId(records(detail.actionLibraryList)[0]?.id);
+  const variants = records(detail.actionLibraryList);
+  const preferredVariant = germanCoachVariant(variants);
+  const fallbackVariant = variants.find(
+    (variant) => remoteId(variant.id) !== null
+  );
+  const variantId = remoteId((preferredVariant ?? fallbackVariant)?.id);
   if (!title || !variantId) return null;
   const accessories = parseRemoteIds(detail.accessories);
   const completionMethod = Number(detail.completionMethod ?? 1);
@@ -213,7 +244,8 @@ async function enrichLibraryExercise(
       .map((id) => accessoryNamesById.get(id))
       .filter((name): name is string => Boolean(name)),
     isUnilateral: Number(detail.isLeftRight ?? 0) === 1,
-    compatibleForWorkout: dataStatType !== 6 && completionMethod === 1,
+    compatibleForWorkout:
+      dataStatType !== 6 && completionMethod === 1 && preferredVariant !== null,
   };
 }
 
@@ -303,9 +335,19 @@ function resolveVariantId(
     (variant) => remoteId(variant.id) === exercise.variantId
   );
   const variantId = remoteId(selected?.id);
-  if (!variantId) {
+  if (!selected || !variantId) {
     throw new SpeedianceWorkoutValidationError(
       `No compatible Speediance exercise variant was found for "${exercise.expectedTitle}".`
+    );
+  }
+  if (variantCoachLanguage(selected) !== DEFAULT_WORKOUT_COACH_LANGUAGE) {
+    if (!germanCoachVariant(variants)) {
+      throw new SpeedianceWorkoutValidationError(
+        `No German Speediance coach video is available for "${exercise.expectedTitle}".`
+      );
+    }
+    throw new SpeedianceWorkoutValidationError(
+      `Speediance variant ${variantId} for "${exercise.expectedTitle}" is not the default German coach video. Search the exercise library again and use its current variantId.`
     );
   }
   return numericRemoteId(variantId, 'Exercise variant ID');
@@ -478,6 +520,48 @@ function customWorkoutMatches(
   );
 }
 
+function canonicalActionStructure(
+  action: CanonicalRemoteAction
+): Omit<CanonicalRemoteAction, 'actionLibraryId'> {
+  return {
+    groupId: action.groupId,
+    templatePresetId: action.templatePresetId,
+    setsAndReps: action.setsAndReps,
+    breakTime2: action.breakTime2,
+    sportMode: action.sportMode,
+    leftRight: action.leftRight,
+    completionMethod: action.completionMethod,
+    counterweight2: action.counterweight2,
+  };
+}
+
+function customWorkoutDiffersOnlyByVariant(
+  detail: unknown,
+  payload: SpeedianceCustomWorkoutPayload
+): boolean {
+  if (!isRecord(detail) || stringValue(detail.name) !== payload.name) {
+    return false;
+  }
+  const remoteActions = records(detail.actionLibraryList)
+    .map(canonicalAction)
+    .filter((item): item is CanonicalRemoteAction => Boolean(item));
+  const expectedActions = canonicalPayloadActions(payload);
+  if (
+    remoteActions.length !== records(detail.actionLibraryList).length ||
+    remoteActions.length !== expectedActions.length
+  ) {
+    return false;
+  }
+  return remoteActions.every((action, index) => {
+    const expectedAction = expectedActions[index];
+    return (
+      expectedAction !== undefined &&
+      JSON.stringify(canonicalActionStructure(action)) ===
+        JSON.stringify(canonicalActionStructure(expectedAction))
+    );
+  });
+}
+
 async function verifyTemplate(
   api: SpeedianceApiClient,
   identity: SpeedianceTemplateIdentity,
@@ -524,7 +608,21 @@ async function ensureTemplate(
     );
   }
   if (matches.length === 1) {
-    await verifyTemplate(api, matches[0], payload);
+    const existing = matches[0];
+    const detail = await api.getCustomWorkoutDetail(existing.code);
+    if (customWorkoutMatches(detail, payload)) {
+      return { identity: existing, created: false };
+    }
+    if (!customWorkoutDiffersOnlyByVariant(detail, payload)) {
+      throw new SpeedianceWorkoutConflictError(
+        `A Speediance workout named "${payload.name}" exists with different exercises or sets.`
+      );
+    }
+    await api.updateCustomWorkout(
+      numericRemoteId(existing.id, 'Workout template ID'),
+      payload
+    );
+    await verifyTemplate(api, existing, payload);
     return { identity: matches[0], created: false };
   }
 

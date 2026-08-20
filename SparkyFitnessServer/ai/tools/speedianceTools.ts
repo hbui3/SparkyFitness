@@ -48,7 +48,7 @@ export function buildSpeedianceTools(userId: string) {
   return {
     sparky_search_speediance_exercises: tool({
       description:
-        "Search the authenticated owner's real Speediance Gym Monster exercise library. First read sparky_manage_training_feedback action=context, then use a specific query. The result includes exact groupId/title/variantId, accessories, unilateral behavior, and whether the exercise is compatible with workout creation.",
+        "Search the authenticated owner's real Speediance Gym Monster exercise library. First read sparky_manage_training_feedback action=context, then use a specific query. The result includes exact groupId/title/variantId, accessories, unilateral behavior, and whether the exercise is compatible with workout creation. variantId is the German coach/video variant; compatibleForWorkout is false when Speediance has no German coach video for that exercise.",
       inputSchema: speedianceExerciseSearchRequestSchema,
       execute: async (args) => {
         try {
@@ -66,7 +66,7 @@ export function buildSpeedianceTools(userId: string) {
 
     sparky_schedule_speediance_workout: tool({
       description:
-        'Create (or idempotently reuse) a rep-based Speediance Gym Monster workout with the Gain Muscle preset, then schedule it on a YYYY-MM-DD date. This writes to the external Speediance account. Call only after the user explicitly asked to create/schedule the presented workout. First read sparky_manage_training_feedback action=context and adapt the plan to its volume/rest guidance and active preferences. Every expectedTitle, groupId, and variantId must come from sparky_search_speediance_exercises and compatibleForWorkout must be true. An avoided exercise is blocked unless the user explicitly overrides the listed preference and its ID is included in acknowledgedPreferenceIds. Existing same-name workouts are reused only when all exercises and sets match; conflicts and ambiguous calendar state are blocked.',
+        'Create (or idempotently reuse) a rep-based Speediance Gym Monster workout with the Gain Muscle preset, then schedule it on a YYYY-MM-DD date. This writes to the external Speediance account. Call only after the user explicitly asked to create/schedule the presented workout. First read sparky_manage_training_feedback action=context and adapt the plan to its volume/rest guidance and active preferences. Every expectedTitle, groupId, and German-coach variantId must come from sparky_search_speediance_exercises and compatibleForWorkout must be true. Never substitute another coach/video variant. An avoided exercise is blocked unless the user explicitly overrides the listed preference and its ID is included in acknowledgedPreferenceIds. Existing same-name workouts are reused only when all exercises and sets match; conflicts and ambiguous calendar state are blocked.',
       inputSchema: speedianceCreateAndScheduleWorkoutRequestSchema,
       execute: async (args) => {
         try {
