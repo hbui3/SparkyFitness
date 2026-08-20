@@ -25,6 +25,7 @@ import { buildSpeedianceTools } from './speedianceTools.js';
 import { buildTrainingFeedbackTools } from './trainingFeedbackTools.js';
 import { buildVisionTools } from './visionTools.js';
 import { buildWizardTools } from './wizardTools.js';
+import { buildWorkoutPlanTools } from './workoutPlanTools.js';
 
 /**
  * Tool surfaces the chatbot can expose:
@@ -52,6 +53,7 @@ const CATEGORY_BUILDERS: Record<
   exercise: [
     (u, tz) => buildExerciseTools(u, tz),
     (u, tz) => buildTrainingFeedbackTools(u, tz),
+    (u, tz) => buildWorkoutPlanTools(u, tz),
     (u) => buildSpeedianceTools(u),
   ],
   food: [(u, tz) => buildFoodTools(u, tz), (u) => buildMealSafetyTools(u)],
