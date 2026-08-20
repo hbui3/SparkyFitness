@@ -145,6 +145,14 @@ describe('telegramCoachService', () => {
   });
 
   it('recognizes only unambiguous water log statements', () => {
+    expect(parseDirectWaterLogCommand('300ml')).toEqual({
+      amountMl: 300,
+      language: 'de',
+    });
+    expect(parseDirectWaterLogCommand('0,3 l')).toEqual({
+      amountMl: 300,
+      language: 'de',
+    });
     expect(parseDirectWaterLogCommand('300ml Wasser')).toEqual({
       amountMl: 300,
       language: 'de',
@@ -159,6 +167,7 @@ describe('telegramCoachService', () => {
       parseDirectWaterLogCommand('Mein Ziel ist 3000 ml Wasser')
     ).toBeNull();
     expect(parseDirectWaterLogCommand('Nicht 300 ml Wasser')).toBeNull();
+    expect(parseDirectWaterLogCommand('300 ml Milch')).toBeNull();
   });
 
   it('creates a short-lived link without storing its plaintext token', async () => {
@@ -271,7 +280,7 @@ describe('telegramCoachService', () => {
       update_id: 21,
       message: {
         chat: { id: 12345, type: 'private' },
-        text: '300ml Wasser',
+        text: '300ml',
       },
     });
 

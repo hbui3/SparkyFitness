@@ -31,6 +31,7 @@ import {
 } from './telegramApiService.js';
 import { log } from '../config/logging.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import { isWaterLogText } from '../utils/waterLogText.js';
 
 const LINK_LIFETIME_MS = 15 * 60_000;
 const MAX_TELEGRAM_HISTORY_MESSAGES = 50;
@@ -128,10 +129,7 @@ export function parseDirectWaterLogCommand(
   text: string
 ): DirectWaterLogCommand | null {
   const normalized = text.trim();
-  if (
-    !/\b(?:wasser|water)\b/i.test(normalized) ||
-    WATER_COMMAND_EXCLUSION.test(normalized)
-  ) {
+  if (!isWaterLogText(normalized) || WATER_COMMAND_EXCLUSION.test(normalized)) {
     return null;
   }
 
