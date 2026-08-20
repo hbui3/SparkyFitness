@@ -3,6 +3,34 @@ import workoutPresetRepository from '../models/workoutPresetRepository.js';
 import exerciseRepository from '../models/exerciseRepository.js';
 import { log } from '../config/logging.js';
 import { resolveTemplateStartDay } from '../utils/timezoneLoader.js';
+
+interface WorkoutPlanAssignmentInput {
+  id?: string | number;
+  workout_preset_id?: string | number | null;
+  exercise_id?: string | null;
+  day_of_week: number;
+  sort_order?: number;
+  sets?: unknown[];
+}
+
+interface WorkoutPlanTemplateUpdateInput {
+  plan_name?: string;
+  description?: string | null;
+  start_date?: string | Date;
+  end_date?: string | Date | null;
+  is_active?: boolean;
+  assignments?: WorkoutPlanAssignmentInput[];
+  currentClientDate?: string;
+}
+
+interface WorkoutPlanTemplateRecord {
+  plan_name: string;
+  description: string | null;
+  start_date: string | Date;
+  end_date: string | Date | null;
+  is_active: boolean;
+  assignments: WorkoutPlanAssignmentInput[];
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function createWorkoutPlanTemplate(userId: any, planData: any) {
   log(
@@ -109,12 +137,9 @@ async function getWorkoutPlanTemplateById(userId: any, templateId: any) {
 }
 
 async function updateWorkoutPlanTemplate(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  templateId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  updateData: any
+  userId: string,
+  templateId: string | number,
+  updateData: WorkoutPlanTemplateUpdateInput
 ) {
   log(
     'info',
@@ -131,9 +156,32 @@ async function updateWorkoutPlanTemplate(
       'Forbidden: You do not have permission to update this workout plan template.'
     );
   }
+  const existingTemplate =
+    (await workoutPlanTemplateRepository.getWorkoutPlanTemplateById(
+      templateId,
+      userId
+    )) as unknown as WorkoutPlanTemplateRecord | undefined;
+  if (!existingTemplate) {
+    throw new Error('Workout plan template not found or could not be updated.');
+  }
+  const mergedUpdateData = {
+    plan_name: updateData.plan_name ?? existingTemplate.plan_name,
+    description:
+      updateData.description !== undefined
+        ? updateData.description
+        : existingTemplate.description,
+    start_date: updateData.start_date ?? existingTemplate.start_date,
+    end_date:
+      updateData.end_date !== undefined
+        ? updateData.end_date
+        : existingTemplate.end_date,
+    is_active: updateData.is_active ?? existingTemplate.is_active,
+    assignments: updateData.assignments ?? existingTemplate.assignments,
+    currentClientDate: updateData.currentClientDate,
+  };
   // Validate assignments if they are being updated
-  if (updateData.assignments) {
-    for (const assignment of updateData.assignments) {
+  if (mergedUpdateData.assignments) {
+    for (const assignment of mergedUpdateData.assignments) {
       if (assignment.workout_preset_id) {
         const preset = await workoutPresetRepository.getWorkoutPresetById(
           assignment.workout_preset_id,
@@ -161,7 +209,7 @@ async function updateWorkoutPlanTemplate(
   try {
     const today = await resolveTemplateStartDay(
       userId,
-      updateData.currentClientDate
+      mergedUpdateData.currentClientDate
     );
     // When a plan is updated, remove the old exercise entries that were created from it.
     log(
@@ -177,7 +225,7 @@ async function updateWorkoutPlanTemplate(
       await workoutPlanTemplateRepository.updateWorkoutPlanTemplate(
         templateId,
         userId,
-        updateData
+        mergedUpdateData
       );
     log(
       'info',

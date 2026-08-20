@@ -258,6 +258,14 @@ async function processWorkout(
     );
     if (entry) importedExercises++;
   }
+
+  if (bundle.exercises.length > 0 && importedExercises > 0) {
+    await exercisePresetEntryRepository.deleteOnePlannedPresetEntry(
+      userId,
+      workoutPreset.id,
+      entryDate
+    );
+  }
   return importedExercises;
 }
 

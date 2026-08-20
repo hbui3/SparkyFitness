@@ -35,6 +35,7 @@ vi.mock('../models/exercisePresetEntryRepository.js', () => ({
     deleteExercisePresetEntriesByEntrySourceAndDate: vi
       .fn()
       .mockResolvedValue(0),
+    deleteOnePlannedPresetEntry: vi.fn().mockResolvedValue(0),
   },
 }));
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
@@ -118,6 +119,9 @@ describe('processSpeedianceWorkouts', () => {
     expect(
       exercisePresetEntryRepository.deleteExercisePresetEntriesByEntrySourceAndDate
     ).toHaveBeenCalledWith('user-1', '2026-08-01', '2026-08-18', 'Speediance');
+    expect(
+      exercisePresetEntryRepository.deleteOnePlannedPresetEntry
+    ).toHaveBeenCalledWith('user-1', 42, '2026-08-18');
 
     const createEntry = vi.mocked(exerciseEntryRepository.createExerciseEntry);
     expect(createEntry).toHaveBeenCalledTimes(1);
@@ -216,5 +220,8 @@ describe('processSpeedianceWorkouts', () => {
       'Speediance',
       'preset-entry-1'
     );
+    expect(
+      exercisePresetEntryRepository.deleteOnePlannedPresetEntry
+    ).not.toHaveBeenCalled();
   });
 });

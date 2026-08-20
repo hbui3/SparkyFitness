@@ -289,6 +289,61 @@ async function deleteExercisePresetEntriesByEntrySourceAndDate(
     client.release();
   }
 }
+
+async function deleteOnePlannedPresetEntry(
+  userId: string,
+  workoutPresetId: number,
+  entryDate: string
+): Promise<number> {
+  const client = await getClient(userId);
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `WITH planned_entry AS (
+         SELECT epe.id
+         FROM exercise_preset_entries epe
+         WHERE epe.user_id = $1
+           AND epe.workout_preset_id = $2
+           AND epe.entry_date = $3
+           AND epe.source = 'Workout Plan'
+           AND EXISTS (
+             SELECT 1
+             FROM exercise_entries ee
+             WHERE ee.exercise_preset_entry_id = epe.id
+               AND ee.user_id = $1
+               AND ee.workout_plan_assignment_id IS NOT NULL
+           )
+         ORDER BY epe.created_at ASC, epe.id ASC
+         LIMIT 1
+       )
+       DELETE FROM exercise_preset_entries epe
+       USING planned_entry
+       WHERE epe.id = planned_entry.id
+         AND epe.user_id = $1
+       RETURNING epe.id`,
+      [userId, workoutPresetId, entryDate]
+    );
+    await client.query('COMMIT');
+    const deletedCount = result.rowCount ?? 0;
+    if (deletedCount > 0) {
+      log(
+        'info',
+        `[exercisePresetEntryRepository] Replaced one planned preset ${workoutPresetId} for user ${userId} on ${entryDate}.`
+      );
+    }
+    return deletedCount;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    log(
+      'error',
+      `Error deleting planned preset entry: ${error instanceof Error ? error.message : String(error)}`,
+      { userId, workoutPresetId, entryDate, error }
+    );
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 export { createExercisePresetEntry };
 export { createExercisePresetEntryWithClient };
 export { getExercisePresetEntryById };
@@ -299,6 +354,7 @@ export { updateExercisePresetEntryWithClient };
 export { deleteExercisePresetEntry };
 export { deleteExercisePresetEntriesByEntrySourceAndDate };
 export { deleteExercisePresetEntriesByEntrySourceAndDateWithClient };
+export { deleteOnePlannedPresetEntry };
 export default {
   createExercisePresetEntry,
   createExercisePresetEntryWithClient,
@@ -310,4 +366,5 @@ export default {
   deleteExercisePresetEntry,
   deleteExercisePresetEntriesByEntrySourceAndDate,
   deleteExercisePresetEntriesByEntrySourceAndDateWithClient,
+  deleteOnePlannedPresetEntry,
 };
