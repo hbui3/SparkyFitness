@@ -16,7 +16,7 @@ SparkyFitness supports integration with the following health and fitness data pr
 - Withings
 - Polar Flow (partially tested)
 - Hevy (not tested)
-- Speediance (unofficial API; completed workout import)
+- Speediance (unofficial API; completed workout import plus custom workout scheduling)
 - iGPSPORT (unofficial web API; original FIT activity import)
 - OpenFoodFacts
 - USDA
@@ -32,6 +32,14 @@ used only when a manual or scheduled workout import signs in. Program and custom
 workouts include their exercise/set details; Free Lift and Quick sessions are
 imported as session summaries. Because this relies on an unofficial mobile API,
 it may need maintenance when Speediance changes its backend.
+
+The AI coach can also search the connected account's real Gym Monster exercise
+library, create a repetition-based custom workout with Speediance's **Gain
+Muscle** preset, and reserve it for a calendar day after the owner explicitly
+asks it to do so. Exercise group, variant, title, accessory requirements, and
+set configuration are verified against Speediance before and after the write.
+An identically named workout is reused only when its complete exercise and set
+content matches; ambiguous or conflicting remote state is not overwritten.
 
 iGPSPORT accounts are configured with an email address or phone number,
 password, and account region (Global or China). SparkyFitness encrypts these

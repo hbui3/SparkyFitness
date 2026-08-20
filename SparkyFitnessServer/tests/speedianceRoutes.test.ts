@@ -24,8 +24,18 @@ vi.mock('../integrations/speediance/speedianceService.js', () => ({
   },
 }));
 
+vi.mock('../integrations/speediance/speedianceWorkoutService.js', () => ({
+  default: {
+    searchSpeedianceExercises: vi.fn(),
+    createAndScheduleSpeedianceWorkout: vi.fn(),
+  },
+  SpeedianceWorkoutConflictError: class SpeedianceWorkoutConflictError extends Error {},
+  SpeedianceWorkoutValidationError: class SpeedianceWorkoutValidationError extends Error {},
+}));
+
 import speedianceRoutes from '../routes/speedianceRoutes.js';
 import speedianceService from '../integrations/speediance/speedianceService.js';
+import speedianceWorkoutService from '../integrations/speediance/speedianceWorkoutService.js';
 
 const app = express();
 app.use(express.json());
@@ -59,5 +69,109 @@ describe('Speediance routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.importedExercises).toBe(8);
+  });
+
+  it('searches the authenticated owner Speediance exercise library', async () => {
+    vi.mocked(
+      speedianceWorkoutService.searchSpeedianceExercises
+    ).mockResolvedValue({
+      exercises: [
+        {
+          groupId: '116',
+          variantId: '2927',
+          title: 'Barbell Bench Press',
+          category: 'Upper Body',
+          primaryMuscle: 'Chest',
+          accessories: ['2'],
+          accessoryNames: ['Tricep Rope'],
+          deviceTypes: [1],
+          isUnilateral: false,
+          compatibleForWorkout: true,
+        },
+      ],
+      total: 1,
+    });
+
+    const response = await request(app)
+      .post('/api/integrations/speediance/exercises/search')
+      .send({ query: 'bench', limit: 10 });
+
+    expect(response.status).toBe(200);
+    expect(response.body.exercises[0].groupId).toBe('116');
+  });
+
+  it('validates and schedules an exact Speediance workout request', async () => {
+    vi.mocked(
+      speedianceWorkoutService.createAndScheduleSpeedianceWorkout
+    ).mockResolvedValue({
+      success: true,
+      workout: {
+        id: '501',
+        code: 'sparky-code',
+        name: 'Sparky Full Body A',
+        created: true,
+        exerciseCount: 1,
+        remoteSetCount: 3,
+      },
+      schedule: { date: '2026-08-20', status: 'scheduled' },
+    });
+
+    const response = await request(app)
+      .post('/api/integrations/speediance/workouts/schedule')
+      .send({
+        name: 'Sparky Full Body A',
+        scheduleDate: '2026-08-20',
+        exercises: [
+          {
+            groupId: '116',
+            variantId: '2927',
+            expectedTitle: 'Barbell Bench Press',
+            sets: [
+              {
+                repetitions: 10,
+                targetRm: 12,
+                mode: 'standard',
+                restSeconds: 90,
+              },
+              {
+                repetitions: 10,
+                targetRm: 12,
+                mode: 'standard',
+                restSeconds: 90,
+              },
+              {
+                repetitions: 10,
+                targetRm: 12,
+                mode: 'standard',
+                restSeconds: 90,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.schedule.status).toBe('scheduled');
+  });
+
+  it('rejects a workout exercise without an exact title guard', async () => {
+    const response = await request(app)
+      .post('/api/integrations/speediance/workouts/schedule')
+      .send({
+        name: 'Unsafe Workout',
+        scheduleDate: '2026-08-20',
+        exercises: [
+          {
+            groupId: '116',
+            variantId: '2927',
+            sets: [{ repetitions: 10 }],
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+    expect(
+      speedianceWorkoutService.createAndScheduleSpeedianceWorkout
+    ).not.toHaveBeenCalled();
   });
 });

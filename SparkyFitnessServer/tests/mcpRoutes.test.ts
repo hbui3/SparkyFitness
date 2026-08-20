@@ -145,7 +145,7 @@ describe('POST /mcp', () => {
 
     expect(res.status).toBe(200);
     const tools = res.body.result.tools;
-    expect(tools).toHaveLength(38);
+    expect(tools).toHaveLength(EXPECTED_TOOL_NAMES.length);
     expect(tools.map((t: { name: string }) => t.name).sort()).toEqual(
       EXPECTED_TOOL_NAMES
     );
@@ -388,13 +388,13 @@ describe('POST /mcp', () => {
 
     expect(res.status).toBe(200);
     const names = res.body.result.tools.map((t: { name: string }) => t.name);
-    expect(res.body.result.tools).toHaveLength(38);
+    expect(res.body.result.tools).toHaveLength(EXPECTED_TOOL_NAMES.length);
     for (const devTool of DEV_TOOL_NAMES) {
       expect(names).not.toContain(devTool);
     }
   });
 
-  it('exposes the 3 dev tools to an admin when DEV_TOOLS_ENABLED=true', async () => {
+  it('exposes the dev tools to an admin when DEV_TOOLS_ENABLED=true', async () => {
     vi.stubEnv('DEV_TOOLS_ENABLED', 'true');
     testUserRole = 'admin';
 
@@ -406,7 +406,9 @@ describe('POST /mcp', () => {
 
     expect(res.status).toBe(200);
     const names = res.body.result.tools.map((t: { name: string }) => t.name);
-    expect(res.body.result.tools).toHaveLength(43);
+    expect(res.body.result.tools).toHaveLength(
+      EXPECTED_TOOL_NAMES.length + DEV_TOOL_NAMES.length
+    );
     for (const devTool of DEV_TOOL_NAMES) {
       expect(names).toContain(devTool);
     }
@@ -424,7 +426,7 @@ describe('POST /mcp', () => {
 
     expect(res.status).toBe(200);
     const names = res.body.result.tools.map((t: { name: string }) => t.name);
-    expect(res.body.result.tools).toHaveLength(38);
+    expect(res.body.result.tools).toHaveLength(EXPECTED_TOOL_NAMES.length);
     for (const devTool of DEV_TOOL_NAMES) {
       expect(names).not.toContain(devTool);
     }

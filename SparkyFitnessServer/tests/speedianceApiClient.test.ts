@@ -185,4 +185,133 @@ describe('SpeedianceApiClient', () => {
       })
     );
   });
+
+  it('loads the Gym Monster exercise library through the documented tab and group endpoints', async () => {
+    post
+      .mockResolvedValueOnce({
+        data: { data: { isExist: true, hasPwd: true } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { token: 'token-1', appUserId: 'user-1' } },
+      });
+    get
+      .mockResolvedValueOnce({ data: { code: 0, data: [{ id: 10 }] } })
+      .mockResolvedValueOnce({ data: { code: 0, data: [{ name: 'Chest' }] } });
+    const client = new SpeedianceApiClient({
+      region: 'EU',
+      timezone: 'Europe/Berlin',
+      httpClient,
+    });
+    await client.login('local-test@example.com', 'local-test-password');
+
+    await expect(client.getActionLibraryTabs()).resolves.toEqual([{ id: 10 }]);
+    await expect(client.getActionLibraryGroups('10')).resolves.toEqual([
+      { name: 'Chest' },
+    ]);
+    expect(get).toHaveBeenNthCalledWith(
+      1,
+      '/api/app/actionLibraryTab/list',
+      expect.objectContaining({ params: { deviceType: 1 } })
+    );
+    expect(get).toHaveBeenNthCalledWith(
+      2,
+      '/api/app/actionLibraryGroup/trainingPartGroup',
+      expect.objectContaining({ params: { tabId: '10', deviceTypeList: 1 } })
+    );
+  });
+
+  it('posts the documented custom-template and date-only reservation payloads', async () => {
+    post
+      .mockResolvedValueOnce({
+        data: { data: { isExist: true, hasPwd: true } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { token: 'token-1', appUserId: 'user-1' } },
+      })
+      .mockResolvedValueOnce({
+        data: { code: 0, data: { id: 99, code: 'template-99' } },
+      })
+      .mockResolvedValueOnce({ data: { code: 0, data: true } });
+    const client = new SpeedianceApiClient({
+      region: 'EU',
+      timezone: 'Europe/Berlin',
+      httpClient,
+    });
+    await client.login('local-test@example.com', 'local-test-password');
+    const payload = {
+      name: 'Sparky Full Body A',
+      actionLibraryList: [
+        {
+          groupId: 116,
+          actionLibraryId: 9001,
+          templatePresetId: 1,
+          setsAndReps: '10,10,10',
+          breakTime: '90,90,90',
+          breakTime2: '90,90,90',
+          sportMode: '1,1,1',
+          leftRight: '0,0,0',
+          selectCompletionMethod: '1,1,1',
+          completionMethod: '1,1,1',
+          countType: '1,1,1',
+          weights: '3.5,3.5,3.5',
+          counterweight2: '12,12,12',
+          counterweight: '12,12,12',
+          level: '0,0,0',
+          capacity: 792,
+        },
+      ],
+      totalCapacity: 792,
+      deviceType: 1,
+      bgColor: 0,
+    };
+
+    await expect(client.createCustomWorkout(payload)).resolves.toEqual({
+      id: 99,
+      code: 'template-99',
+    });
+    await expect(
+      client.setTemplateReservation('2026-08-20', 'template-99', 1)
+    ).resolves.toBe(true);
+
+    expect(post).toHaveBeenNthCalledWith(
+      3,
+      '/api/app/v2/customTrainingTemplate',
+      payload,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Token: 'token-1' }),
+      })
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      4,
+      '/api/app/templateReservation',
+      {
+        status: 1,
+        deviceType: 1,
+        thatDay: '2026-08-20',
+        templateCode: 'template-99',
+      },
+      expect.any(Object)
+    );
+  });
+
+  it('rejects application-level write failures instead of treating them as success', async () => {
+    post
+      .mockResolvedValueOnce({
+        data: { data: { isExist: true, hasPwd: true } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { token: 'token-1', appUserId: 'user-1' } },
+      })
+      .mockResolvedValueOnce({ data: { code: 12, data: false } });
+    const client = new SpeedianceApiClient({
+      region: 'EU',
+      timezone: 'Europe/Berlin',
+      httpClient,
+    });
+    await client.login('local-test@example.com', 'local-test-password');
+
+    await expect(
+      client.setTemplateReservation('2026-08-20', 'template-99', 1)
+    ).rejects.toThrow('Speediance rejected workout scheduling.');
+  });
 });
