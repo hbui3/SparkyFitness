@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-08-19_
+_Last updated: 2026-08-20_
 
 SparkyFitness Server is the backend API package for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessServer/`.
 
@@ -75,7 +75,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `config/` - logging and Swagger config
 - `utils/` - startup helpers, CORS, permissions, timezone loading, OIDC helpers, migration helpers
 - `ai/` - AI provider configuration (`config.ts`), the unified provider-dispatch helper (`providerDispatch.ts`), and the in-process chatbot tool registry (`ai/tools/`)
-- Persistent coach: `routes/coachProfileRoutes.ts` exposes owner-only profile, memory, deterministic today-status, and SSE endpoints. `services/coachContextService.ts` derives canonical onboarding/goals plus daily/7-day/30-day and recovery/muscle context; `services/proactiveCoachService.ts` writes idempotent configurable adaptive/daily/weekly messages. Telegram webhooks are persisted by exact update ID in `telegram_update_inbox`, processed through `services/telegramQueueService.ts`, and delivered through `coach_delivery_outbox`; `services/telegramCoachService.ts` keeps text/photo/voice chat, quick water/status actions, undo receipts, history, and tool configuration aligned with web chat. The instance-wide bot credential remains encrypted and system-only. Meal validation remains deterministic in the profile service.
+- Persistent coach: `routes/coachProfileRoutes.ts` exposes owner-only profile, memory, deterministic today-status, and SSE endpoints. `services/coachContextService.ts` derives canonical onboarding/goals plus daily/7-day/30-day and recovery/muscle context; `services/trainingFeedbackService.ts` derives bounded volume/rest guidance from owner-only structured workout feedback and active training preferences; `services/proactiveCoachService.ts` writes idempotent configurable adaptive/daily/weekly messages. Telegram webhooks are persisted by exact update ID in `telegram_update_inbox`, processed through `services/telegramQueueService.ts`, and delivered through `coach_delivery_outbox`; `services/telegramCoachService.ts` keeps text/photo/voice chat, quick water/status actions, undo receipts, history, and the same training-feedback tool configuration aligned with web chat. The instance-wide bot credential remains encrypted and system-only. Meal validation remains deterministic in the profile service.
 - `security/` - encryption utilities (`encryption.ts`)
 - `validation/` - legacy express-validator rules for a few older routes (new routes use Zod schemas)
 - `constants/` - shared constants and supporting package data
@@ -194,7 +194,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 
 - Provider-specific adapters live under `integrations/`; coordinating logic usually lives in `services/` and persistence in `models/`
 - Current adapters span food/nutrition (OpenFoodFacts, FatSecret, Nutritionix, USDA, Mealie, Tandoor, Norish, SwissFood, Yazio), fitness devices (Garmin Connect sync plus FIT file import via `integrations/garminfit/` + `services/fitImportService.ts`, Withings, Fitbit, Oura, Polar, Strava, Hevy, Speediance, iGPSPORT), exercise databases (Wger, FreeExerciseDB), and health-data import (Google Health, generic/mobile health data)
-- Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, Speediance, and iGPSPORT. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract for completed-workout import plus owner-only, verified custom-workout creation/calendar scheduling exposed to the coach through `ai/tools/speedianceTools.ts`. iGPSPORT uses `integrations/igpsport/`, `routes/igpsportRoutes.ts`, the shared `IGPSport.api.zod.ts` contract, and the native FIT import service. Both providers' regional base URLs must stay allow-listed.
+- Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, Speediance, and iGPSPORT. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract for completed-workout import plus owner-only, verified custom-workout creation/calendar scheduling exposed to the coach through `ai/tools/speedianceTools.ts`. Scheduling consumes the owner-only context from `services/trainingFeedbackService.ts` and blocks unacknowledged avoided exercises at the write boundary. iGPSPORT uses `integrations/igpsport/`, `routes/igpsportRoutes.ts`, the shared `IGPSport.api.zod.ts` contract, and the native FIT import service. Both providers' regional base URLs must stay allow-listed.
 - Integration work often spans route, service, repository, cron, and external-provider settings code; inspect the whole path before calling the work complete
 
 ### AI Services
@@ -242,7 +242,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 - AI chat or chatbot tool issue:
   inspect `services/chatService.ts`, `ai/tools/`, and the matching domain service and repository
 - Automatic coach context or proactive-message issue:
-  inspect `services/coachContextService.ts`, `services/proactiveCoachService.ts`, `services/coachProfileService.ts`, and `models/coachProfileRepository.ts`; for Telegram delivery also inspect `services/telegramCoachService.ts`, `services/telegramApiService.ts`, `models/coachTelegramRepository.ts`, and `routes/telegramRoutes.ts`; for the instance-wide encrypted credential inspect `routes/telegramAdminRoutes.ts`, `services/telegramAdminService.ts`, `services/telegramConfigService.ts`, and `models/telegramConfigRepository.ts`
+  inspect `services/coachContextService.ts`, `services/proactiveCoachService.ts`, `services/coachProfileService.ts`, and `models/coachProfileRepository.ts`; for workout feedback/preferences also inspect `services/trainingFeedbackService.ts`, `models/coachTrainingFeedbackRepository.ts`, and `ai/tools/trainingFeedbackTools.ts`; for Telegram delivery also inspect `services/telegramCoachService.ts`, `services/telegramApiService.ts`, `models/coachTelegramRepository.ts`, and `routes/telegramRoutes.ts`; for the instance-wide encrypted credential inspect `routes/telegramAdminRoutes.ts`, `services/telegramAdminService.ts`, `services/telegramConfigService.ts`, and `models/telegramConfigRepository.ts`
 - Fasting or mood issue:
   inspect `routes/fastingRoutes.ts` / `routes/moodRoutes.ts` and `models/fastingRepository.ts` / `models/moodRepository.ts`
 - Medications, cycle, or pregnancy issue:

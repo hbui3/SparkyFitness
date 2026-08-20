@@ -4,6 +4,7 @@ import coachProfileRepository from '../models/coachProfileRepository.js';
 import AllergenPreferenceService from '../services/allergenPreferenceService.js';
 import coachContextService from '../services/coachContextService.js';
 import coachMemoryService from '../services/coachMemoryService.js';
+import trainingFeedbackService from '../services/trainingFeedbackService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
@@ -27,6 +28,12 @@ vi.mock('../services/coachContextService.js', () => ({
 }));
 vi.mock('../services/coachMemoryService.js', () => ({
   default: { listActiveMemories: vi.fn() },
+}));
+vi.mock('../services/trainingFeedbackService.js', () => ({
+  default: {
+    getTrainingLearningContext: vi.fn(),
+    formatTrainingLearningContext: vi.fn(),
+  },
 }));
 
 const storedProfile = {
@@ -83,6 +90,22 @@ describe('coachProfileService', () => {
       'Last 30 days: weight development +0.8 kg',
     ]);
     vi.mocked(coachMemoryService.listActiveMemories).mockResolvedValue([]);
+    vi.mocked(
+      trainingFeedbackService.getTrainingLearningContext
+    ).mockResolvedValue({
+      suggestedVolumeFactor: 1,
+      suggestedRestSecondsDelta: 0,
+      recentPainReported: false,
+      preferredExercises: [],
+      avoidedExercises: [],
+      requiredEquipment: [],
+      constraints: [],
+      preferences: [],
+      recentFeedback: [],
+    });
+    vi.mocked(
+      trainingFeedbackService.formatTrainingLearningContext
+    ).mockReturnValue([]);
   });
 
   it('returns safe defaults before a profile has been saved', async () => {
@@ -203,6 +226,22 @@ describe('coachProfileService', () => {
     expect(context).toContain(
       'During this turn, call sparky_manage_coach_memory'
     );
+  });
+
+  it('injects learned workout feedback and training preferences into every chat turn', async () => {
+    vi.mocked(
+      trainingFeedbackService.formatTrainingLearningContext
+    ).mockReturnValue([
+      'Training feedback adaptation: suggested volume factor 0.90; add 15s rest where appropriate; recent pain/discomfort reported: no.',
+      'Active training preferences:\n- preference-1: [exercise/prefer] Seated Barbell Row',
+    ]);
+
+    const context =
+      await coachProfileService.getPersistentChatContext('user-1');
+
+    expect(context).toContain('suggested volume factor 0.90');
+    expect(context).toContain('[exercise/prefer] Seated Barbell Row');
+    expect(context).toContain('sparky_manage_training_feedback');
   });
 
   it('skips nutrition and trend queries when the coach profile is disabled', async () => {

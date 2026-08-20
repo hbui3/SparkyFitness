@@ -1,5 +1,6 @@
 export * from "./schemas/api/AiServiceSettings.api.zod.ts";
 export * from "./schemas/api/AdaptiveTraining.api.zod.ts";
+export * from "./schemas/api/TrainingFeedback.api.zod.ts";
 export * from "./schemas/api/Backup.api.zod.ts";
 export * from "./schemas/api/CustomCategories.api.zod.ts";
 export * from "./schemas/api/CustomMeasurements.api.zod.ts";
@@ -30,6 +31,8 @@ export * from "./schemas/database/CheckInMeasurements.zod.ts";
 export * from "./schemas/database/CoachProfiles.zod.ts";
 export * from "./schemas/database/CoachTelegramConnections.zod.ts";
 export * from "./schemas/database/CoachMemories.zod.ts";
+export * from "./schemas/database/CoachTrainingPreferences.zod.ts";
+export * from "./schemas/database/CoachWorkoutFeedback.zod.ts";
 export * from "./schemas/database/TelegramUpdateInbox.zod.ts";
 export * from "./schemas/database/CoachDeliveryOutbox.zod.ts";
 export * from "./schemas/database/CoachActionReceipts.zod.ts";

@@ -22,6 +22,7 @@ import { ENABLE_TOOLS_TOOL_NAME, buildMetaTools } from './metaTools.js';
 import { buildProfileTools } from './profileTools.js';
 import { buildReportTools } from './reportTools.js';
 import { buildSpeedianceTools } from './speedianceTools.js';
+import { buildTrainingFeedbackTools } from './trainingFeedbackTools.js';
 import { buildVisionTools } from './visionTools.js';
 import { buildWizardTools } from './wizardTools.js';
 
@@ -50,6 +51,7 @@ const CATEGORY_BUILDERS: Record<
 > = {
   exercise: [
     (u, tz) => buildExerciseTools(u, tz),
+    (u, tz) => buildTrainingFeedbackTools(u, tz),
     (u) => buildSpeedianceTools(u),
   ],
   food: [(u, tz) => buildFoodTools(u, tz), (u) => buildMealSafetyTools(u)],

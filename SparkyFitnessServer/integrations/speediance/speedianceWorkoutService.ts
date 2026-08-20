@@ -11,6 +11,7 @@ import {
 } from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import { loadUserTimezone } from '../../utils/timezoneLoader.js';
+import trainingFeedbackService from '../../services/trainingFeedbackService.js';
 import {
   SpeedianceApiClient,
   SpeedianceApiError,
@@ -622,6 +623,29 @@ export async function createAndScheduleSpeedianceWorkout(
   userId: string,
   request: SpeedianceCreateAndScheduleWorkoutRequest
 ): Promise<SpeedianceCreateAndScheduleWorkoutResponse> {
+  const learningContext =
+    await trainingFeedbackService.getTrainingLearningContext(userId);
+  const acknowledged = new Set(request.acknowledgedPreferenceIds);
+  const requestedExerciseNames = new Set(
+    request.exercises.map((exercise) => normalizeLabel(exercise.expectedTitle))
+  );
+  const blocked = learningContext.preferences.filter(
+    (preference) =>
+      preference.kind === 'exercise' &&
+      preference.sentiment === 'avoid' &&
+      requestedExerciseNames.has(normalizeLabel(preference.subject)) &&
+      !acknowledged.has(preference.id)
+  );
+  if (blocked.length > 0) {
+    throw new SpeedianceWorkoutValidationError(
+      `The plan contains an avoided exercise: ${blocked
+        .map((preference) => `${preference.subject} (${preference.id})`)
+        .join(
+          ', '
+        )}. Choose an alternative, or include its preference ID in acknowledgedPreferenceIds only after the user explicitly overrides it.`
+    );
+  }
+
   const { api, timezone } = await authenticatedClient(
     userId,
     request.providerId

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-08-18_
+_Last updated: 2026-08-20_
 
 This is the repo-root monorepo guide for SparkyFitness. Use it to choose the right package, understand shared repo-level rules, and find the next guide to read.
 
@@ -38,7 +38,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `shared/` - source-first TypeScript workspace package for `@workspace/shared` schemas, constants, and timezone/day helpers.
 - `docs/` - Nuxt / Docus docs site.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
-- The persistent AI coach spans `shared` contracts, owner-only profiles/memories/undo receipts, canonical onboarding/goal/daily/trend/recovery context, configurable proactive messages, a durable system-only Telegram inbox plus owner-scoped delivery outbox, bidirectional text/photo/voice Telegram chat with deterministic quick actions, the encrypted system-only bot credential, meal-safety enforcement, and the frontend Nutrition & Diet settings with live cross-channel refresh.
+- The persistent AI coach spans `shared` contracts, owner-only profiles/memories/structured workout feedback/training preferences/undo receipts, canonical onboarding/goal/daily/trend/recovery context, configurable proactive messages, a durable system-only Telegram inbox plus owner-scoped delivery outbox, bidirectional text/photo/voice Telegram chat with deterministic quick actions, the encrypted system-only bot credential, meal-safety enforcement, and the frontend Nutrition & Diet settings with live cross-channel refresh. Web and Telegram share the same feedback-aware workout-planning tools.
 - Cross-provider workout reads are canonicalized by `SparkyFitnessServer/services/workoutDeduplicationService.ts` using the shared overlap rule: provider-owned raw rows remain stored, while lower-fidelity HealthKit/Health Connect mirrors are excluded from reports, calorie totals, daily views, and coach aggregates.
 - Recovery-aware adaptive training spans shared contracts, diary-scoped settings/recommendations, canonical deduplicated workout rows, a reusable 0-100 muscle-load calculation/body map, owned workout-preset scoring, the Reports exercise dashboard, and canonical web/Telegram coach context.
 - Report tables expose stored provider provenance for food, canonical workouts, sleep, custom measurements, and body measurements. Because one daily `check_in_measurements` row can combine providers, its `source_provenance` is keyed per metric rather than represented by one row-level source.

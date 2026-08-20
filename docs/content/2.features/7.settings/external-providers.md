@@ -40,6 +40,11 @@ asks it to do so. Exercise group, variant, title, accessory requirements, and
 set configuration are verified against Speediance before and after the write.
 An identically named workout is reused only when its complete exercise and set
 content matches; ambiguous or conflicting remote state is not overwritten.
+Before proposing or scheduling the next workout, the coach reads the owner's
+recent structured workout feedback and active training preferences. It can use
+bounded volume/rest guidance and preferred exercises, while an exercise marked
+as avoided is blocked at the Speediance write boundary unless the owner
+explicitly overrides that exact preference.
 
 iGPSPORT accounts are configured with an email address or phone number,
 password, and account region (Global or China). SparkyFitness encrypts these

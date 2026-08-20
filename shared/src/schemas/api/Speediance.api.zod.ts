@@ -59,6 +59,11 @@ export const speedianceCreateAndScheduleWorkoutRequestSchema = z.object({
   name: z.string().trim().min(1).max(100),
   scheduleDate: calendarDaySchema,
   exercises: z.array(speedianceWorkoutExerciseSchema).min(1).max(50),
+  acknowledgedPreferenceIds: z
+    .array(z.string().uuid())
+    .max(50)
+    .optional()
+    .default([]),
 });
 
 export const speedianceCreateAndScheduleWorkoutResponseSchema = z.object({

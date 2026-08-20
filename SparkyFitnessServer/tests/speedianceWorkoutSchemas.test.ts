@@ -25,6 +25,7 @@ describe('Speediance workout schemas', () => {
       mode: 'standard',
       restSeconds: 90,
     });
+    expect(parsed.acknowledgedPreferenceIds).toEqual([]);
   });
 
   it('requires numeric group and variant IDs plus the exact exercise title', () => {

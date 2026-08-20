@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   setReservation: vi.fn(),
   getCredentials: vi.fn(),
   loadTimezone: vi.fn(),
+  getTrainingLearningContext: vi.fn(),
 }));
 
 vi.mock('../integrations/speediance/speedianceApiClient.js', () => ({
@@ -47,6 +48,12 @@ vi.mock('../utils/timezoneLoader.js', () => ({
   loadUserTimezone: mocks.loadTimezone,
 }));
 
+vi.mock('../services/trainingFeedbackService.js', () => ({
+  default: {
+    getTrainingLearningContext: mocks.getTrainingLearningContext,
+  },
+}));
+
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
 import {
@@ -60,6 +67,7 @@ function workoutRequest(): SpeedianceCreateAndScheduleWorkoutRequest {
   return {
     name: 'Sparky Full Body A',
     scheduleDate,
+    acknowledgedPreferenceIds: [],
     exercises: [
       {
         groupId: '116',
@@ -117,6 +125,17 @@ beforeEach(() => {
     { id: 2, name: 'Tricep Rope' },
     { id: 5, name: 'Handles' },
   ]);
+  mocks.getTrainingLearningContext.mockResolvedValue({
+    suggestedVolumeFactor: 1,
+    suggestedRestSecondsDelta: 0,
+    recentPainReported: false,
+    preferredExercises: [],
+    avoidedExercises: [],
+    requiredEquipment: [],
+    constraints: [],
+    preferences: [],
+    recentFeedback: [],
+  });
   mocks.getGroupDetail.mockImplementation(async (groupId: string) => {
     if (groupId === '116') {
       return {
@@ -188,7 +207,63 @@ describe('searchSpeedianceExercises', () => {
 });
 
 describe('createAndScheduleSpeedianceWorkout', () => {
+  it('blocks an explicitly avoided exercise before authenticating or writing', async () => {
+    const preferenceId = '11111111-1111-4111-8111-111111111111';
+    mocks.getTrainingLearningContext.mockResolvedValue({
+      suggestedVolumeFactor: 0.9,
+      suggestedRestSecondsDelta: 15,
+      recentPainReported: false,
+      preferredExercises: [],
+      avoidedExercises: ['Barbell Bench Press'],
+      requiredEquipment: [],
+      constraints: [],
+      preferences: [
+        {
+          id: preferenceId,
+          kind: 'exercise',
+          subject: 'Barbell Bench Press',
+          sentiment: 'avoid',
+          notes: 'User dislikes this movement.',
+          source: 'feedback',
+          active: true,
+          updatedAt: '2026-08-20T06:00:00.000Z',
+        },
+      ],
+      recentFeedback: [],
+    });
+
+    await expect(
+      createAndScheduleSpeedianceWorkout('user-1', workoutRequest())
+    ).rejects.toThrow(`Barbell Bench Press (${preferenceId})`);
+    expect(mocks.login).not.toHaveBeenCalled();
+    expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.setReservation).not.toHaveBeenCalled();
+  });
+
   it('creates a verified Gain Muscle workout, expands unilateral sets, and schedules by date and code', async () => {
+    const acknowledgedPreferenceId = '11111111-1111-4111-8111-111111111111';
+    mocks.getTrainingLearningContext.mockResolvedValue({
+      suggestedVolumeFactor: 1,
+      suggestedRestSecondsDelta: 0,
+      recentPainReported: false,
+      preferredExercises: [],
+      avoidedExercises: ['Barbell Bench Press'],
+      requiredEquipment: [],
+      constraints: [],
+      preferences: [
+        {
+          id: acknowledgedPreferenceId,
+          kind: 'exercise',
+          subject: 'Barbell Bench Press',
+          sentiment: 'avoid',
+          notes: null,
+          source: 'user',
+          active: true,
+          updatedAt: '2026-08-20T06:00:00.000Z',
+        },
+      ],
+      recentFeedback: [],
+    });
     let created = false;
     let scheduled = false;
     const capturedPayloads: SpeedianceCustomWorkoutPayload[] = [];
@@ -234,10 +309,9 @@ describe('createAndScheduleSpeedianceWorkout', () => {
       return true;
     });
 
-    const result = await createAndScheduleSpeedianceWorkout(
-      'user-1',
-      workoutRequest()
-    );
+    const request = workoutRequest();
+    request.acknowledgedPreferenceIds = [acknowledgedPreferenceId];
+    const result = await createAndScheduleSpeedianceWorkout('user-1', request);
 
     expect(result.workout).toMatchObject({
       id: '501',

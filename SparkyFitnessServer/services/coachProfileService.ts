@@ -13,6 +13,7 @@ import coachContextService, {
 } from './coachContextService.js';
 import { log } from '../config/logging.js';
 import coachMemoryService from './coachMemoryService.js';
+import trainingFeedbackService from './trainingFeedbackService.js';
 
 const MEAT_TERMS = [
   'beef',
@@ -366,9 +367,26 @@ async function getPersistentChatContext(
         );
         return null;
       });
+    const trainingLearning = await trainingFeedbackService
+      .getTrainingLearningContext(userId)
+      .catch((error) => {
+        log(
+          'warn',
+          `Failed to build training feedback context for user ${userId}:`,
+          error
+        );
+        return null;
+      });
     lines.push(`Dietary pattern: ${profile.dietaryPattern}`);
     if (snapshot)
       lines.push(...coachContextService.formatCoachContext(snapshot));
+    if (trainingLearning) {
+      lines.push(
+        ...trainingFeedbackService.formatTrainingLearningContext(
+          trainingLearning
+        )
+      );
+    }
     if (profile.excludedIngredients.length) {
       lines.push(
         `Hard ingredient exclusions: ${profile.excludedIngredients.join(', ')}`
@@ -405,8 +423,8 @@ async function getPersistentChatContext(
         );
       }
       memoryInstruction = profile.autoMemoryEnabled
-        ? 'Automatic long-term memory is enabled. During this turn, call sparky_manage_coach_memory when the user states a stable, future-relevant preference, routine, constraint, injury limitation, long-running goal, achievement, or enduring context that is not already listed. Do not ask for confirmation. Never store transient daily values, credentials, secrets, diagnoses, or speculation.'
-        : 'Automatic long-term memory is disabled. Store a new memory only when the user explicitly asks you to remember it or explicitly confirms your request to save it. Set user_confirmed=true only after that explicit request or confirmation.';
+        ? 'Automatic long-term memory is enabled. During this turn, call sparky_manage_coach_memory when the user states stable, future-relevant context that is not already listed and does not belong to a structured domain. Training exercise/equipment/style/schedule preferences belong in sparky_manage_training_feedback instead. Do not ask for confirmation. Never store transient daily values, credentials, secrets, diagnoses, or speculation.'
+        : 'Automatic long-term memory is disabled. Store a new generic memory only when the user explicitly asks you to remember it or explicitly confirms your request to save it. Training exercise/equipment/style/schedule preferences belong in sparky_manage_training_feedback instead. Set user_confirmed=true only after that explicit request or confirmation.';
     }
   }
   if (allergens.length)
@@ -420,6 +438,8 @@ async function getPersistentChatContext(
     ...lines,
     ...(memoryInstruction ? [memoryInstruction] : []),
     'The automatic daily values are the authoritative live database snapshot and already include earlier chat-logged entries. Never re-add values from chat history. After any write, use a retrieval tool or its verified result instead of mental arithmetic when stating the new total.',
+    'When the user gives post-workout feedback, call sparky_manage_training_feedback with action=record. Save a training preference only when the user explicitly states a stable like, dislike, required item, schedule choice, or constraint; do not infer a lasting preference from one difficult session.',
+    'When proposing or scheduling a workout, apply the structured training-feedback volume/rest guidance and active preferences above. Do not use an avoided exercise or override a constraint unless the user explicitly asks to override that specific preference. Treat pain/discomfort as a caution signal, not a diagnosis.',
     'For every new meal or recipe suggestion, call sparky_validate_meal_suggestion with the complete ingredient list before presenting it. Revise blocked suggestions. Foods the user says they already consumed may still be logged.',
   ].join('\n');
 }

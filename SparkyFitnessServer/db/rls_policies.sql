@@ -30,6 +30,8 @@ BEGIN
     'adaptive_training_recommendations',
     'coach_telegram_connections',
     'coach_memories',
+    'coach_workout_feedback',
+    'coach_training_preferences',
     'coach_delivery_outbox',
     'coach_action_receipts',
     'telegram_update_inbox',
@@ -569,6 +571,8 @@ SELECT create_owner_policy('sparky_chat_history');
 SELECT create_owner_policy('coach_profiles');
 SELECT create_owner_policy('coach_telegram_connections');
 SELECT create_owner_policy('coach_memories');
+SELECT create_owner_policy('coach_workout_feedback');
+SELECT create_owner_policy('coach_training_preferences');
 SELECT create_owner_policy('coach_delivery_outbox');
 SELECT create_owner_policy('coach_action_receipts');
 
