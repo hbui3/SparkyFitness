@@ -11,6 +11,7 @@ import {
 } from '../ai/providerDispatch.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import { TtlCache } from '../utils/ttlCache.js';
+import { isWaterLogText } from '../utils/waterLogText.js';
 import coachProfileService from './coachProfileService.js';
 import {
   buildChatToolConfigurationMetadata,
@@ -2124,6 +2125,10 @@ function userRequestedFoodDiaryWrite(
   if (latestUserIndex < 0) return false;
 
   const userText = extractMessageText(messages[latestUserIndex]).trim();
+  // Water uses a different mutation contract. Treating "300ml" or an
+  // explicit water message as food can launch the food-only repair prompt and
+  // accidentally resume a previously discussed meal.
+  if (isWaterLogText(userText)) return false;
   if (
     /\?$/.test(userText) &&
     /\b(?:was|wann|wie|welche|what|when|which|did|habe ich)\b/i.test(userText)

@@ -15,6 +15,7 @@ import foodRepository from '../models/foodRepository.js';
 import mealTypeRepository from '../models/mealType.js';
 import foodEntryService from '../services/foodEntryService.js';
 import foodCoreService from '../services/foodCoreService.js';
+import measurementService from '../services/measurementService.js';
 import { log } from '../config/logging.js';
 import { createOpenAI } from '@ai-sdk/openai';
 import coachProfileService from '../services/coachProfileService.js';
@@ -44,6 +45,11 @@ vi.mock('../services/foodEntryService', () => ({
 vi.mock('../services/foodCoreService', () => ({
   default: {
     createFood: vi.fn(),
+  },
+}));
+vi.mock('../services/measurementService', () => ({
+  default: {
+    logWaterIntakeAmount: vi.fn(),
   },
 }));
 vi.mock('../models/foodRepository', () => ({
@@ -857,6 +863,46 @@ describe('chatService', () => {
           }),
         ])
       );
+    });
+
+    it('does not launch food repair or create food for a bare water volume', async () => {
+      vi.mocked(measurementService.logWaterIntakeAmount).mockResolvedValue({
+        id: 'water-300',
+      } as never);
+      const model = scriptModel([
+        toolCallStep({
+          action: 'log_water',
+          amount_ml: 300,
+          entry_date: '2026-06-10',
+        }),
+        textStep('Erfasst: 300 ml Wasser.'),
+      ]);
+
+      const result = await chatService.processChatMessage(
+        [{ role: 'user', content: '300ml' }],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+
+      expect(model.doGenerateCalls).toHaveLength(2);
+      expect(measurementService.logWaterIntakeAmount).toHaveBeenCalledWith(
+        actorUserId,
+        actorUserId,
+        '2026-06-10',
+        300
+      );
+      expect(foodCoreService.createFood).not.toHaveBeenCalled();
+      expect(foodEntryService.createFoodEntry).not.toHaveBeenCalled();
+      expect(result.content).toBe('Erfasst: 300 ml Wasser.');
+      expect(result.toolOutcomes).toEqual([
+        expect.objectContaining({
+          action: 'log_water',
+          foodDiaryWrite: false,
+          success: true,
+          mutationDomain: 'water',
+        }),
+      ]);
     });
 
     it('replaces a repeated unverified food-log claim with an explicit failure', async () => {
