@@ -14,6 +14,7 @@ import preferenceRepository from '../models/preferenceRepository.js';
 import foodRepository from '../models/foodRepository.js';
 import mealTypeRepository from '../models/mealType.js';
 import foodEntryService from '../services/foodEntryService.js';
+import foodCoreService from '../services/foodCoreService.js';
 import { log } from '../config/logging.js';
 import { createOpenAI } from '@ai-sdk/openai';
 import coachProfileService from '../services/coachProfileService.js';
@@ -38,6 +39,11 @@ vi.mock('../utils/timezoneLoader', () => ({
 vi.mock('../services/foodEntryService', () => ({
   default: {
     createFoodEntry: vi.fn(),
+  },
+}));
+vi.mock('../services/foodCoreService', () => ({
+  default: {
+    createFood: vi.fn(),
   },
 }));
 vi.mock('../models/foodRepository', () => ({
@@ -753,10 +759,124 @@ describe('chatService', () => {
         expect.objectContaining({
           name: 'sparky_manage_food',
           action: 'log_food',
+          foodDiaryWrite: true,
           success: false,
           mutationDomain: 'nutrition',
         }),
       ]);
+    });
+
+    it('repairs a false food-log confirmation and returns only the verified diary result', async () => {
+      const pizzaRow = {
+        ...eggsRow,
+        name: 'Dönerpizza',
+        default_variant: {
+          ...eggsRow.default_variant,
+          serving_size: 570,
+          serving_unit: 'g',
+          calories: 1550,
+          protein: 65.7,
+          carbs: 109,
+          fat: 89,
+        },
+      };
+      vi.mocked(foodCoreService.createFood).mockResolvedValue(pizzaRow);
+      vi.mocked(foodRepository.getFoodById).mockResolvedValue(pizzaRow);
+      vi.mocked(foodRepository.getFoodVariantsByFoodId).mockResolvedValue([]);
+      vi.mocked(foodEntryService.createFoodEntry).mockResolvedValue({
+        id: 'entry-pizza',
+        food_name: 'Dönerpizza',
+      });
+
+      const createWithoutDiary = {
+        action: 'create_food',
+        food_name: 'Dönerpizza',
+        calories: 1550,
+        protein: 65.7,
+        carbs: 109,
+        fat: 89,
+        quantity: 570,
+        unit: 'g',
+      };
+      const repairedLog = {
+        action: 'log_food',
+        food_id: FOOD_ID,
+        quantity: 570,
+        unit: 'g',
+        meal_type: 'lunch',
+        entry_date: '2026-06-10',
+      };
+      const model = scriptModel([
+        toolCallStep(createWithoutDiary),
+        textStep(
+          'Passt – ich habe eine Dönerpizza mit 570 g als AI-Schätzung geloggt.'
+        ),
+        toolCallStep(repairedLog),
+        textStep('Die Pizza ist jetzt sicher eingetragen.'),
+      ]);
+
+      const result = await chatService.processChatMessage(
+        [{ role: 'user', content: '570g Dönerpizza habe ich gegessen' }],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+
+      expect(model.doGenerateCalls).toHaveLength(4);
+      expect(JSON.stringify(model.doGenerateCalls[2].prompt)).toContain(
+        'no successful diary write was confirmed'
+      );
+      expect(foodCoreService.createFood).toHaveBeenCalledTimes(1);
+      expect(foodEntryService.createFoodEntry).toHaveBeenCalledTimes(1);
+      expect(foodEntryService.createFoodEntry).toHaveBeenCalledWith(
+        actorUserId,
+        actorUserId,
+        expect.objectContaining({
+          food_id: FOOD_ID,
+          entry_date: '2026-06-10',
+          quantity: 570,
+          unit: 'g',
+          meal_type_id: 'lunch-id',
+        })
+      );
+      expect(result.content).toBe(
+        '✅ Logged "Dönerpizza" (570 g) for Lunch on 2026-06-10.'
+      );
+      expect(result.action).toBe('food_added');
+      expect(result.toolOutcomes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            action: 'create_food',
+            foodDiaryWrite: false,
+            success: true,
+          }),
+          expect.objectContaining({
+            action: 'log_food',
+            foodDiaryWrite: true,
+            success: true,
+          }),
+        ])
+      );
+    });
+
+    it('replaces a repeated unverified food-log claim with an explicit failure', async () => {
+      scriptModel([
+        textStep('Ich habe die Pizza geloggt.'),
+        textStep('Die Pizza wurde erfolgreich eingetragen.'),
+      ]);
+
+      const result = await chatService.processChatMessage(
+        [{ role: 'user', content: '570g Pizza gegessen' }],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+
+      expect(result.content).toBe(
+        'Der Tagebucheintrag konnte nicht bestätigt werden. Deshalb melde ich das Essen nicht als geloggt. Bitte versuche es erneut.'
+      );
+      expect(result.action).toBe('advice');
+      expect(foodEntryService.createFoodEntry).not.toHaveBeenCalled();
     });
 
     it('forwards a per-user OpenAI prompt cache key into the blocking model call', async () => {
@@ -1076,7 +1196,7 @@ describe('chatService', () => {
     // answers a quick reply it no longer has the food's id, and emits a
     // half-formed log call (missing action/food_id) or invents a result.
     it('replays earlier tool calls and their results as text', async () => {
-      const model = scriptModel([textStep('Logged.')]);
+      const model = scriptModel([textStep('I remember the lookup result.')]);
 
       await chatService.processChatMessage(
         [
@@ -1153,7 +1273,7 @@ describe('chatService', () => {
     });
 
     it('withholds quick replies when the channel marks the turn as directly actionable', async () => {
-      const model = scriptModel([textStep('Logged from the label.')]);
+      const model = scriptModel([textStep('Ready to use the food tool.')]);
 
       await chatService.processChatMessage(
         [{ role: 'user', content: '3 Brötchen from this label' }],

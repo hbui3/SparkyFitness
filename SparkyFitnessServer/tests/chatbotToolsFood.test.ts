@@ -1837,7 +1837,7 @@ describe('create_food', () => {
     );
 
     expect(result).toBe(
-      '✅ Food "Chicken Fingers" created with 520 kcal per 4pieces.'
+      `✅ Food "Chicken Fingers" created with 520 kcal per 4pieces. NOT logged to the diary because no meal type was provided. Food ID: ${FOOD_ID}. If the user asked to log this food, call log_food now with this food ID, quantity 4, unit "pieces", and the intended meal_type.`
     );
     expect(foodCoreService.createFood).toHaveBeenCalledWith(
       'user-1',
@@ -1917,7 +1917,7 @@ describe('create_food', () => {
     );
 
     expect(result).toBe(
-      '✅ Food "Protein Bar" created with 220 kcal per 1serving.'
+      `✅ Food "Protein Bar" created with 220 kcal per 1serving. NOT logged to the diary because no meal type was provided. Food ID: ${FOOD_ID}. If the user asked to log this food, call log_food now with this food ID, quantity 1, unit "serving", and the intended meal_type.`
     );
     expect(foodCoreService.createFood).toHaveBeenCalledWith('user-1', {
       user_id: 'user-1',

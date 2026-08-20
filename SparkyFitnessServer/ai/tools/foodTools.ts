@@ -1692,6 +1692,8 @@ Actions:
                   entry_time: args.entry_time,
                 });
                 msg += ` Also logged to ${mealType.name} for ${entryDate}.`;
+              } else {
+                msg += ` NOT logged to the diary because no meal type was provided. Food ID: ${food.id}. If the user asked to log this food, call log_food now with this food ID, quantity ${targetQuantity}, unit "${targetUnit}", and the intended meal_type.`;
               }
               return formatConfirmation(msg);
             }
