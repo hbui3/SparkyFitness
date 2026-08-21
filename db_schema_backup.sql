@@ -1116,6 +1116,68 @@ COMMENT ON TABLE public.account IS 'Better Auth account table - stores credentia
 
 
 --
+-- Name: adaptive_training_recommendations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.adaptive_training_recommendations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    recommendation_date date NOT NULL,
+    kind text NOT NULL,
+    workout_preset_id integer,
+    status text DEFAULT 'planned'::text NOT NULL,
+    score numeric(5,2) NOT NULL,
+    volume_factor numeric(4,2) DEFAULT 1 NOT NULL,
+    muscle_load_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    workout_snapshot jsonb,
+    rationale jsonb DEFAULT '[]'::jsonb NOT NULL,
+    settings_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    algorithm_version text DEFAULT 'adaptive-v1'::text NOT NULL,
+    generated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT adaptive_training_recommendations_kind_check CHECK ((kind = ANY (ARRAY['workout'::text, 'recovery'::text]))),
+    CONSTRAINT adaptive_training_recommendations_score_check CHECK (((score >= (0)::numeric) AND (score <= (100)::numeric))),
+    CONSTRAINT adaptive_training_recommendations_status_check CHECK ((status = ANY (ARRAY['planned'::text, 'accepted'::text, 'skipped'::text, 'completed'::text]))),
+    CONSTRAINT adaptive_training_recommendations_volume_factor_check CHECK (((volume_factor >= 0.5) AND (volume_factor <= 1.25)))
+);
+
+
+--
+-- Name: TABLE adaptive_training_recommendations; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.adaptive_training_recommendations IS 'Persisted, explainable daily workout or recovery recommendations.';
+
+
+--
+-- Name: adaptive_training_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.adaptive_training_settings (
+    user_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    sessions_per_week smallint DEFAULT 3 NOT NULL,
+    max_duration_minutes smallint DEFAULT 45 NOT NULL,
+    recovery_window_hours smallint DEFAULT 72 NOT NULL,
+    preferred_muscles text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    candidate_workout_preset_ids integer[] DEFAULT ARRAY[]::integer[] CONSTRAINT adaptive_training_settings_candidate_workout_preset_id_not_null NOT NULL,
+    avoid_consecutive_training_days boolean DEFAULT true CONSTRAINT adaptive_training_settings_avoid_consecutive_training__not_null NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT adaptive_training_settings_max_duration_minutes_check CHECK (((max_duration_minutes >= 15) AND (max_duration_minutes <= 180))),
+    CONSTRAINT adaptive_training_settings_recovery_window_hours_check CHECK (((recovery_window_hours >= 24) AND (recovery_window_hours <= 168))),
+    CONSTRAINT adaptive_training_settings_sessions_per_week_check CHECK (((sessions_per_week >= 1) AND (sessions_per_week <= 7)))
+);
+
+
+--
+-- Name: TABLE adaptive_training_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.adaptive_training_settings IS 'Per-user settings for recovery-aware workout recommendations.';
+
+
+--
 -- Name: admin_activity_logs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1149,9 +1211,17 @@ CREATE TABLE public.ai_service_settings (
     api_key_tag text,
     is_public boolean DEFAULT false CONSTRAINT ai_service_settings_is_global_not_null NOT NULL,
     chat_tool_profile text DEFAULT 'full'::text NOT NULL,
+    planning_model_name text,
     CONSTRAINT ai_service_settings_chat_tool_profile_check CHECK ((chat_tool_profile = ANY (ARRAY['full'::text, 'core'::text]))),
     CONSTRAINT check_public_settings_user_id_null CHECK ((((is_public = true) AND (user_id IS NULL)) OR ((is_public = false) AND (user_id IS NOT NULL))))
 );
+
+
+--
+-- Name: COLUMN ai_service_settings.planning_model_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.ai_service_settings.planning_model_name IS 'Optional stronger model used for workout and multi-week training-plan turns.';
 
 
 --
@@ -1264,8 +1334,16 @@ CREATE TABLE public.check_in_measurements (
     updated_by_user_id uuid,
     muscle_mass_kg numeric(5,2),
     bone_mass_kg numeric(5,2),
-    body_water_percentage numeric(5,2)
+    body_water_percentage numeric(5,2),
+    source_provenance jsonb DEFAULT '{}'::jsonb NOT NULL
 );
+
+
+--
+-- Name: COLUMN check_in_measurements.source_provenance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.check_in_measurements.source_provenance IS 'Per-metric source metadata, keyed by measurement column (for example weight or steps).';
 
 
 --
@@ -1495,6 +1573,73 @@ CREATE TABLE public.coach_telegram_connections (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT coach_telegram_link_pair CHECK ((((link_token_hash IS NULL) AND (link_token_expires_at IS NULL)) OR ((link_token_hash IS NOT NULL) AND (link_token_expires_at IS NOT NULL))))
 );
+
+
+--
+-- Name: coach_training_preferences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_training_preferences (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject text NOT NULL,
+    sentiment text NOT NULL,
+    notes text,
+    source text DEFAULT 'user'::text NOT NULL,
+    source_feedback_id uuid,
+    active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_training_preferences_kind_check CHECK ((kind = ANY (ARRAY['exercise'::text, 'equipment'::text, 'training_style'::text, 'schedule'::text, 'constraint'::text]))),
+    CONSTRAINT coach_training_preferences_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 1000)))),
+    CONSTRAINT coach_training_preferences_sentiment_check CHECK ((sentiment = ANY (ARRAY['prefer'::text, 'avoid'::text, 'require'::text, 'neutral'::text]))),
+    CONSTRAINT coach_training_preferences_source_check CHECK ((source = ANY (ARRAY['user'::text, 'feedback'::text, 'coach'::text]))),
+    CONSTRAINT coach_training_preferences_subject_check CHECK (((length(btrim(subject)) >= 1) AND (length(btrim(subject)) <= 200)))
+);
+
+
+--
+-- Name: TABLE coach_training_preferences; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_training_preferences IS 'Private active exercise, equipment, schedule, style, and constraint preferences learned from explicit user feedback.';
+
+
+--
+-- Name: coach_workout_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_workout_feedback (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    workout_date date NOT NULL,
+    workout_name text NOT NULL,
+    provider text DEFAULT 'speediance'::text NOT NULL,
+    overall_rating smallint,
+    difficulty text,
+    energy_rating smallint,
+    pain_level smallint,
+    notes text,
+    exercise_feedback jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_workout_feedback_difficulty_check CHECK (((difficulty IS NULL) OR (difficulty = ANY (ARRAY['too_easy'::text, 'just_right'::text, 'too_hard'::text])))),
+    CONSTRAINT coach_workout_feedback_energy_check CHECK (((energy_rating IS NULL) OR ((energy_rating >= 1) AND (energy_rating <= 5)))),
+    CONSTRAINT coach_workout_feedback_exercises_check CHECK ((jsonb_typeof(exercise_feedback) = 'array'::text)),
+    CONSTRAINT coach_workout_feedback_name_check CHECK (((length(btrim(workout_name)) >= 1) AND (length(btrim(workout_name)) <= 200))),
+    CONSTRAINT coach_workout_feedback_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 2000)))),
+    CONSTRAINT coach_workout_feedback_pain_check CHECK (((pain_level IS NULL) OR ((pain_level >= 0) AND (pain_level <= 10)))),
+    CONSTRAINT coach_workout_feedback_provider_check CHECK ((provider = ANY (ARRAY['speediance'::text, 'sparky'::text, 'manual'::text, 'other'::text]))),
+    CONSTRAINT coach_workout_feedback_rating_check CHECK (((overall_rating IS NULL) OR ((overall_rating >= 1) AND (overall_rating <= 5))))
+);
+
+
+--
+-- Name: TABLE coach_workout_feedback; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_workout_feedback IS 'Private structured post-workout feedback used by the AI coach for future training adaptation.';
 
 
 --
@@ -4109,7 +4254,9 @@ CREATE TABLE public.workout_plan_template_assignments (
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     sort_order integer DEFAULT 0,
-    CONSTRAINT chk_workout_assignment_type CHECK ((((workout_preset_id IS NOT NULL) AND (exercise_id IS NULL)) OR ((workout_preset_id IS NULL) AND (exercise_id IS NOT NULL))))
+    week_index integer DEFAULT 0 NOT NULL,
+    CONSTRAINT chk_workout_assignment_type CHECK ((((workout_preset_id IS NOT NULL) AND (exercise_id IS NULL)) OR ((workout_preset_id IS NULL) AND (exercise_id IS NOT NULL)))),
+    CONSTRAINT workout_plan_template_assignments_week_index_check CHECK (((week_index >= 0) AND (week_index <= 7)))
 );
 
 
@@ -4146,7 +4293,9 @@ CREATE TABLE public.workout_plan_templates (
     end_date date,
     is_active boolean DEFAULT false,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    cycle_length_weeks integer DEFAULT 1 NOT NULL,
+    CONSTRAINT workout_plan_templates_cycle_length_weeks_check CHECK (((cycle_length_weeks >= 1) AND (cycle_length_weeks <= 8)))
 );
 
 
@@ -4446,6 +4595,30 @@ ALTER TABLE ONLY public.account
 
 
 --
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_user_day_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_user_day_unique UNIQUE (user_id, recommendation_date);
+
+
+--
+-- Name: adaptive_training_settings adaptive_training_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_settings
+    ADD CONSTRAINT adaptive_training_settings_pkey PRIMARY KEY (user_id);
+
+
+--
 -- Name: admin_activity_logs admin_activity_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4579,6 +4752,22 @@ ALTER TABLE ONLY public.coach_telegram_connections
 
 ALTER TABLE ONLY public.coach_telegram_connections
     ADD CONSTRAINT coach_telegram_connections_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: coach_training_preferences coach_training_preferences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_training_preferences
+    ADD CONSTRAINT coach_training_preferences_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_workout_feedback coach_workout_feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_workout_feedback
+    ADD CONSTRAINT coach_workout_feedback_pkey PRIMARY KEY (id);
 
 
 --
@@ -5613,6 +5802,13 @@ CREATE INDEX idx_magic_link_token ON auth.users USING btree (magic_link_token);
 
 
 --
+-- Name: adaptive_training_recommendations_user_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX adaptive_training_recommendations_user_date_idx ON public.adaptive_training_recommendations USING btree (user_id, recommendation_date DESC);
+
+
+--
 -- Name: check_in_measurements_user_date_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5652,6 +5848,27 @@ CREATE INDEX coach_memories_user_active_idx ON public.coach_memories USING btree
 --
 
 CREATE INDEX coach_telegram_connections_user_id_idx ON public.coach_telegram_connections USING btree (user_id);
+
+
+--
+-- Name: coach_training_preferences_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX coach_training_preferences_identity_idx ON public.coach_training_preferences USING btree (user_id, kind, lower(subject));
+
+
+--
+-- Name: coach_training_preferences_user_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_training_preferences_user_active_idx ON public.coach_training_preferences USING btree (user_id, active, updated_at DESC);
+
+
+--
+-- Name: coach_workout_feedback_user_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_workout_feedback_user_date_idx ON public.coach_workout_feedback USING btree (user_id, workout_date DESC, created_at DESC);
 
 
 --
@@ -6362,6 +6579,13 @@ CREATE UNIQUE INDEX idx_water_intake_entries_user_source_source_id ON public.wat
 
 
 --
+-- Name: idx_workout_plan_assignments_cycle_day; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_workout_plan_assignments_cycle_day ON public.workout_plan_template_assignments USING btree (template_id, week_index, day_of_week);
+
+
+--
 -- Name: idx_workout_preset_exercise_sets_preset_exercise_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6628,6 +6852,34 @@ CREATE TRIGGER trg_sync_user_mfa_global BEFORE UPDATE OF two_factor_enabled ON p
 
 
 --
+-- Name: adaptive_training_recommendations update_adaptive_training_recommendations_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_adaptive_training_recommendations_timestamp BEFORE UPDATE ON public.adaptive_training_recommendations FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: adaptive_training_settings update_adaptive_training_settings_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_adaptive_training_settings_timestamp BEFORE UPDATE ON public.adaptive_training_settings FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_training_preferences update_coach_training_preferences_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_training_preferences_timestamp BEFORE UPDATE ON public.coach_training_preferences FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_workout_feedback update_coach_workout_feedback_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_workout_feedback_timestamp BEFORE UPDATE ON public.coach_workout_feedback FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
 -- Name: daily_health_metrics update_daily_health_metrics_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -6776,6 +7028,30 @@ ALTER TABLE ONLY public.account
 
 
 --
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_workout_preset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_workout_preset_id_fkey FOREIGN KEY (workout_preset_id) REFERENCES public.workout_presets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: adaptive_training_settings adaptive_training_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_settings
+    ADD CONSTRAINT adaptive_training_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: admin_activity_logs admin_activity_logs_admin_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6869,6 +7145,30 @@ ALTER TABLE ONLY public.coach_profiles
 
 ALTER TABLE ONLY public.coach_telegram_connections
     ADD CONSTRAINT coach_telegram_connections_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_training_preferences coach_training_preferences_source_feedback_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_training_preferences
+    ADD CONSTRAINT coach_training_preferences_source_feedback_id_fkey FOREIGN KEY (source_feedback_id) REFERENCES public.coach_workout_feedback(id) ON DELETE SET NULL;
+
+
+--
+-- Name: coach_training_preferences coach_training_preferences_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_training_preferences
+    ADD CONSTRAINT coach_training_preferences_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_workout_feedback coach_workout_feedback_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_workout_feedback
+    ADD CONSTRAINT coach_workout_feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
 
 
 --
@@ -8184,6 +8484,18 @@ ALTER TABLE ONLY public.workout_presets
 
 
 --
+-- Name: adaptive_training_recommendations; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.adaptive_training_recommendations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: adaptive_training_settings; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.adaptive_training_settings ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: admin_activity_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -8284,6 +8596,18 @@ ALTER TABLE public.coach_profiles ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.coach_telegram_connections ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_training_preferences; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_training_preferences ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_workout_feedback; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_workout_feedback ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: custom_categories; Type: ROW SECURITY; Schema: public; Owner: -
@@ -8570,6 +8894,20 @@ ALTER TABLE public.medication_titration_steps ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.medications ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: adaptive_training_recommendations modify_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY modify_policy ON public.adaptive_training_recommendations USING (public.has_diary_access(user_id)) WITH CHECK (public.has_diary_access(user_id));
+
+
+--
+-- Name: adaptive_training_settings modify_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY modify_policy ON public.adaptive_training_settings USING (public.has_diary_access(user_id)) WITH CHECK (public.has_diary_access(user_id));
+
 
 --
 -- Name: check_in_measurements modify_policy; Type: POLICY; Schema: public; Owner: -
@@ -9107,6 +9445,20 @@ CREATE POLICY owner_policy ON public.coach_telegram_connections USING ((user_id 
 
 
 --
+-- Name: coach_training_preferences owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_training_preferences USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_workout_feedback owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_workout_feedback USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
 -- Name: cycle_daily_entries owner_policy; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9308,6 +9660,20 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY select_exercise_preset_entry_linked_policy ON public.exercise_entries FOR SELECT USING (((exercise_preset_entry_id IS NOT NULL) AND (EXISTS ( SELECT 1
    FROM public.exercise_preset_entries epe
   WHERE ((epe.id = exercise_entries.exercise_preset_entry_id) AND public.has_diary_read_access(epe.user_id))))));
+
+
+--
+-- Name: adaptive_training_recommendations select_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY select_policy ON public.adaptive_training_recommendations FOR SELECT USING (public.has_diary_read_access(user_id));
+
+
+--
+-- Name: adaptive_training_settings select_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY select_policy ON public.adaptive_training_settings FOR SELECT USING (public.has_diary_read_access(user_id));
 
 
 --
@@ -10357,6 +10723,20 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.account TO sparky_app;
 
 
 --
+-- Name: TABLE adaptive_training_recommendations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.adaptive_training_recommendations TO sparky_app;
+
+
+--
+-- Name: TABLE adaptive_training_settings; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.adaptive_training_settings TO sparky_app;
+
+
+--
 -- Name: TABLE admin_activity_logs; Type: ACL; Schema: public; Owner: -
 --
 
@@ -10438,6 +10818,20 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_profiles TO sparky_app;
 --
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_telegram_connections TO sparky_app;
+
+
+--
+-- Name: TABLE coach_training_preferences; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_training_preferences TO sparky_app;
+
+
+--
+-- Name: TABLE coach_workout_feedback; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_workout_feedback TO sparky_app;
 
 
 --
