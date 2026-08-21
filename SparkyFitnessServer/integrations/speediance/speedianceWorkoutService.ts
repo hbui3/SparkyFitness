@@ -1,6 +1,7 @@
 import {
   addDays,
   dayOfWeek,
+  cycleWeekIndex,
   todayInZone,
   type SpeedianceCompletionUnit,
   type SpeedianceCreatePlanRequest,
@@ -12,6 +13,8 @@ import {
   type SpeedianceExerciseSearchResponse,
   type SpeedianceResistanceMode,
   type SpeedianceTemplatePreset,
+  type SpeedianceTransformWorkoutRequest,
+  type SpeedianceWorkoutTransformation,
   type SpeedianceWorkoutDefinition,
   type SpeedianceWorkoutDetail,
   type SpeedianceWorkoutDeleteResponse,
@@ -1297,6 +1300,168 @@ export async function upsertSpeedianceWorkout(
   return upsertWithClient(userId, api, request);
 }
 
+function cloneSet(set: SpeedianceWorkoutSet): SpeedianceWorkoutSet {
+  return { ...set };
+}
+
+function transformedSets(
+  sets: SpeedianceWorkoutSet[],
+  operation: Extract<SpeedianceWorkoutTransformation, { type: 'adjust_sets' }>
+): SpeedianceWorkoutSet[] {
+  const source: SpeedianceWorkoutSet[] =
+    sets.length > 0
+      ? sets
+      : [
+          {
+            repetitions: 10,
+            targetRm: 12,
+            mode: 'standard',
+            restSeconds: 90,
+          },
+        ];
+  const count = operation.setCount ?? source.length;
+  return Array.from({ length: count }, (_, index) => {
+    const set = cloneSet(source[index] ?? source[source.length - 1]);
+    return {
+      ...set,
+      ...(operation.repetitions !== undefined && {
+        repetitions: operation.repetitions,
+      }),
+      ...(operation.targetRm !== undefined && {
+        targetRm: operation.targetRm,
+      }),
+      ...(operation.weightKg !== undefined && {
+        weightKg: operation.weightKg,
+      }),
+      ...(operation.restSeconds !== undefined && {
+        restSeconds: operation.restSeconds,
+      }),
+      setType: operation.setType,
+    };
+  });
+}
+
+export function applySpeedianceWorkoutTransformations(
+  source: SpeedianceWorkoutExercise[],
+  transformations: SpeedianceWorkoutTransformation[]
+): SpeedianceWorkoutExercise[] {
+  let exercises = source.map((exercise) => ({
+    ...exercise,
+    sets: exercise.sets.map(cloneSet),
+  }));
+
+  for (const operation of transformations) {
+    if (operation.type === 'add_warmups') {
+      const targets = operation.groupIds ? new Set(operation.groupIds) : null;
+      const groupsWithWarmups = new Set(
+        exercises
+          .filter((exercise) =>
+            exercise.sets.some((set) => set.setType === 'warmup')
+          )
+          .map((exercise) => exercise.groupId)
+      );
+      const next: SpeedianceWorkoutExercise[] = [];
+      for (const exercise of exercises) {
+        const isTarget = targets === null || targets.has(exercise.groupId);
+        const hasWorkingSets = exercise.sets.some(
+          (set) => (set.setType ?? 'working') === 'working'
+        );
+        if (
+          isTarget &&
+          hasWorkingSets &&
+          !groupsWithWarmups.has(exercise.groupId)
+        ) {
+          next.push({
+            ...exercise,
+            presetId: 0,
+            sets: Array.from({ length: operation.setCount }, () => ({
+              repetitions: operation.repetitions,
+              targetRm: operation.targetRm,
+              setType: 'warmup' as const,
+              mode: 'standard' as const,
+              restSeconds: operation.restSeconds,
+            })),
+          });
+          groupsWithWarmups.add(exercise.groupId);
+        }
+        next.push(exercise);
+      }
+      exercises = next;
+      continue;
+    }
+
+    if (operation.type === 'adjust_sets') {
+      let matched = false;
+      exercises = exercises.map((exercise) => {
+        if (exercise.groupId !== operation.groupId) return exercise;
+        const matching = exercise.sets.filter(
+          (set) => (set.setType ?? 'working') === operation.setType
+        );
+        if (matching.length === 0) return exercise;
+        const preserved = exercise.sets.filter(
+          (set) => (set.setType ?? 'working') !== operation.setType
+        );
+        matched = true;
+        const adjusted = transformedSets(matching, operation);
+        return {
+          ...exercise,
+          ...(operation.weightKg !== undefined && { presetId: -1 as const }),
+          sets:
+            operation.setType === 'warmup'
+              ? [...adjusted, ...preserved]
+              : [...preserved, ...adjusted],
+        };
+      });
+      if (!matched) {
+        throw new SpeedianceWorkoutValidationError(
+          `No ${operation.setType} block for Speediance exercise group ${operation.groupId} was found.`
+        );
+      }
+      continue;
+    }
+
+    let matched = false;
+    exercises = exercises.map((exercise) => {
+      if (exercise.groupId !== operation.groupId) return exercise;
+      matched = true;
+      return {
+        ...exercise,
+        ...operation.replacement,
+        sets: exercise.sets.map(cloneSet),
+      };
+    });
+    if (!matched) {
+      throw new SpeedianceWorkoutValidationError(
+        `Speediance exercise group ${operation.groupId} was not found for replacement.`
+      );
+    }
+  }
+  return exercises;
+}
+
+export async function transformSpeedianceWorkout(
+  userId: string,
+  request: SpeedianceTransformWorkoutRequest
+): Promise<SpeedianceWorkoutUpsertResponse> {
+  const current = await getSpeedianceWorkout(
+    userId,
+    request.sourceCode,
+    request.providerId
+  );
+  const isClone = Boolean(request.newName && request.newName !== current.name);
+  const definition: SpeedianceWorkoutDefinition = {
+    providerId: request.providerId,
+    ...(isClone ? {} : { remoteId: current.id, remoteCode: current.code }),
+    name: request.newName ?? current.name,
+    exercises: applySpeedianceWorkoutTransformations(
+      current.exercises,
+      request.transformations
+    ),
+    acknowledgedPreferenceIds: request.acknowledgedPreferenceIds,
+  };
+  return upsertSpeedianceWorkout(userId, definition);
+}
+
 async function validateScheduleDay(
   userId: string,
   date: string,
@@ -1372,10 +1537,21 @@ export async function deleteSpeedianceWorkout(
 }
 
 function uniquePlanDays(request: SpeedianceCreatePlanRequest): void {
-  const days = request.sessions.map((session) => session.dayOfWeek);
+  const days = request.sessions.map(
+    (session) => `${session.weekIndex ?? 0}:${session.dayOfWeek}`
+  );
   if (new Set(days).size !== days.length) {
     throw new SpeedianceWorkoutValidationError(
-      'A Speediance plan can contain only one workout per weekday.'
+      'A Speediance plan can contain only one workout per weekday in each cycle week.'
+    );
+  }
+  if (
+    request.sessions.some(
+      (session) => (session.weekIndex ?? 0) >= (request.cycleLengthWeeks ?? 1)
+    )
+  ) {
+    throw new SpeedianceWorkoutValidationError(
+      'Every session weekIndex must be smaller than cycleLengthWeeks.'
     );
   }
 }
@@ -1392,6 +1568,7 @@ export async function createSpeediancePlan(
   await validateScheduleDay(userId, request.startDate, timezone);
   const resolvedSessions: Array<{
     dayOfWeek: number;
+    weekIndex: number;
     name: string;
     code: string;
     nativeWorkoutPresetId: number;
@@ -1410,6 +1587,7 @@ export async function createSpeediancePlan(
     }
     resolvedSessions.push({
       dayOfWeek: session.dayOfWeek,
+      weekIndex: session.weekIndex ?? 0,
       name: result.workout.name,
       code: result.workout.code,
       nativeWorkoutPresetId: result.workout.nativeWorkoutPresetId,
@@ -1429,9 +1607,11 @@ export async function createSpeediancePlan(
     start_date: request.startDate,
     end_date: request.endDate,
     is_active: true,
+    cycle_length_weeks: request.cycleLengthWeeks ?? 1,
     currentClientDate: todayInZone(timezone),
     assignments: resolvedSessions.map((session, index) => ({
       day_of_week: session.dayOfWeek,
+      week_index: session.weekIndex,
       workout_preset_id: session.nativeWorkoutPresetId,
       sort_order: index,
     })),
@@ -1455,8 +1635,15 @@ export async function createSpeediancePlan(
     date <= request.endDate;
     date = addDays(date, 1)
   ) {
+    const weekIndex = cycleWeekIndex(
+      request.startDate,
+      date,
+      request.cycleLengthWeeks ?? 1
+    );
     const session = resolvedSessions.find(
-      (candidate) => candidate.dayOfWeek === dayOfWeek(date)
+      (candidate) =>
+        candidate.dayOfWeek === dayOfWeek(date) &&
+        candidate.weekIndex === weekIndex
     );
     if (!session) continue;
     try {
@@ -1541,6 +1728,7 @@ export default {
   listSpeedianceWorkouts,
   getSpeedianceWorkout,
   upsertSpeedianceWorkout,
+  transformSpeedianceWorkout,
   setSpeedianceWorkoutSchedule,
   deleteSpeedianceWorkout,
   createSpeediancePlan,

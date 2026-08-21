@@ -72,6 +72,7 @@ const AddWorkoutPlanDialog = ({
     isAddExerciseDialogOpen,
     setIsAddExerciseDialogOpen,
     setSelectedDayForAssignment,
+    setSelectedWeekForAssignment,
     handleRemoveAssignment,
     handleSetChangeInPlan,
     handleAddSetInPlan,
@@ -109,6 +110,9 @@ const AddWorkoutPlanDialog = ({
   const [isActive, setIsActive] = useState(
     () => initialData?.is_active ?? true
   );
+  const [cycleLengthWeeks, setCycleLengthWeeks] = useState(
+    () => initialData?.cycle_length_weeks ?? 1
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -139,7 +143,10 @@ const AddWorkoutPlanDialog = ({
       start_date: startDate,
       end_date: endDate || null,
       is_active: isActive,
-      assignments: buildAssignmentsForSave(),
+      cycle_length_weeks: cycleLengthWeeks,
+      assignments: buildAssignmentsForSave().filter(
+        (assignment) => (assignment.week_index ?? 0) < cycleLengthWeeks
+      ),
     };
 
     if (initialData && onUpdate) {
@@ -239,6 +246,32 @@ const AddWorkoutPlanDialog = ({
                 {t('addWorkoutPlanDialog.setActiveLabel', 'Set as active plan')}
               </Label>
             </div>
+            <div className="max-w-xs space-y-2">
+              <Label htmlFor="cycleLengthWeeks">
+                {t(
+                  'addWorkoutPlanDialog.cycleLengthLabel',
+                  'Plan cycle (weeks)'
+                )}
+              </Label>
+              <Input
+                id="cycleLengthWeeks"
+                type="number"
+                min={1}
+                max={8}
+                value={cycleLengthWeeks}
+                onChange={(event) =>
+                  setCycleLengthWeeks(
+                    Math.min(8, Math.max(1, Number(event.target.value) || 1))
+                  )
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  'addWorkoutPlanDialog.cycleLengthDescription',
+                  'Use two weeks for an alternating A/B schedule.'
+                )}
+              </p>
+            </div>
             <p
               className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mt-2"
               role="alert"
@@ -261,79 +294,99 @@ const AddWorkoutPlanDialog = ({
                 collisionDetection={closestCenter}
                 onDragEnd={handleDragEnd}
               >
-                {DAYS_OF_WEEK.map((day) => {
-                  const dayAssignments = assignments.filter(
-                    (assignment) => assignment.day_of_week === day.id
-                  );
-                  return (
-                    <Card key={day.name} className="p-4 bg-muted/30">
-                      <SortableContext
-                        items={dayAssignments.map((a) => a.id as string)}
-                      >
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <h3 className="font-semibold text-primary">
-                              {day.name}
-                            </h3>
-                            <div className="flex items-center space-x-2">
-                              {copiedAssignment && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handlePasteAssignment(day.id)}
-                                >
-                                  <Clipboard className="h-4 w-4 mr-2" />{' '}
-                                  {t(
-                                    'addWorkoutPlanDialog.pasteButton',
-                                    'Paste'
+                {Array.from({ length: cycleLengthWeeks }, (_, weekIndex) => (
+                  <div key={weekIndex} className="space-y-3">
+                    {cycleLengthWeeks > 1 && (
+                      <h5 className="font-semibold">
+                        {t('addWorkoutPlanDialog.cycleWeek', {
+                          week: weekIndex + 1,
+                          defaultValue: 'Week {{week}}',
+                        })}
+                      </h5>
+                    )}
+                    {DAYS_OF_WEEK.map((day) => {
+                      const dayAssignments = assignments.filter(
+                        (assignment) =>
+                          assignment.day_of_week === day.id &&
+                          (assignment.week_index ?? 0) === weekIndex
+                      );
+                      return (
+                        <Card
+                          key={`${weekIndex}-${day.name}`}
+                          className="p-4 bg-muted/30"
+                        >
+                          <SortableContext
+                            items={dayAssignments.map((a) => a.id as string)}
+                          >
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <h3 className="font-semibold text-primary">
+                                  {day.name}
+                                </h3>
+                                <div className="flex items-center space-x-2">
+                                  {copiedAssignment && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        handlePasteAssignment(day.id, weekIndex)
+                                      }
+                                    >
+                                      <Clipboard className="h-4 w-4 mr-2" />{' '}
+                                      {t(
+                                        'addWorkoutPlanDialog.pasteButton',
+                                        'Paste'
+                                      )}
+                                    </Button>
                                   )}
-                                </Button>
-                              )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedDayForAssignment(day.id);
-                                  setIsAddExerciseDialogOpen(true);
-                                }}
-                              >
-                                <Plus className="h-4 w-4 mr-2" />{' '}
-                                {t(
-                                  'addWorkoutPlanDialog.addExerciseButtonInDay',
-                                  'Add Exercise'
-                                )}
-                              </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      setSelectedDayForAssignment(day.id);
+                                      setSelectedWeekForAssignment(weekIndex);
+                                      setIsAddExerciseDialogOpen(true);
+                                    }}
+                                  >
+                                    <Plus className="h-4 w-4 mr-2" />{' '}
+                                    {t(
+                                      'addWorkoutPlanDialog.addExerciseButtonInDay',
+                                      'Add Exercise'
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                              {dayAssignments.map((assignment) => {
+                                const originalIndex = assignments.findIndex(
+                                  (a) => a.id === assignment.id
+                                );
+                                return (
+                                  <SortableExerciseItem
+                                    key={assignment.id}
+                                    ex={assignment}
+                                    exerciseIndex={originalIndex}
+                                    weightUnit={weightUnit}
+                                    workoutPresets={workoutPresets}
+                                    onRemoveExercise={handleRemoveAssignment}
+                                    onSetChange={handleSetChangeInPlan}
+                                    onDuplicateSet={handleDuplicateSetInPlan}
+                                    onRemoveSet={handleRemoveSetInPlan}
+                                    onAddSet={handleAddSetInPlan}
+                                    onCopyExercise={
+                                      handleCopyAssignment as (
+                                        ex: SortableExerciseItemData
+                                      ) => void
+                                    }
+                                  />
+                                );
+                              })}
                             </div>
-                          </div>
-                          {dayAssignments.map((assignment) => {
-                            const originalIndex = assignments.findIndex(
-                              (a) => a.id === assignment.id
-                            );
-                            return (
-                              <SortableExerciseItem
-                                key={assignment.id}
-                                ex={assignment}
-                                exerciseIndex={originalIndex}
-                                weightUnit={weightUnit}
-                                workoutPresets={workoutPresets}
-                                onRemoveExercise={handleRemoveAssignment}
-                                onSetChange={handleSetChangeInPlan}
-                                onDuplicateSet={handleDuplicateSetInPlan}
-                                onRemoveSet={handleRemoveSetInPlan}
-                                onAddSet={handleAddSetInPlan}
-                                onCopyExercise={
-                                  handleCopyAssignment as (
-                                    ex: SortableExerciseItemData
-                                  ) => void
-                                }
-                              />
-                            );
-                          })}
-                        </div>
-                      </SortableContext>
-                    </Card>
-                  );
-                })}
+                          </SortableContext>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                ))}
               </DndContext>
             </div>
           </div>

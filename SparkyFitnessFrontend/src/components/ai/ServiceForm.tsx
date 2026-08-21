@@ -112,6 +112,7 @@ export const ServiceForm = ({
               onFormDataChange({
                 service_type: value,
                 model_name: '',
+                planning_model_name: value === 'openai' ? 'gpt-5.4' : '',
                 custom_model_name: '',
                 // Types without preset models (openai_compatible/custom/ollama)
                 // have no dropdown, so reveal the custom-model input directly.
@@ -311,6 +312,27 @@ export const ServiceForm = ({
           />
         </div>
       )}
+
+      <div>
+        <Label htmlFor="planning_model_name_input">
+          {t('settings.aiService.planningModel')}
+        </Label>
+        <Input
+          id="planning_model_name_input"
+          value={formData.planning_model_name ?? ''}
+          onChange={(e) =>
+            onFormDataChange({ planning_model_name: e.target.value })
+          }
+          placeholder={
+            formData.service_type === 'openai'
+              ? 'gpt-5.4'
+              : t('settings.aiService.planningModelPlaceholder')
+          }
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          {t('settings.aiService.planningModelDescription')}
+        </p>
+      </div>
 
       <div>
         <Label htmlFor="system_prompt">

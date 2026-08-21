@@ -357,6 +357,8 @@ router.get(
  *                 type: string
  *               model_name:
  *                 type: string
+ *               planning_model_name:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Test result (pass or provider failure).

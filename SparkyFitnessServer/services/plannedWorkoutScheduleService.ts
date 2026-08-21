@@ -48,7 +48,9 @@ interface ActivePlanRow {
   description: string | null;
   start_date: string;
   end_date: string | null;
+  cycle_length_weeks: number;
   day_of_week: number;
+  week_index: number;
   workout_preset_id: number | null;
   workout_name: string;
   exercise_count: number | string;
@@ -162,7 +164,9 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
          wpt.description,
          wpt.start_date::text AS start_date,
          wpt.end_date::text AS end_date,
+         wpt.cycle_length_weeks,
          wpta.day_of_week,
+         wpta.week_index,
          wpta.workout_preset_id,
          COALESCE(wp.name, e.name, 'Workout') AS workout_name,
          COUNT(DISTINCT wpe.id) + COUNT(DISTINCT wpta.exercise_id) AS exercise_count,
@@ -182,8 +186,9 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
        WHERE wpt.user_id = $1 AND wpt.is_active = TRUE
        GROUP BY
          wpt.id, wpt.plan_name, wpt.description, wpt.start_date, wpt.end_date,
-         wpta.id, wpta.day_of_week, wpta.workout_preset_id, wp.name, e.name
-       ORDER BY wpt.start_date, wpt.id, wpta.day_of_week, wpta.sort_order, wpta.id`,
+         wpt.cycle_length_weeks, wpta.id, wpta.day_of_week, wpta.week_index,
+         wpta.workout_preset_id, wp.name, e.name
+       ORDER BY wpt.start_date, wpt.id, wpta.week_index, wpta.day_of_week, wpta.sort_order, wpta.id`,
       [userId]
     );
     const plans = new Map<number, ActiveTrainingPlan>();
@@ -196,6 +201,7 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
           description: row.description,
           startDate: row.start_date,
           endDate: row.end_date,
+          cycleLengthWeeks: Math.max(1, Number(row.cycle_length_weeks) || 1),
           assignments: [],
         };
         plans.set(row.plan_id, plan);
@@ -204,6 +210,7 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
       const warmupSetCount = count(row.warmup_set_count);
       plan.assignments.push({
         dayOfWeek: row.day_of_week,
+        weekIndex: Math.max(0, Number(row.week_index) || 0),
         presetId: row.workout_preset_id,
         workoutName: row.workout_name,
         exerciseCount: count(row.exercise_count),

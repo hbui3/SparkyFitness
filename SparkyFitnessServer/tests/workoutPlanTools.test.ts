@@ -245,7 +245,10 @@ describe('sparky_manage_workout_plans', () => {
       toolOptions
     );
 
-    expect(result).toContain('was not found');
+    expect(result).toContain('Error [WORKOUT_PRESET_NOT_FOUND]');
+    expect(result).toContain(
+      'sparky_manage_speediance_workouts action=create_plan'
+    );
     expect(
       workoutPlanTemplateService.createWorkoutPlanTemplate
     ).not.toHaveBeenCalled();

@@ -78,14 +78,32 @@ const TrainingTimeline = () => {
               {plan.endDate
                 ? formatDate(plan.endDate)
                 : t('workoutPlansManager.ongoingStatus', 'Ongoing')}
+              {plan.cycleLengthWeeks > 1 && (
+                <>
+                  {' · '}
+                  {t('trainingTimeline.weekCycle', {
+                    count: plan.cycleLengthWeeks,
+                    defaultValue: '{{count}}-week cycle',
+                  })}
+                </>
+              )}
             </p>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {plan.assignments.map((assignment, index) => (
                 <div
-                  key={`${assignment.dayOfWeek}-${assignment.presetId}-${index}`}
+                  key={`${assignment.weekIndex}-${assignment.dayOfWeek}-${assignment.presetId}-${index}`}
                   className="rounded-md bg-muted/50 p-3 text-sm"
                 >
                   <div className="font-medium">
+                    {plan.cycleLengthWeeks > 1 && (
+                      <>
+                        {t('trainingTimeline.cycleWeek', {
+                          week: assignment.weekIndex + 1,
+                          defaultValue: 'Week {{week}}',
+                        })}
+                        {' · '}
+                      </>
+                    )}
                     {weekday(assignment.dayOfWeek)} · {assignment.workoutName}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">

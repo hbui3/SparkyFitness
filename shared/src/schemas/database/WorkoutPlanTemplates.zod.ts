@@ -17,6 +17,7 @@ export const workoutPlanTemplatesSchema = z.object({
   start_date: z.date().nullable(),
   end_date: z.date().nullable(),
   is_active: z.boolean().nullable(),
+  cycle_length_weeks: z.number().int().min(1).max(8),
   created_at: z.date().nullable(),
   updated_at: z.date().nullable(),
 });
@@ -29,6 +30,7 @@ export const workoutPlanTemplatesInitializerSchema = z.object({
   start_date: z.date().optional().nullable(),
   end_date: z.date().optional().nullable(),
   is_active: z.boolean().optional().nullable(),
+  cycle_length_weeks: z.number().int().min(1).max(8).optional(),
   created_at: z.date().optional().nullable(),
   updated_at: z.date().optional().nullable(),
 });
@@ -41,10 +43,15 @@ export const workoutPlanTemplatesMutatorSchema = z.object({
   start_date: z.date().optional().nullable(),
   end_date: z.date().optional().nullable(),
   is_active: z.boolean().optional().nullable(),
+  cycle_length_weeks: z.number().int().min(1).max(8).optional(),
   created_at: z.date().optional().nullable(),
   updated_at: z.date().optional().nullable(),
 });
 
 export type WorkoutPlanTemplates = z.infer<typeof workoutPlanTemplatesSchema>;
-export type WorkoutPlanTemplatesInitializer = z.infer<typeof workoutPlanTemplatesInitializerSchema>;
-export type WorkoutPlanTemplatesMutator = z.infer<typeof workoutPlanTemplatesMutatorSchema>;
+export type WorkoutPlanTemplatesInitializer = z.infer<
+  typeof workoutPlanTemplatesInitializerSchema
+>;
+export type WorkoutPlanTemplatesMutator = z.infer<
+  typeof workoutPlanTemplatesMutatorSchema
+>;

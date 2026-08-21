@@ -85,7 +85,7 @@ export function buildSpeedianceTools(userId: string) {
 
     sparky_manage_speediance_workouts: tool({
       description:
-        'Complete owner-only Speediance workout manager. It lists and reads exact remote workouts; creates or updates complete workouts; schedules or unschedules exact calendar reservations; deletes an exact remote workout only after the user explicitly confirms its current full name; and creates an active date-bounded multi-month Sparky plan while synchronizing every workout and date to Speediance. Always call action=get before describing, editing, or deleting an existing workout. Report its exact exercise blocks and setType values; never infer warm-up sets or counts from its name, description, plan, or preset. Preserve remoteId/remoteCode and send the complete resulting definition with action=upsert. To add warm-up sets, insert a separate copy of the exercise immediately before its working block with presetId 0 and setType warmup; keep the working block unchanged. Use presetId -1 for fixed custom kg, 0 for warm-up, 1 for muscle gain, 3 for stamina, and 5 for strength. Respect the exercise completion method: repetitions use repetitions, timed work uses durationSeconds, calorie goals use calorieTarget, and Vita exercises with dataStatType 6 use level 1-10 instead of cable weight. Search exercise IDs through sparky_search_speediance_exercises and use only the German variantId returned there. A create_plan request is appropriate for an explicitly requested multi-week or three-month plan and also creates the native Sparky workout presets and future diary sessions. Deletion preserves the native Sparky preset for history/offline use. External writes require explicit user intent; report failedDates instead of claiming every reservation succeeded.',
+        'Complete owner-only Speediance workout and program manager. It lists and reads exact remote workouts; atomically transforms or clones an existing workout; creates or updates complete workouts; schedules exact dates; and creates an active date-bounded multi-month Sparky plan while synchronizing every workout and date to Speediance. For simple edits use action=transform after action=get: add_warmups is idempotent and inserts real presetId 0 warm-up blocks, adjust_sets changes a matching block, replace_exercise preserves its sets, and newName clones instead of overwriting. For a new A/B or multi-week program use one create_plan call: it upserts every supplied workout before replacing the native plan, supports cycleLengthWeeks/weekIndex rotation, and materializes the calendar. Do not call sparky_manage_workout_plans first for Speediance programs. Always call get before describing an existing workout and report exact setType values; never infer warm-ups. Search replacement exercise IDs with sparky_search_speediance_exercises and use only its German variantId. External writes require explicit user intent. A write is complete only when this tool returns success; report failedDates and errors verbatim instead of claiming success.',
       inputSchema: speedianceManageWorkoutRequestSchema,
       execute: async (args) => {
         try {
@@ -110,6 +110,13 @@ export function buildSpeedianceTools(userId: string) {
                 await speedianceWorkoutService.upsertSpeedianceWorkout(
                   userId,
                   args.workout
+                )
+              );
+            case 'transform':
+              return formatJsonResult(
+                await speedianceWorkoutService.transformSpeedianceWorkout(
+                  userId,
+                  args.request
                 )
               );
             case 'schedule':

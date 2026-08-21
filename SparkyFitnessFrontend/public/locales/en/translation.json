@@ -1474,6 +1474,9 @@
     "aiService": {
       "title": "AI Service",
       "description": "Manage settings for AI-powered features",
+      "planningModel": "Training planner model",
+      "planningModelPlaceholder": "Leave empty to use the normal chat model",
+      "planningModelDescription": "Used for workout construction and multi-week plan changes. OpenAI services default to gpt-5.4 when this is empty; normal chat keeps its configured model.",
       "invalidKeyLengthWarning": "If you encounter an \"Invalid key length\" error, ensure your encryption key in the server's env variables are 64 hex.",
       "globalSettings": {
         "title": "Global AI Service Settings",
@@ -3116,6 +3119,9 @@
     "descriptionLabel": "Description",
     "startDateLabel": "Start Date",
     "endDateLabel": "End Date (Optional)",
+    "cycleLengthLabel": "Plan cycle",
+    "cycleLengthDescription": "Repeat the schedule every {{count}} week(s). Use separate cycle weeks for A/B or longer rotations.",
+    "cycleWeek": "Cycle week {{week}}",
     "setActiveLabel": "Set as active plan",
     "noteTitle": "Note:",
     "noteDescription": "Updating an active plan adjusts upcoming exercise entries. Deleting a plan clears future ones, while previous entries stay in your log.",
@@ -4966,6 +4972,8 @@
   "trainingTimeline": {
     "title": "Training timeline",
     "description": "Your active plan, completed training, missed sessions, and every upcoming workout in one chronology.",
+    "weekCycle": "{{count}}-week cycle",
+    "cycleWeek": "Week {{week}} · {{weekday}} · {{workout}}",
     "chronology": "Recent and upcoming training",
     "exactCounts": "{{exercises}} exercises · {{sets}} sets · {{warmups}} warm-up sets",
     "noWarmups": "No warm-up sets configured",

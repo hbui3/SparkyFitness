@@ -53,6 +53,7 @@ export function useWorkoutPlanAssignments(
   const [selectedDayForAssignment, setSelectedDayForAssignment] = useState<
     number | null
   >(null);
+  const [selectedWeekForAssignment, setSelectedWeekForAssignment] = useState(0);
 
   const handleRemoveAssignment = useCallback((index: number) => {
     setAssignments((prev) => prev.filter((_, i) => i !== index));
@@ -169,7 +170,11 @@ export function useWorkoutPlanAssignments(
           const activeAssignment = assignments[activeAssignmentIdx];
           const overAssignment = assignments[overAssignmentIdx];
 
-          if (activeAssignment?.day_of_week !== overAssignment?.day_of_week) {
+          if (
+            activeAssignment?.day_of_week !== overAssignment?.day_of_week ||
+            (activeAssignment?.week_index ?? 0) !==
+              (overAssignment?.week_index ?? 0)
+          ) {
             setAssignments((prev) => {
               const sourceItem = prev[activeAssignmentIdx];
               if (!sourceItem) return prev;
@@ -178,6 +183,8 @@ export function useWorkoutPlanAssignments(
                 ...sourceItem,
                 day_of_week:
                   overAssignment?.day_of_week ?? sourceItem.day_of_week,
+                week_index:
+                  overAssignment?.week_index ?? sourceItem.week_index ?? 0,
                 template_id: sourceItem.template_id ?? '',
               };
               newItems.splice(activeAssignmentIdx, 1);
@@ -242,6 +249,7 @@ export function useWorkoutPlanAssignments(
           {
             id: generateClientId(),
             day_of_week: selectedDayForAssignment,
+            week_index: selectedWeekForAssignment,
             template_id: '',
             workout_preset_id: preset.id as string,
             exercise_id: undefined,
@@ -259,6 +267,7 @@ export function useWorkoutPlanAssignments(
           {
             id: generateClientId(),
             day_of_week: selectedDayForAssignment,
+            week_index: selectedWeekForAssignment,
             template_id: '',
             workout_preset_id: undefined,
             exercise_id: exercise.id,
@@ -273,8 +282,9 @@ export function useWorkoutPlanAssignments(
       }
       setIsAddExerciseDialogOpen(false);
       setSelectedDayForAssignment(null);
+      setSelectedWeekForAssignment(0);
     },
-    [selectedDayForAssignment]
+    [selectedDayForAssignment, selectedWeekForAssignment]
   );
 
   const handleCopyAssignment = useCallback(
@@ -296,12 +306,13 @@ export function useWorkoutPlanAssignments(
   );
 
   const handlePasteAssignment = useCallback(
-    (dayOfWeek: number) => {
+    (dayOfWeek: number, weekIndex = 0) => {
       if (!copiedAssignment) return;
       const newAssignment: WorkoutPlanAssignment = {
         ...copiedAssignment,
         id: generateClientId(),
         day_of_week: dayOfWeek,
+        week_index: weekIndex,
         template_id: '',
         sets:
           copiedAssignment.sets?.map((s) => ({
@@ -332,7 +343,9 @@ export function useWorkoutPlanAssignments(
         .filter((a) => a.workout_preset_id || a.exercise_id)
         .map((a) => {
           const dayAssignments = assignments.filter(
-            (da) => da.day_of_week === a.day_of_week
+            (da) =>
+              da.day_of_week === a.day_of_week &&
+              (da.week_index ?? 0) === (a.week_index ?? 0)
           );
           return {
             ...a,
@@ -351,6 +364,7 @@ export function useWorkoutPlanAssignments(
     setIsAddExerciseDialogOpen,
     selectedDayForAssignment,
     setSelectedDayForAssignment,
+    setSelectedWeekForAssignment,
     handleRemoveAssignment,
     handleSetChangeInPlan,
     handleAddSetInPlan,

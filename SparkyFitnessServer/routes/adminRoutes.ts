@@ -572,6 +572,8 @@ router.get('/ai-service-settings/global', async (req, res, next) => {
  *                 type: boolean
  *               model_name:
  *                 type: string
+ *               planning_model_name:
+ *                 type: string
  *               chat_tool_profile:
  *                 type: string
  *                 enum: [full, core]
@@ -595,6 +597,7 @@ router.post('/ai-service-settings/global', async (req, res, next) => {
       system_prompt,
       is_active,
       model_name,
+      planning_model_name,
       chat_tool_profile,
     } = req.body;
     if (!service_name || !service_type) {
@@ -635,6 +638,7 @@ router.post('/ai-service-settings/global', async (req, res, next) => {
       system_prompt: system_prompt || null,
       is_active: is_active || false,
       model_name: model_name || null,
+      planning_model_name: planning_model_name || null,
       chat_tool_profile: chat_tool_profile || 'full',
     };
     const result =
@@ -686,6 +690,8 @@ router.post('/ai-service-settings/global', async (req, res, next) => {
  *                 type: boolean
  *               model_name:
  *                 type: string
+ *               planning_model_name:
+ *                 type: string
  *               chat_tool_profile:
  *                 type: string
  *                 enum: [full, core]
@@ -712,6 +718,7 @@ router.put('/ai-service-settings/global/:id', async (req, res, next) => {
       system_prompt,
       is_active,
       model_name,
+      planning_model_name,
       chat_tool_profile,
     } = req.body;
     // Verify the setting exists and is global
@@ -755,6 +762,7 @@ router.put('/ai-service-settings/global/:id', async (req, res, next) => {
       system_prompt: system_prompt || null,
       is_active: is_active !== undefined ? is_active : existing.is_active,
       model_name: model_name || null,
+      planning_model_name: planning_model_name || null,
       chat_tool_profile: chat_tool_profile ?? null,
     };
     const result =

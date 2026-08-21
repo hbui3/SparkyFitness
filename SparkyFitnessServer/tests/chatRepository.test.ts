@@ -46,6 +46,10 @@ describe('chatRepository.upsertAiServiceSetting', () => {
     expect(params[2]).toBeUndefined(); // $3 → custom_url → becomes NULL without COALESCE
     expect(params[3]).toBeUndefined(); // $4 → system_prompt → becomes NULL without COALESCE
     expect(params[5]).toBeUndefined(); // $6 → model_name → becomes NULL without COALESCE
+    expect(params[6]).toBeUndefined(); // $7 → planning model is preserved by SQL COALESCE
+    expect(mockClient.query.mock.calls[0][0]).toContain(
+      'planning_model_name = COALESCE($7, planning_model_name)'
+    );
   });
 
   it('explicit null clears fields — intentional clearing still works via direct API', async () => {

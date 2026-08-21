@@ -22,6 +22,7 @@ export const workoutPlanTemplateAssignmentsSchema = z.object({
   created_at: z.date().nullable(),
   updated_at: z.date().nullable(),
   sort_order: z.number().nullable(),
+  week_index: z.number().int().min(0).max(7),
 });
 
 export const workoutPlanTemplateAssignmentsInitializerSchema = z.object({
@@ -33,6 +34,7 @@ export const workoutPlanTemplateAssignmentsInitializerSchema = z.object({
   created_at: z.date().optional().nullable(),
   updated_at: z.date().optional().nullable(),
   sort_order: z.number().optional().nullable(),
+  week_index: z.number().int().min(0).max(7).optional(),
 });
 
 export const workoutPlanTemplateAssignmentsMutatorSchema = z.object({
@@ -44,8 +46,15 @@ export const workoutPlanTemplateAssignmentsMutatorSchema = z.object({
   created_at: z.date().optional().nullable(),
   updated_at: z.date().optional().nullable(),
   sort_order: z.number().optional().nullable(),
+  week_index: z.number().int().min(0).max(7).optional(),
 });
 
-export type WorkoutPlanTemplateAssignments = z.infer<typeof workoutPlanTemplateAssignmentsSchema>;
-export type WorkoutPlanTemplateAssignmentsInitializer = z.infer<typeof workoutPlanTemplateAssignmentsInitializerSchema>;
-export type WorkoutPlanTemplateAssignmentsMutator = z.infer<typeof workoutPlanTemplateAssignmentsMutatorSchema>;
+export type WorkoutPlanTemplateAssignments = z.infer<
+  typeof workoutPlanTemplateAssignmentsSchema
+>;
+export type WorkoutPlanTemplateAssignmentsInitializer = z.infer<
+  typeof workoutPlanTemplateAssignmentsInitializerSchema
+>;
+export type WorkoutPlanTemplateAssignmentsMutator = z.infer<
+  typeof workoutPlanTemplateAssignmentsMutatorSchema
+>;

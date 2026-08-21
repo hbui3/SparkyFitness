@@ -5,8 +5,79 @@ import type { UIMessageChunk } from 'ai';
 import chatService, {
   mapUsageToMetadata,
   buildChatStopConditions,
+  isTrainingPlanningTurn,
+  resolveChatModelName,
+  verifiedTrainingPlannerText,
   prependPersistentCoachContext,
 } from '../services/chatService.js';
+
+describe('training planner routing and verification', () => {
+  it('routes plan construction and a contextual confirmation to the planner', () => {
+    expect(
+      isTrainingPlanningTurn([
+        { role: 'user', content: 'Baue mir einen A/B Trainingsplan.' },
+      ])
+    ).toBe(true);
+    expect(
+      isTrainingPlanningTurn([
+        {
+          role: 'assistant',
+          content: 'Soll ich den Speediance Workout Plan jetzt erstellen?',
+        },
+        { role: 'user', content: 'ja' },
+      ])
+    ).toBe(true);
+    expect(
+      isTrainingPlanningTurn([
+        { role: 'user', content: 'Wie viele Kalorien habe ich noch?' },
+      ])
+    ).toBe(false);
+  });
+
+  it('uses a configurable planner model and defaults OpenAI planning to gpt-5.4', () => {
+    expect(
+      resolveChatModelName(
+        { service_type: 'openai', model_name: 'gpt-5.4-mini' },
+        true
+      )
+    ).toBe('gpt-5.4');
+    expect(
+      resolveChatModelName(
+        {
+          service_type: 'openai',
+          model_name: 'gpt-5.4-mini',
+          planning_model_name: 'gpt-5.4-pro',
+        },
+        true
+      )
+    ).toBe('gpt-5.4-pro');
+    expect(
+      resolveChatModelName(
+        { service_type: 'openai', model_name: 'gpt-5.4-mini' },
+        false
+      )
+    ).toBe('gpt-5.4-mini');
+  });
+
+  it('blocks a claimed plan write when no manager write succeeded', () => {
+    const text = verifiedTrainingPlannerText(
+      'Ich habe den Trainingsplan erfolgreich aktualisiert.',
+      [
+        {
+          toolCallId: 'call-1',
+          name: 'sparky_manage_workout_plans',
+          action: 'upsert',
+          foodDiaryWrite: false,
+          success: false,
+          mutationDomain: 'exercise',
+          output: 'Error [WORKOUT_PLAN_ERROR]: Workout B was not found.',
+        },
+      ],
+      true
+    );
+    expect(text).toBe('Error [WORKOUT_PLAN_ERROR]: Workout B was not found.');
+  });
+});
 import { ASK_USER_TOOL_NAME } from '@workspace/shared';
 import chatRepository from '../models/chatRepository.js';
 import measurementRepository from '../models/measurementRepository.js';

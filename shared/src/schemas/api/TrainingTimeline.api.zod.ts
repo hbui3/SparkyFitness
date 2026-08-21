@@ -34,9 +34,11 @@ export const activeTrainingPlanSchema = z.object({
   description: z.string().nullable(),
   startDate: calendarDaySchema,
   endDate: calendarDaySchema.nullable(),
+  cycleLengthWeeks: z.number().int().min(1).max(8),
   assignments: z.array(
     z.object({
       dayOfWeek: z.number().int().min(0).max(6),
+      weekIndex: z.number().int().min(0).max(7),
       presetId: z.number().int().positive().nullable(),
       workoutName: z.string(),
       exerciseCount: z.number().int().nonnegative(),

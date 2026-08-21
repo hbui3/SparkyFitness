@@ -607,10 +607,10 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
         `Active training plans: ${timeline.activePlans
           .map(
             (plan) =>
-              `${plan.name} (${plan.startDate} to ${plan.endDate ?? 'open-ended'}): ${plan.assignments
+              `${plan.name} (${plan.startDate} to ${plan.endDate ?? 'open-ended'}, ${plan.cycleLengthWeeks}-week cycle): ${plan.assignments
                 .map(
                   (assignment) =>
-                    `weekday ${assignment.dayOfWeek} ${assignment.workoutName} — ${assignment.exerciseCount} exercises, ${assignment.totalSetCount} total sets, ${assignment.warmupSetCount} warm-up sets, ${assignment.workingSetCount} other/working sets`
+                    `cycle week ${assignment.weekIndex + 1}, weekday ${assignment.dayOfWeek} ${assignment.workoutName} — ${assignment.exerciseCount} exercises, ${assignment.totalSetCount} total sets, ${assignment.warmupSetCount} warm-up sets, ${assignment.workingSetCount} other/working sets`
                 )
                 .join('; ')}`
           )
