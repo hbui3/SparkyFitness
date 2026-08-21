@@ -106,6 +106,10 @@ const ExercisePresetEntryDisplay: React.FC<ExercisePresetEntryDisplayProps> = ({
   const hasExercises =
     presetEntry.exercises && presetEntry.exercises.length > 0;
   const exerciseCount = presetEntry.exercises?.length ?? 0;
+  // Speediance exposes duration and calories for the whole session, not per exercise.
+  // The importer stores those totals on one child so existing aggregate sums stay correct.
+  const sessionMetricsOnly =
+    presetEntry.source.trim().toLowerCase() === 'speediance';
 
   return (
     <Card className="overflow-hidden border-0 shadow-md bg-white dark:bg-gray-900 rounded-xl">
@@ -241,6 +245,7 @@ const ExercisePresetEntryDisplay: React.FC<ExercisePresetEntryDisplayProps> = ({
                 <ExerciseEntryDisplay
                   key={exerciseEntry.id}
                   exerciseEntry={exerciseEntry}
+                  sessionMetricsOnly={sessionMetricsOnly}
                   currentUserId={currentUserId}
                   handleEdit={handleEdit}
                   handleDelete={handleDeleteExerciseEntry}

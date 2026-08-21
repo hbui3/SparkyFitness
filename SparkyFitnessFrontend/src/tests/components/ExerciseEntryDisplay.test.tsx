@@ -34,10 +34,11 @@ const makeEntry = (overrides?: Partial<ExerciseEntry>): ExerciseEntry =>
     ...overrides,
   }) as unknown as ExerciseEntry;
 
-const renderCard = (entry: ExerciseEntry) =>
+const renderCard = (entry: ExerciseEntry, sessionMetricsOnly = false) =>
   render(
     <ExerciseEntryDisplay
       exerciseEntry={entry}
+      sessionMetricsOnly={sessionMetricsOnly}
       currentUserId="user-1"
       handleEdit={jest.fn()}
       handleDelete={jest.fn()}
@@ -83,5 +84,38 @@ describe('ExerciseEntryDisplay cardio distance', () => {
     renderCard(makeEntry());
 
     expect(screen.queryByText(/km/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ExerciseEntryDisplay session-only metrics', () => {
+  it('hides session time, duration, and calories while keeping exercise sets', () => {
+    renderCard(
+      makeEntry({
+        entry_time: '21:39',
+        sets: [
+          {
+            id: 7,
+            set_number: 1,
+            set_type: 'Working Set',
+            reps: 10,
+            weight: 40,
+            duration: null,
+            distance: null,
+            rest_time: 90,
+            notes: null,
+            rpe: null,
+            completed_at: null,
+            is_pr: false,
+          },
+        ],
+      } as unknown as Partial<ExerciseEntry>),
+      true
+    );
+
+    expect(screen.queryByText('21:39')).not.toBeInTheDocument();
+    expect(screen.queryByText('30m')).not.toBeInTheDocument();
+    expect(screen.queryByText('300 kcal')).not.toBeInTheDocument();
+    expect(screen.getByText('1 sets')).toBeInTheDocument();
+    expect(screen.getByText('1: 10 reps · 40 kg')).toBeInTheDocument();
   });
 });

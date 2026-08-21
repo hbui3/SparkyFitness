@@ -2,6 +2,7 @@ import { tool } from 'ai';
 import {
   speedianceCreateAndScheduleWorkoutRequestSchema,
   speedianceExerciseSearchRequestSchema,
+  speedianceManageWorkoutRequestSchema,
 } from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import speedianceWorkoutService, {
@@ -76,6 +77,79 @@ export function buildSpeedianceTools(userId: string) {
               args
             )
           );
+        } catch (error) {
+          return speedianceToolError(error);
+        }
+      },
+    }),
+
+    sparky_manage_speediance_workouts: tool({
+      description:
+        'Complete owner-only Speediance workout manager. It lists and reads exact remote workouts; creates or updates complete workouts; schedules or unschedules exact calendar reservations; deletes an exact remote workout only after the user explicitly confirms its current full name; and creates an active date-bounded multi-month Sparky plan while synchronizing every workout and date to Speediance. Always call action=get before editing or deleting an existing workout, preserve remoteId/remoteCode, and send the complete resulting definition with action=upsert. To add warm-up sets, insert a separate copy of the exercise immediately before its working block with presetId 0 and setType warmup; keep the working block unchanged. Use presetId -1 for fixed custom kg, 0 for warm-up, 1 for muscle gain, 3 for stamina, and 5 for strength. Respect the exercise completion method: repetitions use repetitions, timed work uses durationSeconds, calorie goals use calorieTarget, and Vita exercises with dataStatType 6 use level 1-10 instead of cable weight. Search exercise IDs through sparky_search_speediance_exercises and use only the German variantId returned there. A create_plan request is appropriate for an explicitly requested multi-week or three-month plan and also creates the native Sparky workout presets and future diary sessions. Deletion preserves the native Sparky preset for history/offline use. External writes require explicit user intent; report failedDates instead of claiming every reservation succeeded.',
+      inputSchema: speedianceManageWorkoutRequestSchema,
+      execute: async (args) => {
+        try {
+          switch (args.action) {
+            case 'list':
+              return formatJsonResult(
+                await speedianceWorkoutService.listSpeedianceWorkouts(
+                  userId,
+                  args.providerId
+                )
+              );
+            case 'get':
+              return formatJsonResult(
+                await speedianceWorkoutService.getSpeedianceWorkout(
+                  userId,
+                  args.code,
+                  args.providerId
+                )
+              );
+            case 'upsert':
+              return formatJsonResult(
+                await speedianceWorkoutService.upsertSpeedianceWorkout(
+                  userId,
+                  args.workout
+                )
+              );
+            case 'schedule':
+              return formatJsonResult(
+                await speedianceWorkoutService.setSpeedianceWorkoutSchedule(
+                  userId,
+                  args.code,
+                  args.date,
+                  true,
+                  args.providerId
+                )
+              );
+            case 'unschedule':
+              return formatJsonResult(
+                await speedianceWorkoutService.setSpeedianceWorkoutSchedule(
+                  userId,
+                  args.code,
+                  args.date,
+                  false,
+                  args.providerId
+                )
+              );
+            case 'create_plan':
+              return formatJsonResult(
+                await speedianceWorkoutService.createSpeediancePlan(
+                  userId,
+                  args.plan
+                )
+              );
+            case 'delete':
+              return formatJsonResult(
+                await speedianceWorkoutService.deleteSpeedianceWorkout(
+                  userId,
+                  args.id,
+                  args.code,
+                  args.confirmName,
+                  args.providerId
+                )
+              );
+          }
         } catch (error) {
           return speedianceToolError(error);
         }

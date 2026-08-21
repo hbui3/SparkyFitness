@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   SpeedianceCreateAndScheduleWorkoutRequest,
   SpeedianceExerciseSearchRequest,
+  SpeedianceWorkoutDefinition,
 } from '@workspace/shared';
 import type { SpeedianceCustomWorkoutPayload } from '../integrations/speediance/speedianceApiClient.js';
 
@@ -15,11 +16,22 @@ const mocks = vi.hoisted(() => ({
   getCustomWorkoutDetail: vi.fn(),
   createCustomWorkout: vi.fn(),
   updateCustomWorkout: vi.fn(),
+  deleteCustomWorkout: vi.fn(),
   getCalendar: vi.fn(),
   setReservation: vi.fn(),
   getCredentials: vi.fn(),
   loadTimezone: vi.fn(),
   getTrainingLearningContext: vi.fn(),
+  getNativeExercise: vi.fn(),
+  createNativeExercise: vi.fn(),
+  updateNativeExercise: vi.fn(),
+  getNativePreset: vi.fn(),
+  getNativePresetBySpeedianceCode: vi.fn(),
+  createNativePreset: vi.fn(),
+  updateNativePreset: vi.fn(),
+  getNativePlans: vi.fn(),
+  createNativePlan: vi.fn(),
+  updateNativePlan: vi.fn(),
 }));
 
 vi.mock('../integrations/speediance/speedianceApiClient.js', () => ({
@@ -34,6 +46,7 @@ vi.mock('../integrations/speediance/speedianceApiClient.js', () => ({
       getCustomWorkoutDetail: mocks.getCustomWorkoutDetail,
       createCustomWorkout: mocks.createCustomWorkout,
       updateCustomWorkout: mocks.updateCustomWorkout,
+      deleteCustomWorkout: mocks.deleteCustomWorkout,
       getTrainingCalendarMonth: mocks.getCalendar,
       setTemplateReservation: mocks.setReservation,
     };
@@ -56,11 +69,39 @@ vi.mock('../services/trainingFeedbackService.js', () => ({
   },
 }));
 
+vi.mock('../models/exercise.js', () => ({
+  default: {
+    getExerciseBySourceAndSourceId: mocks.getNativeExercise,
+    createExercise: mocks.createNativeExercise,
+    updateExercise: mocks.updateNativeExercise,
+  },
+}));
+
+vi.mock('../models/workoutPresetRepository.js', () => ({
+  default: {
+    getWorkoutPresetByName: mocks.getNativePreset,
+    getWorkoutPresetBySpeedianceCode: mocks.getNativePresetBySpeedianceCode,
+    createWorkoutPreset: mocks.createNativePreset,
+    updateWorkoutPreset: mocks.updateNativePreset,
+  },
+}));
+
+vi.mock('../services/workoutPlanTemplateService.js', () => ({
+  default: {
+    getWorkoutPlanTemplatesByUserId: mocks.getNativePlans,
+    createWorkoutPlanTemplate: mocks.createNativePlan,
+    updateWorkoutPlanTemplate: mocks.updateNativePlan,
+  },
+}));
+
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
 import {
   createAndScheduleSpeedianceWorkout,
+  createSpeediancePlan,
+  deleteSpeedianceWorkout,
   searchSpeedianceExercises,
+  upsertSpeedianceWorkout,
 } from '../integrations/speediance/speedianceWorkoutService.js';
 
 const scheduleDate = '2099-08-20';
@@ -138,6 +179,38 @@ beforeEach(() => {
     preferences: [],
     recentFeedback: [],
   });
+  mocks.getNativeExercise.mockResolvedValue(null);
+  mocks.createNativeExercise.mockImplementation(
+    async (exercise: { source_id: string }) => ({
+      id: `native-${exercise.source_id}`,
+      user_id: 'user-1',
+      source: 'Speediance',
+    })
+  );
+  mocks.updateNativeExercise.mockImplementation(async (id: string) => ({
+    id,
+    user_id: 'user-1',
+    source: 'Speediance',
+  }));
+  mocks.getNativePreset.mockResolvedValue(null);
+  mocks.getNativePresetBySpeedianceCode.mockResolvedValue(null);
+  mocks.createNativePreset.mockResolvedValue({
+    id: 44,
+    description: 'Managed by the Sparky Speediance workout manager.',
+  });
+  mocks.updateNativePreset.mockResolvedValue({
+    id: 44,
+    description: 'Managed by the Sparky Speediance workout manager.',
+  });
+  mocks.getNativePlans.mockResolvedValue([]);
+  mocks.createNativePlan.mockResolvedValue({
+    id: 81,
+    plan_name: 'Sparky 3 Month Plan',
+  });
+  mocks.updateNativePlan.mockResolvedValue({
+    id: 81,
+    plan_name: 'Sparky 3 Month Plan',
+  });
   mocks.getGroupDetail.mockImplementation(async (groupId: string) => {
     if (groupId === '116') {
       return {
@@ -205,6 +278,9 @@ describe('searchSpeedianceExercises', () => {
           deviceTypes: [1],
           isUnilateral: false,
           compatibleForWorkout: true,
+          completionMethod: 1,
+          selectCompletionMethod: 0,
+          dataStatType: 0,
         },
       ],
       total: 1,
@@ -570,7 +646,7 @@ describe('createAndScheduleSpeedianceWorkout', () => {
 
     await expect(
       createAndScheduleSpeedianceWorkout('user-1', request)
-    ).rejects.toThrow('not a supported repetition-based resistance exercise');
+    ).rejects.toThrow('does not support the selected completion unit');
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
   });
@@ -590,5 +666,302 @@ describe('createAndScheduleSpeedianceWorkout', () => {
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
+  });
+
+  it('edits an exact existing workout and preserves separate warm-up and working blocks', async () => {
+    const definition: SpeedianceWorkoutDefinition = {
+      remoteId: '501',
+      remoteCode: 'sparky-code',
+      name: 'Sparky Full Body A v2',
+      acknowledgedPreferenceIds: [],
+      exercises: [
+        {
+          groupId: '116',
+          variantId: '9001',
+          expectedTitle: 'Barbell Bench Press',
+          presetId: 0,
+          completionUnit: 'repetitions',
+          sets: [
+            {
+              repetitions: 12,
+              targetRm: 18,
+              setType: 'warmup',
+              mode: 'standard',
+              restSeconds: 45,
+            },
+          ],
+        },
+        {
+          groupId: '116',
+          variantId: '9001',
+          expectedTitle: 'Barbell Bench Press',
+          presetId: 1,
+          completionUnit: 'repetitions',
+          sets: [
+            {
+              repetitions: 10,
+              targetRm: 12,
+              setType: 'working',
+              mode: 'eccentric',
+              restSeconds: 90,
+            },
+          ],
+        },
+      ],
+    };
+    let updatedPayload: SpeedianceCustomWorkoutPayload | null = null;
+    mocks.getCustomWorkoutDetail
+      .mockResolvedValueOnce({
+        id: 501,
+        code: 'sparky-code',
+        name: 'Sparky Full Body A',
+        actionLibraryList: [],
+      })
+      .mockImplementationOnce(async () => ({
+        id: 501,
+        code: 'sparky-code',
+        name: updatedPayload?.name,
+        actionLibraryList: updatedPayload?.actionLibraryList,
+      }));
+    mocks.updateCustomWorkout.mockImplementation(
+      async (_id: number, payload: SpeedianceCustomWorkoutPayload) => {
+        updatedPayload = payload;
+        return { success: true };
+      }
+    );
+
+    const result = await upsertSpeedianceWorkout('user-1', definition);
+
+    expect(result.workout).toMatchObject({
+      id: '501',
+      code: 'sparky-code',
+      name: 'Sparky Full Body A v2',
+      created: false,
+      nativeWorkoutPresetId: 44,
+    });
+    const persistedPayload = mocks.updateCustomWorkout.mock.calls[0]?.[1] as
+      | SpeedianceCustomWorkoutPayload
+      | undefined;
+    expect(persistedPayload?.actionLibraryList).toEqual([
+      expect.objectContaining({ templatePresetId: 0, setsAndReps: '12' }),
+      expect.objectContaining({
+        templatePresetId: 1,
+        setsAndReps: '10',
+        sportMode: '3',
+      }),
+    ]);
+    expect(mocks.updateNativePreset).not.toHaveBeenCalled();
+    expect(mocks.createNativePreset).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Sparky Full Body A v2',
+        exercises: expect.arrayContaining([
+          expect.objectContaining({
+            sets: [expect.objectContaining({ set_type: 'warmup' })],
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('deletes only the exact confirmed remote identity and preserves native data', async () => {
+    mocks.getCustomWorkoutDetail.mockResolvedValue({
+      id: 501,
+      code: 'sparky-code',
+      name: 'Sparky Full Body A',
+      actionLibraryList: [],
+    });
+    mocks.deleteCustomWorkout.mockResolvedValue({ success: true });
+    mocks.getCustomWorkouts.mockResolvedValue([]);
+
+    const result = await deleteSpeedianceWorkout(
+      'user-1',
+      '501',
+      'sparky-code',
+      'Sparky Full Body A'
+    );
+
+    expect(mocks.deleteCustomWorkout).toHaveBeenCalledWith(501);
+    expect(result).toEqual({
+      success: true,
+      id: '501',
+      code: 'sparky-code',
+      name: 'Sparky Full Body A',
+      nativeWorkoutPresetPreserved: true,
+    });
+    expect(mocks.updateNativePreset).not.toHaveBeenCalled();
+  });
+
+  it('uses Speediance calorie completion and Vita level fields without cable weights', async () => {
+    const definition: SpeedianceWorkoutDefinition = {
+      remoteId: '777',
+      remoteCode: 'vita-code',
+      name: 'Vita calorie session',
+      acknowledgedPreferenceIds: [],
+      exercises: [
+        {
+          groupId: '522',
+          variantId: '9522',
+          expectedTitle: 'Vita Burn',
+          dataStatType: 6,
+          presetId: -1,
+          completionUnit: 'calories',
+          sets: [
+            {
+              repetitions: 50,
+              calorieTarget: 50,
+              targetRm: 12,
+              level: 7,
+              mode: 'standard',
+              restSeconds: 30,
+            },
+          ],
+        },
+      ],
+    };
+    mocks.getGroupDetail.mockResolvedValue({
+      title: 'Vita Burn',
+      isLeftRight: 0,
+      dataStatType: 6,
+      completionMethod: 5,
+      actionLibraryList: [
+        { id: 9522, coachLanguage: 'de', coach: { name: 'Daniel' } },
+      ],
+    });
+    let updatedPayload: SpeedianceCustomWorkoutPayload | null = null;
+    mocks.getCustomWorkoutDetail
+      .mockResolvedValueOnce({
+        id: 777,
+        code: 'vita-code',
+        name: 'Vita calorie session',
+        actionLibraryList: [],
+      })
+      .mockImplementationOnce(async () => ({
+        id: 777,
+        code: 'vita-code',
+        name: updatedPayload?.name,
+        actionLibraryList: updatedPayload?.actionLibraryList,
+      }));
+    mocks.updateCustomWorkout.mockImplementation(
+      async (_id: number, payload: SpeedianceCustomWorkoutPayload) => {
+        updatedPayload = payload;
+        return { success: true };
+      }
+    );
+
+    await upsertSpeedianceWorkout('user-1', definition);
+
+    expect(mocks.updateCustomWorkout).toHaveBeenCalledWith(
+      777,
+      expect.objectContaining({
+        totalCapacity: 0,
+        actionLibraryList: [
+          expect.objectContaining({
+            setsAndReps: '50',
+            completionMethod: '5',
+            selectCompletionMethod: '1',
+            countType: '5',
+            weights: '0',
+            counterweight2: '',
+            level: '7',
+            capacity: 0,
+          }),
+        ],
+      })
+    );
+  });
+
+  it('creates a date-bounded native plan and verifies every Speediance reservation', async () => {
+    const definition = workoutRequest().exercises[0];
+    let created = false;
+    let scheduled = false;
+    let capturedPayload: SpeedianceCustomWorkoutPayload | null = null;
+    mocks.getCustomWorkouts.mockImplementation(async () =>
+      created
+        ? [
+            {
+              id: 501,
+              code: 'sparky-code',
+              name: 'Sparky Full Body A',
+            },
+          ]
+        : []
+    );
+    mocks.createCustomWorkout.mockImplementation(
+      async (payload: SpeedianceCustomWorkoutPayload) => {
+        created = true;
+        capturedPayload = payload;
+        return { id: 501, code: 'sparky-code' };
+      }
+    );
+    mocks.getCustomWorkoutDetail.mockImplementation(async () => ({
+      id: 501,
+      code: 'sparky-code',
+      name: capturedPayload?.name,
+      actionLibraryList: capturedPayload?.actionLibraryList,
+    }));
+    mocks.getCalendar.mockImplementation(async () => [
+      {
+        date: '2099-08-20',
+        trainingPlanList: scheduled
+          ? [
+              {
+                id: 701,
+                code: 'sparky-code',
+                title: 'Sparky Full Body A',
+                isReservation: true,
+              },
+            ]
+          : [],
+      },
+    ]);
+    mocks.setReservation.mockImplementation(async () => {
+      scheduled = true;
+      return true;
+    });
+
+    const result = await createSpeediancePlan('user-1', {
+      planName: 'Sparky 3 Month Plan',
+      description: 'Hypertrophy plan',
+      startDate: '2099-08-20',
+      endDate: '2099-08-20',
+      sessions: [
+        {
+          dayOfWeek: 4,
+          workout: {
+            name: 'Sparky Full Body A',
+            acknowledgedPreferenceIds: [],
+            exercises: definition ? [definition] : [],
+          },
+        },
+      ],
+    });
+
+    expect(mocks.createNativePlan).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        plan_name: 'Sparky 3 Month Plan',
+        start_date: '2099-08-20',
+        end_date: '2099-08-20',
+        is_active: true,
+        assignments: [
+          expect.objectContaining({
+            day_of_week: 4,
+            workout_preset_id: 44,
+          }),
+        ],
+      })
+    );
+    expect(mocks.setReservation).toHaveBeenCalledWith(
+      '2099-08-20',
+      'sparky-code',
+      1,
+      1
+    );
+    expect(result.plan).toMatchObject({
+      id: '81',
+      workoutCount: 1,
+      scheduledDates: 1,
+      failedDates: [],
+    });
   });
 });

@@ -32,6 +32,7 @@ import { formatTimeOfDayString } from '@/utils/timeFormatters';
 
 interface ExerciseEntryDisplayProps {
   exerciseEntry: ExerciseEntry;
+  sessionMetricsOnly?: boolean;
   currentUserId: string | undefined;
   handleEdit: (entry: ExerciseEntry) => void;
   handleDelete: (entryId: string) => void;
@@ -68,6 +69,7 @@ const SOURCE_BADGES: Record<string, { label: string; className: string }> = {
 
 const ExerciseEntryDisplay: React.FC<ExerciseEntryDisplayProps> = ({
   exerciseEntry,
+  sessionMetricsOnly = false,
   currentUserId,
   handleEdit,
   handleDelete,
@@ -178,7 +180,7 @@ const ExerciseEntryDisplay: React.FC<ExerciseEntryDisplayProps> = ({
           <span className="font-semibold text-sm text-gray-800 dark:text-gray-100 leading-tight">
             {snapshot?.name || 'Unknown Exercise'}
           </span>
-          {exerciseEntry.entry_time && (
+          {!sessionMetricsOnly && exerciseEntry.entry_time && (
             <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full dark:bg-blue-900/30 dark:text-blue-300 font-medium">
               {formatTimeOfDayString(exerciseEntry.entry_time, timeFormat)}
             </span>
@@ -194,7 +196,14 @@ const ExerciseEntryDisplay: React.FC<ExerciseEntryDisplayProps> = ({
 
         {/* Stats row */}
         <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500 dark:text-gray-400 mb-1">
-          {isActiveCalories ? (
+          {sessionMetricsOnly ? (
+            <>
+              {exerciseEntry.distance != null && (
+                <span>{formatDistance(exerciseEntry.distance)}</span>
+              )}
+              {hasSets && <span>{exerciseEntry.sets!.length} sets</span>}
+            </>
+          ) : isActiveCalories ? (
             <span className="font-medium text-orange-600 dark:text-orange-400">
               {caloriesDisplay} active
             </span>

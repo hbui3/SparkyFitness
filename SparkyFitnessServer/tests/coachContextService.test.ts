@@ -11,6 +11,7 @@ import workoutDeduplicationService from '../services/workoutDeduplicationService
 import { getDailySummary } from '../services/dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import adaptiveTrainingService from '../services/adaptiveTrainingService.js';
+import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
 
 vi.mock('../models/onboardingRepository.js', () => ({
   default: { getOnboardingGoalData: vi.fn() },
@@ -49,12 +50,23 @@ vi.mock('../utils/timezoneLoader.js', () => ({
 vi.mock('../services/adaptiveTrainingService.js', () => ({
   default: { getAdaptiveTrainingDashboard: vi.fn() },
 }));
+vi.mock('../services/plannedWorkoutScheduleService.js', () => ({
+  default: { getPlannedWorkoutScheduleStatus: vi.fn() },
+}));
 
 describe('coachContextService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-18T12:00:00.000Z'));
     vi.mocked(loadUserTimezone).mockResolvedValue('Europe/Berlin');
+    vi.mocked(
+      plannedWorkoutScheduleService.getPlannedWorkoutScheduleStatus
+    ).mockResolvedValue({
+      dueToday: [],
+      completedToday: [],
+      missedYesterday: [],
+      carriedForwardToday: [],
+    });
     vi.mocked(onboardingRepository.getOnboardingGoalData).mockResolvedValue({
       primary_goal: 'gain_weight',
     });

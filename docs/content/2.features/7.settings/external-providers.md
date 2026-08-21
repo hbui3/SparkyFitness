@@ -33,11 +33,27 @@ workouts include their exercise/set details; Free Lift and Quick sessions are
 imported as session summaries. Because this relies on an unofficial mobile API,
 it may need maintenance when Speediance changes its backend.
 
-The AI coach can also search the connected account's real Gym Monster exercise
-library, create a repetition-based custom workout with Speediance's **Gain
-Muscle** preset, and reserve it for a calendar day after the owner explicitly
-asks it to do so. Exercise group, variant, title, accessory requirements, and
-set configuration are verified against Speediance before and after the write.
+Under **Training**, the owner can open the Speediance Workout Manager to list,
+create, and edit complete custom workouts and reserve them on calendar days.
+Exercises can be reordered and configured with warm-up, muscle-gain, stamina,
+strength, or fixed-kilogram presets; standard, chains, and eccentric resistance;
+repetitions, timed or calorie targets, target RM or fixed weight, Vita levels,
+and per-set rest. Each saved remote
+workout is mirrored to a native Sparky workout preset, so the same training can
+still be used when Speediance is unavailable. Speediance is intentionally not
+shown in the generic Online exercise importer because safe workout creation
+requires the dedicated variant and payload checks.
+Deleting a remote workout requires confirmation of its current exact name; the
+native Sparky preset is deliberately preserved for history and offline use.
+
+The AI coach exposes the same manager operations. After explicit owner intent,
+it can read and update an exact existing workout (for example, insert separate
+warm-up blocks), schedule or unschedule it, or create a dated multi-month plan.
+Multi-month plans use SparkyFitness's existing workout plan templates and future
+diary sessions while reserving the corresponding dates in Speediance; there is
+no parallel plan database. Exercise group, variant, title, accessory
+requirements, and set configuration are verified against Speediance before and
+after each write.
 Speediance can provide several coach/video versions of the same exercise.
 SparkyFitness selects the explicitly German (`coachLanguage: de`) version by
 default and blocks automated workout creation for an exercise when no German
@@ -51,6 +67,12 @@ recent structured workout feedback and active training preferences. It can use
 bounded volume/rest guidance and preferred exercises, while an exercise marked
 as avoided is blocked at the Speediance write boundary unless the owner
 explicitly overrides that exact preference.
+
+When proactive training coaching is enabled, still-open planned sessions are
+named in the adaptive reminders. A plan session missed yesterday is copied to
+today in Sparky and, when the remote account is reachable, reserved for today in
+Speediance. The next morning message explicitly identifies the missed workout;
+later reminders remain concrete until the planned session is completed.
 
 iGPSPORT accounts are configured with an email address or phone number,
 password, and account region (Global or China). SparkyFitness encrypts these

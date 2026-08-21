@@ -28,6 +28,12 @@ vi.mock('../integrations/speediance/speedianceWorkoutService.js', () => ({
   default: {
     searchSpeedianceExercises: vi.fn(),
     createAndScheduleSpeedianceWorkout: vi.fn(),
+    listSpeedianceWorkouts: vi.fn(),
+    getSpeedianceWorkout: vi.fn(),
+    upsertSpeedianceWorkout: vi.fn(),
+    setSpeedianceWorkoutSchedule: vi.fn(),
+    createSpeediancePlan: vi.fn(),
+    deleteSpeedianceWorkout: vi.fn(),
   },
   SpeedianceWorkoutConflictError: class SpeedianceWorkoutConflictError extends Error {},
   SpeedianceWorkoutValidationError: class SpeedianceWorkoutValidationError extends Error {},
@@ -173,5 +179,134 @@ describe('Speediance routes', () => {
     expect(
       speedianceWorkoutService.createAndScheduleSpeedianceWorkout
     ).not.toHaveBeenCalled();
+  });
+
+  it('updates a complete manager workout definition', async () => {
+    vi.mocked(
+      speedianceWorkoutService.upsertSpeedianceWorkout
+    ).mockResolvedValue({
+      success: true,
+      workout: {
+        id: '501',
+        code: 'sparky-code',
+        name: 'Sparky Full Body A',
+        created: false,
+        exerciseCount: 2,
+        remoteSetCount: 4,
+        nativeWorkoutPresetId: 44,
+      },
+    });
+
+    const response = await request(app)
+      .post('/api/integrations/speediance/workouts')
+      .send({
+        remoteId: '501',
+        remoteCode: 'sparky-code',
+        name: 'Sparky Full Body A',
+        exercises: [
+          {
+            groupId: '116',
+            variantId: '2927',
+            expectedTitle: 'Barbell Bench Press',
+            presetId: 0,
+            completionUnit: 'repetitions',
+            sets: [{ repetitions: 12, targetRm: 18, setType: 'warmup' }],
+          },
+          {
+            groupId: '116',
+            variantId: '2927',
+            expectedTitle: 'Barbell Bench Press',
+            presetId: 1,
+            completionUnit: 'repetitions',
+            sets: [{ repetitions: 10, targetRm: 12, setType: 'working' }],
+          },
+        ],
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.workout.nativeWorkoutPresetId).toBe(44);
+    expect(
+      speedianceWorkoutService.upsertSpeedianceWorkout
+    ).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      expect.objectContaining({ remoteId: '501', remoteCode: 'sparky-code' })
+    );
+  });
+
+  it('creates an explicitly dated Speediance-backed workout plan', async () => {
+    vi.mocked(speedianceWorkoutService.createSpeediancePlan).mockResolvedValue({
+      success: true,
+      plan: {
+        id: '81',
+        name: 'Three month hypertrophy',
+        startDate: '2026-08-24',
+        endDate: '2026-11-22',
+        workoutCount: 1,
+        scheduledDates: 13,
+        failedDates: [],
+      },
+    });
+
+    const response = await request(app)
+      .post('/api/integrations/speediance/plans')
+      .send({
+        planName: 'Three month hypertrophy',
+        startDate: '2026-08-24',
+        endDate: '2026-11-22',
+        sessions: [
+          {
+            dayOfWeek: 1,
+            workout: {
+              name: 'Full Body A',
+              exercises: [
+                {
+                  groupId: '116',
+                  variantId: '2927',
+                  expectedTitle: 'Barbell Bench Press',
+                  sets: [{ repetitions: 10, targetRm: 12 }],
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.plan.scheduledDates).toBe(13);
+    expect(speedianceWorkoutService.createSpeediancePlan).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      expect.objectContaining({ planName: 'Three month hypertrophy' })
+    );
+  });
+
+  it('deletes only an exact confirmed remote workout', async () => {
+    vi.mocked(
+      speedianceWorkoutService.deleteSpeedianceWorkout
+    ).mockResolvedValue({
+      success: true,
+      id: '501',
+      code: 'sparky-code',
+      name: 'Sparky Full Body A',
+      nativeWorkoutPresetPreserved: true,
+    });
+
+    const response = await request(app)
+      .delete('/api/integrations/speediance/workouts/501')
+      .send({
+        remoteCode: 'sparky-code',
+        confirmName: 'Sparky Full Body A',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.nativeWorkoutPresetPreserved).toBe(true);
+    expect(
+      speedianceWorkoutService.deleteSpeedianceWorkout
+    ).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      '501',
+      'sparky-code',
+      'Sparky Full Body A',
+      undefined
+    );
   });
 });

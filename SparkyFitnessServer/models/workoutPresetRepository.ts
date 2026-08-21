@@ -114,6 +114,36 @@ async function getWorkoutPresetByName(userId: any, name: any) {
     client.release();
   }
 }
+
+interface SpeedianceManagedWorkoutPresetRow {
+  id: number;
+  user_id: string;
+  name: string;
+  description: string | null;
+  is_public: boolean;
+}
+
+async function getWorkoutPresetBySpeedianceCode(
+  userId: string,
+  remoteCode: string
+): Promise<SpeedianceManagedWorkoutPresetRow | null> {
+  const client = await getClient(userId);
+  try {
+    const description = `Managed by the Sparky Speediance workout manager. Remote code: ${remoteCode}`;
+    const result = await client.query(
+      `SELECT id, user_id, name, description, is_public
+       FROM workout_presets
+       WHERE user_id = $1 AND description = $2
+       LIMIT 1`,
+      [userId, description]
+    );
+    return (
+      (result.rows[0] as SpeedianceManagedWorkoutPresetRow | undefined) ?? null
+    );
+  } finally {
+    client.release();
+  }
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getWorkoutPresets(userId: any, page = 1, limit = 10) {
   const client = await getClient(userId); // User-specific operation
@@ -491,6 +521,7 @@ export { deleteWorkoutPreset };
 export { getWorkoutPresetOwnerId };
 export { searchWorkoutPresets };
 export { getWorkoutPresetByName };
+export { getWorkoutPresetBySpeedianceCode };
 export { addExerciseToWorkoutPreset };
 export default {
   createWorkoutPreset,
@@ -501,5 +532,6 @@ export default {
   getWorkoutPresetOwnerId,
   searchWorkoutPresets,
   getWorkoutPresetByName,
+  getWorkoutPresetBySpeedianceCode,
   addExerciseToWorkoutPreset,
 };

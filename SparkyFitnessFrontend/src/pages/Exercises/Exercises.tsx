@@ -39,6 +39,7 @@ import { useAuth } from '@/hooks/useAuth';
 import type { ExerciseOwnershipFilter } from '@/types/exercises';
 import WorkoutPresetsManager from './WorkoutPresetsManager';
 import WorkoutPlansManager from '@/pages/Exercises/WorkoutPlansManager';
+import SpeedianceWorkoutManager from './SpeedianceWorkoutManager';
 import {
   useExercises,
   useUpdateExerciseShareStatusMutation,
@@ -616,6 +617,9 @@ const ExerciseDatabaseManager = () => {
 
       {/* Workout Plans Section */}
       <WorkoutPlansManager />
+
+      {/* Owner-only remote manager; unavailable providers render a connection hint. */}
+      <SpeedianceWorkoutManager />
 
       <AddExerciseDialog
         open={isAddExerciseDialogOpen}

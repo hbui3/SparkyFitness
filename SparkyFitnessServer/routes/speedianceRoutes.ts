@@ -3,11 +3,21 @@ import { z } from 'zod';
 import {
   speedianceCreateAndScheduleWorkoutRequestSchema,
   speedianceCreateAndScheduleWorkoutResponseSchema,
+  speedianceCreatePlanRequestSchema,
+  speedianceCreatePlanResponseSchema,
   speedianceExerciseSearchRequestSchema,
   speedianceExerciseSearchResponseSchema,
   speedianceSyncRequestSchema,
   speedianceSyncResponseSchema,
   speedianceStatusResponseSchema,
+  speedianceWorkoutDefinitionSchema,
+  speedianceWorkoutDeleteRequestSchema,
+  speedianceWorkoutDeleteResponseSchema,
+  speedianceWorkoutDetailSchema,
+  speedianceWorkoutListResponseSchema,
+  speedianceWorkoutScheduleRequestSchema,
+  speedianceWorkoutScheduleResponseSchema,
+  speedianceWorkoutUpsertResponseSchema,
 } from '@workspace/shared';
 import authMiddleware from '../middleware/authMiddleware.js';
 import { log } from '../config/logging.js';
@@ -175,6 +185,172 @@ router.post(
     }
   }
 );
+
+/**
+ * @swagger
+ * /integrations/speediance/workouts:
+ *   get:
+ *     summary: List the owner's custom Speediance workouts
+ *     tags: [External Integrations]
+ *   post:
+ *     summary: Create or update a Speediance workout and its native Sparky preset
+ *     tags: [External Integrations]
+ */
+router.get('/workouts', authMiddleware.authenticate, async (req, res) => {
+  if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+    return ownerOnlyResponse(res);
+  }
+  const parsed = statusQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ message: 'Invalid providerId.' });
+  }
+  try {
+    const result = await speedianceWorkoutService.listSpeedianceWorkouts(
+      req.userId,
+      parsed.data.providerId
+    );
+    return res
+      .status(200)
+      .json(speedianceWorkoutListResponseSchema.parse(result));
+  } catch (error) {
+    return speedianceErrorResponse(res, error, 'workout listing');
+  }
+});
+
+router.post('/workouts', authMiddleware.authenticate, async (req, res) => {
+  if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+    return ownerOnlyResponse(res);
+  }
+  const parsed = speedianceWorkoutDefinitionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: 'Invalid Speediance workout definition.',
+      issues: parsed.error.issues,
+    });
+  }
+  try {
+    const result = await speedianceWorkoutService.upsertSpeedianceWorkout(
+      req.userId,
+      parsed.data
+    );
+    return res
+      .status(200)
+      .json(speedianceWorkoutUpsertResponseSchema.parse(result));
+  } catch (error) {
+    return speedianceErrorResponse(res, error, 'workout synchronization');
+  }
+});
+
+router.delete(
+  '/workouts/:id',
+  authMiddleware.authenticate,
+  async (req, res) => {
+    if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+      return ownerOnlyResponse(res);
+    }
+    const parsed = speedianceWorkoutDeleteRequestSchema.safeParse(
+      req.body ?? {}
+    );
+    if (!parsed.success || !req.params.id) {
+      return res.status(400).json({
+        message: 'Invalid Speediance workout deletion request.',
+        issues: parsed.success ? [] : parsed.error.issues,
+      });
+    }
+    try {
+      const result = await speedianceWorkoutService.deleteSpeedianceWorkout(
+        req.userId,
+        req.params.id,
+        parsed.data.remoteCode,
+        parsed.data.confirmName,
+        parsed.data.providerId
+      );
+      return res
+        .status(200)
+        .json(speedianceWorkoutDeleteResponseSchema.parse(result));
+    } catch (error) {
+      return speedianceErrorResponse(res, error, 'workout deletion');
+    }
+  }
+);
+
+router.get('/workouts/:code', authMiddleware.authenticate, async (req, res) => {
+  if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+    return ownerOnlyResponse(res);
+  }
+  const parsed = statusQuerySchema.safeParse(req.query);
+  if (!parsed.success || !req.params.code) {
+    return res.status(400).json({ message: 'Invalid Speediance workout.' });
+  }
+  try {
+    const result = await speedianceWorkoutService.getSpeedianceWorkout(
+      req.userId,
+      req.params.code,
+      parsed.data.providerId
+    );
+    return res.status(200).json(speedianceWorkoutDetailSchema.parse(result));
+  } catch (error) {
+    return speedianceErrorResponse(res, error, 'workout loading');
+  }
+});
+
+router.post(
+  '/workouts/:code/reservation',
+  authMiddleware.authenticate,
+  async (req, res) => {
+    if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+      return ownerOnlyResponse(res);
+    }
+    const parsed = speedianceWorkoutScheduleRequestSchema
+      .extend({ scheduled: z.boolean() })
+      .safeParse(req.body ?? {});
+    if (!parsed.success || !req.params.code) {
+      return res.status(400).json({
+        message: 'Invalid Speediance workout reservation.',
+        issues: parsed.success ? [] : parsed.error.issues,
+      });
+    }
+    try {
+      const result =
+        await speedianceWorkoutService.setSpeedianceWorkoutSchedule(
+          req.userId,
+          req.params.code,
+          parsed.data.date,
+          parsed.data.scheduled,
+          parsed.data.providerId
+        );
+      return res
+        .status(200)
+        .json(speedianceWorkoutScheduleResponseSchema.parse(result));
+    } catch (error) {
+      return speedianceErrorResponse(res, error, 'workout reservation');
+    }
+  }
+);
+
+router.post('/plans', authMiddleware.authenticate, async (req, res) => {
+  if (!isOwnerContext(req.userId, req.authenticatedUserId)) {
+    return ownerOnlyResponse(res);
+  }
+  const parsed = speedianceCreatePlanRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: 'Invalid Speediance training plan.',
+      issues: parsed.error.issues,
+    });
+  }
+  try {
+    const result = await speedianceWorkoutService.createSpeediancePlan(
+      req.userId,
+      parsed.data
+    );
+    return res
+      .status(200)
+      .json(speedianceCreatePlanResponseSchema.parse(result));
+  } catch (error) {
+    return speedianceErrorResponse(res, error, 'training plan creation');
+  }
+});
 
 /**
  * @swagger

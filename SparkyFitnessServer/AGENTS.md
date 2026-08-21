@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-08-20_
+_Last updated: 2026-08-21_
 
 SparkyFitness Server is the backend API package for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessServer/`.
 
@@ -65,6 +65,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `services/` - business logic and orchestration
 - `services/workoutDeduplicationService.ts` - canonical cross-provider workout reads; preserves provider rows in storage while suppressing overlapping mobile-health mirrors for reports, calories, daily views, and coach aggregates
 - `routes/adaptiveTrainingRoutes.ts`, `services/adaptiveTrainingService.ts`, `services/muscleLoadService.ts`, and `models/adaptiveTrainingRepository.ts` - diary-scoped daily workout/recovery recommendations, 0-100 decaying muscle load, readiness checks, owned-preset scoring, and persisted rationale/snapshots
+- `integrations/speediance/speedianceWorkoutService.ts`, `routes/speedianceRoutes.ts`, `ai/tools/speedianceTools.ts`, and `services/plannedWorkoutScheduleService.ts` - owner-only complete remote workout editing/scheduling, native preset and multi-month plan mirroring, German coach-variant verification, and missed-session carry-forward for proactive reminders
 - `models/reportRepository.ts` - tabular report reads and provider provenance. `check_in_measurements.source_provenance` is per metric because a daily row can combine providers; ingest paths must pass source metadata into `models/measurementRepository.ts`.
 - `models/` - PostgreSQL repositories and persistence helpers
 - `middleware/` - auth, permissions, uploads, and shared Express middleware
@@ -194,7 +195,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 
 - Provider-specific adapters live under `integrations/`; coordinating logic usually lives in `services/` and persistence in `models/`
 - Current adapters span food/nutrition (OpenFoodFacts, FatSecret, Nutritionix, USDA, Mealie, Tandoor, Norish, SwissFood, Yazio), fitness devices (Garmin Connect sync plus FIT file import via `integrations/garminfit/` + `services/fitImportService.ts`, Withings, Fitbit, Oura, Polar, Strava, Hevy, Speediance, iGPSPORT), exercise databases (Wger, FreeExerciseDB), and health-data import (Google Health, generic/mobile health data)
-- Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, Speediance, and iGPSPORT. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract for completed-workout import plus owner-only, verified custom-workout creation/calendar scheduling exposed to the coach through `ai/tools/speedianceTools.ts`. Scheduling consumes the owner-only context from `services/trainingFeedbackService.ts` and blocks unacknowledged avoided exercises at the write boundary. Native recurring plans stay in the existing workout-preset/plan-template domain and are coach-manageable through `ai/tools/workoutPlanTools.ts`; a completed Speediance import replaces the matching `Workout Plan` placeholder instead of duplicating it. iGPSPORT uses `integrations/igpsport/`, `routes/igpsportRoutes.ts`, the shared `IGPSport.api.zod.ts` contract, and the native FIT import service. Both providers' regional base URLs must stay allow-listed.
+- Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, Speediance, and iGPSPORT. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract for completed-workout import plus owner-only, verified custom-workout creation/editing/calendar scheduling exposed to the coach through `ai/tools/speedianceTools.ts`. Remote workouts mirror into the existing native workout-preset/plan-template domain; do not add a parallel plan store. `services/plannedWorkoutScheduleService.ts` detects still-open native plan sessions, carries yesterday's missed session to today, and lets proactive coaching send concrete reminders. Scheduling consumes the owner-only context from `services/trainingFeedbackService.ts` and blocks unacknowledged avoided exercises at the write boundary. A completed Speediance import replaces the matching `Workout Plan` placeholder instead of duplicating it. iGPSPORT uses `integrations/igpsport/`, `routes/igpsportRoutes.ts`, the shared `IGPSport.api.zod.ts` contract, and the native FIT import service. Both providers' regional base URLs must stay allow-listed.
 - Integration work often spans route, service, repository, cron, and external-provider settings code; inspect the whole path before calling the work complete
 
 ### AI Services
