@@ -396,7 +396,18 @@ describe('telegramCoachService', () => {
           },
         },
       },
-      { message_type: 'assistant', content: 'Hier sind deine Trends.' },
+      {
+        message_type: 'assistant',
+        content: 'Hier sind deine Trends.',
+        metadata: {
+          custom: {
+            assistantExecution: {
+              modelPurpose: 'chat',
+              turnDomains: ['reports'],
+            },
+          },
+        },
+      },
     ] as never);
     vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
       id: 'ai-1',
@@ -424,6 +435,23 @@ describe('telegramCoachService', () => {
         false,
         ['reports', 'coaching'],
         { allowAskUser: true }
+      );
+      const sentMessages = vi.mocked(chatService.processChatMessage).mock
+        .calls[0]?.[0] as Array<{ role: string; metadata?: unknown }>;
+      expect(sentMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'assistant',
+            metadata: {
+              custom: {
+                assistantExecution: {
+                  modelPurpose: 'chat',
+                  turnDomains: ['reports'],
+                },
+              },
+            },
+          }),
+        ])
       );
     });
   });

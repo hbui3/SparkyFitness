@@ -44,6 +44,13 @@ describe('classifyByKeywords', () => {
     expect(classifyByKeywords('can you scan this label')).toContain('vision');
   });
 
+  it('matches VO2max and medication requests', () => {
+    expect(classifyByKeywords('Was ist mein VO2max?')).toContain('exercise');
+    expect(classifyByKeywords('Meine Medikamente heute')).toContain(
+      'medications'
+    );
+  });
+
   it('returns an empty array when nothing matches', () => {
     expect(classifyByKeywords('hello there, how are you?')).toEqual([]);
   });
@@ -94,10 +101,26 @@ describe('getSystemPrompt dormant-domain listing', () => {
   it('directs the user to the tool selector in strict mode (allowEscalation=false)', () => {
     const prompt = getSystemPrompt('UTC', 'None', 'full', ['food'], false);
     // Strict mode names the dormant domains but must not offer self-escalation.
-    expect(prompt).toContain('Restricted tool set');
+    expect(prompt).toContain('User-restricted tool set');
     expect(prompt).toContain('tool selector');
     expect(prompt).toContain('exercise:');
     expect(prompt).not.toContain('sparky_enable_tools');
+  });
+
+  it('describes classifier narrowing as turn-scoped rather than user-disabled', () => {
+    const prompt = getSystemPrompt('UTC', 'None', 'full', ['food'], false, [
+      'food',
+      'exercise',
+      'checkin',
+      'goals',
+      'reports',
+      'coaching',
+      'vision',
+      'profile',
+      'medications',
+    ]);
+    expect(prompt).toContain('Turn-scoped tool set');
+    expect(prompt).not.toContain('User-restricted tool set');
   });
 });
 

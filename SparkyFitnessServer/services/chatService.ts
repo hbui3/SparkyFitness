@@ -62,6 +62,7 @@ interface ChatMessage {
   role: string;
   content?: string | ChatMessagePart[];
   parts?: ChatMessagePart[];
+  metadata?: unknown;
 }
 
 import { generateText, streamText, stepCountIs, hasToolCall } from 'ai';
@@ -513,16 +514,14 @@ async function prepareChatContext(
   authenticatedUserId: string,
   serviceType: string,
   chatToolProfile?: string | null,
-  toolCategories?: readonly string[],
-  // True when toolCategories came from the user's explicit in-chat selector
-  // (not from auto-classification). A manual selection is a strict ceiling:
-  // no escalation tool, and the prompt tells the model to send the user to
-  // the selector rather than attempt or fake a dormant capability. An
-  // auto-classified selection stays self-healing (escalation tool + widening
-  // prepareStep) since there's no human-set limit to respect.
+  activeToolCategories?: readonly string[],
+  // True when allowedToolCategories came from the user's explicit in-chat
+  // selector. That selection remains a strict ceiling, while the per-turn
+  // classifier is allowed to narrow the actually composed tool surface.
   categoriesAreManual = false,
   serviceSystemPrompt?: string | null,
-  allowAskUser = true
+  allowAskUser = true,
+  allowedToolCategories?: readonly string[]
 ) {
   const { chatTz, customCategoriesList } =
     await chatContextInputsCache.getOrLoad(authenticatedUserId, async () => {
@@ -557,15 +556,32 @@ async function prepareChatContext(
     chatToolProfile
   );
 
-  const selectedCategories = resolveCategories(toolProfile, toolCategories);
+  const allowedCategories = resolveCategories(
+    toolProfile,
+    categoriesAreManual ? allowedToolCategories : undefined
+  );
+  const requestedCategories = resolveCategories(
+    toolProfile,
+    activeToolCategories
+  );
+  let selectedCategories = new Set(
+    [...requestedCategories].filter((category) =>
+      allowedCategories.has(category)
+    )
+  );
+  // If classification failed or produced only categories outside the user's
+  // configured ceiling, retain the configured surface. This never widens past
+  // the selector, and it avoids presenting an empty tool set.
+  if (selectedCategories.size === 0) {
+    selectedCategories = allowedCategories;
+  }
 
   // Two tool-loading modes:
   //
-  // - Manual selection (categoriesAreManual): a strict ceiling. Compose the
-  //   exact narrow set with buildChatbotTools — its own last tool carries the
-  //   Anthropic cache breakpoint — and expose no escalation tool. The prompt
-  //   tells the model to point the user at the tool selector for anything
-  //   outside the chosen categories instead of attempting or faking it.
+  // - Manual selection (categoriesAreManual): a strict ceiling. Compose only
+  //   the categories relevant to this turn after intersecting them with the
+  //   user's configured selector. No escalation tool is exposed, so an
+  //   underspecified reply cannot jump to a stale domain from older history.
   //
   // - Auto-classification: self-healing. Compose the full surface once and
   //   narrow what's *sent* per turn via activeTools; the always-present
@@ -582,7 +598,7 @@ async function prepareChatContext(
       chatTz,
       toolProfile,
       true,
-      toolCategories,
+      [...selectedCategories],
       // Quick-reply chips: full profile only (the small local models 'core'
       // exists for pick tools unreliably from a wider surface).
       allowAskUser && toolProfile === 'full'
@@ -619,8 +635,12 @@ async function prepareChatContext(
     `Loaded ${sentToolCount}/${Object.keys(tools).length} active tools for chatbot (profile=${toolProfile}, mode=${
       categoriesAreManual ? 'manual' : 'auto'
     }${
-      toolCategories && toolCategories.length > 0
-        ? `, categories=${toolCategories.join(',')}`
+      activeToolCategories && activeToolCategories.length > 0
+        ? `, activeCategories=${[...selectedCategories].join(',')}`
+        : ''
+    }${
+      categoriesAreManual && allowedToolCategories
+        ? `, allowedCategories=${[...allowedCategories].join(',')}`
         : ''
     }): ${(activeToolNames ?? Object.keys(tools)).join(', ')}`
   );
@@ -644,9 +664,8 @@ async function prepareChatContext(
         customCategoriesList,
         toolProfile,
         [...selectedCategories],
-        // Auto mode advertises the escalation tool; manual mode advertises the
-        // tool selector as the way to widen.
-        !categoriesAreManual
+        !categoriesAreManual,
+        [...allowedCategories]
       ),
       serviceSystemPrompt
     ),
@@ -654,6 +673,7 @@ async function prepareChatContext(
     activeToolNames,
     prepareStep,
     toolProfile,
+    selectedCategories: [...selectedCategories],
   };
 }
 
@@ -690,10 +710,11 @@ export function getSystemPrompt(
   profile: ChatToolProfile = 'full',
   activeCategories?: readonly string[],
   // When true (auto-classification), dormant domains are reachable via the
-  // sparky_enable_tools escalation tool. When false (a manual selection), the
-  // dormant domains are a hard limit and the model is told to send the user to
-  // the tool selector instead of attempting or claiming a dormant capability.
-  allowEscalation = true
+  // sparky_enable_tools escalation tool. When false, only the turn-scoped
+  // active categories are composed. allowedCategories distinguishes the
+  // user's configured ceiling from categories merely dormant for this turn.
+  allowEscalation = true,
+  allowedCategories?: readonly string[]
 ): string {
   const suffix = profile === 'core' ? 'core' : 'full';
   const filePath = path.join(__dirname, '../prompts', `chatbot-${suffix}.md`);
@@ -748,26 +769,48 @@ export function getSystemPrompt(
     }
   }
 
-  // List any domains this turn's tool selection left dormant. In auto mode the
-  // model can pull them in itself via sparky_enable_tools; in manual mode they
-  // are a hard limit set by the user, so the model must instead point the user
-  // at the tool selector and never attempt or fake the capability. Omitted
-  // entirely when nothing is dormant (the common case: full set active).
+  content += `
+
+## Conversation continuity
+- An underspecified reply continues only the immediately preceding assistant turn.
+- Never use an older topic, proposal, entity, or tool domain to interpret the latest reply.
+- Switch domains only when the user's latest message explicitly introduces the new subject.`;
+
+  // List domains this turn's tool selection left dormant. In manual mode,
+  // distinguish turn-scoped narrowing from categories the user actually
+  // disabled in the selector.
   const dormant = CHAT_TOOL_CATEGORY_SLUGS.filter(
     (slug) => !categories.has(slug)
   );
   if (dormant.length > 0) {
-    const dormantList = dormant
-      .map((slug) => `- ${slug}: ${CATEGORY_SUMMARIES[slug]}`)
-      .join('\n');
-    content += allowEscalation
-      ? '\n\n## Additional capabilities available on request\n' +
+    if (allowEscalation) {
+      const dormantList = dormant
+        .map((slug) => `- ${slug}: ${CATEGORY_SUMMARIES[slug]}`)
+        .join('\n');
+      content +=
+        '\n\n## Additional capabilities available on request\n' +
         "The following tool categories are not currently loaded, but you can enable them mid-conversation by calling sparky_enable_tools if the user's request needs them:\n" +
-        dormantList
-      : '\n\n## Restricted tool set\n' +
-        'The user has limited you to the categories above using the in-chat tool selector. You do NOT have tools for the following, and you cannot enable them yourself:\n' +
-        dormantList +
-        '\n\nIf the user asks for something in one of these areas, do NOT attempt it and do NOT claim you did it. Tell them to enable that category using the tool selector in the chat, then retry.';
+        dormantList;
+    } else {
+      const allowed = new Set(allowedCategories ?? activeCategories ?? []);
+      const turnDormant = dormant.filter((slug) => allowed.has(slug));
+      const userRestricted = dormant.filter((slug) => !allowed.has(slug));
+      if (turnDormant.length > 0) {
+        content +=
+          '\n\n## Turn-scoped tool set\n' +
+          'Tools outside the latest classified domain are intentionally not loaded for this turn. Do not resume an older domain or claim to have used one of its tools.';
+      }
+      if (userRestricted.length > 0) {
+        const restrictedList = userRestricted
+          .map((slug) => `- ${slug}: ${CATEGORY_SUMMARIES[slug]}`)
+          .join('\n');
+        content +=
+          '\n\n## User-restricted tool set\n' +
+          'The user disabled these categories in the in-chat tool selector. Do not attempt or claim these capabilities:\n' +
+          restrictedList +
+          '\n\nIf the latest request explicitly needs one, tell the user to enable that category in the selector and retry.';
+      }
+    }
   }
 
   // Replace placeholders dynamically
@@ -961,6 +1004,8 @@ interface ChatAiServiceConfig {
   custom_url?: string | null;
   model_name?: string | null;
   planning_model_name?: string | null;
+  is_public?: boolean | null;
+  source?: string | null;
 }
 
 const TRAINING_PLANNER_SYSTEM_PROMPT = `
@@ -968,21 +1013,55 @@ Training-program execution contract:
 - Before describing an existing Speediance workout or plan, read it with the canonical manager tool. Exact exercises, set types, weights, dates, and cycle weeks must come from a successful tool result.
 - For simple edits or cloning, use sparky_manage_speediance_workouts action=transform. For an A/B or multi-week Speediance program, use one action=create_plan so workouts are written before the native plan is replaced.
 - Never submit a new Speediance workout name to sparky_manage_workout_plans. That native tool accepts existing presets only; action=create_plan on the Speediance manager is the canonical creation path.
-- When the user already explicitly requested the write, or confirms a presented write with a short answer such as "ja mach", execute it in this turn. Do not ask for the same confirmation again. If a recoverable tool error names a canonical next tool, follow that route within the current turn instead of repeating the failed call or falling back to another proposal.
+- When the user already explicitly requested the write, or the latest reply unambiguously accepts the operation proposed in the immediately preceding assistant turn, execute it now. Do not ask for the same confirmation again. If a recoverable tool error names a canonical next tool, follow that route within the current turn instead of repeating the failed call or falling back to another proposal.
 - Never say that a workout or plan was created, changed, scheduled, activated, or already contains a feature unless the corresponding read/write tool succeeded in this turn. If a tool fails, report that failure and do not turn the intended change into prose that sounds completed.
 - A plan proposal is not a completed plan. Clearly distinguish proposed from verified and written state.`;
 
-function latestAssistantText(messages: readonly ChatMessage[]): string {
+interface AssistantExecutionContext {
+  modelPurpose?: 'chat' | 'training_planner';
+  turnDomains: ChatToolCategorySlug[];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function assistantExecutionContext(
+  metadata: unknown
+): AssistantExecutionContext | null {
+  const root = recordValue(metadata);
+  if (!root) return null;
+  const custom = recordValue(root.custom);
+  const nested = recordValue(custom?.assistantExecution);
+  const execution = nested ?? root;
+  const modelPurpose =
+    execution.modelPurpose === 'training_planner' ||
+    execution.modelPurpose === 'chat'
+      ? execution.modelPurpose
+      : undefined;
+  const turnDomains = Array.isArray(execution.turnDomains)
+    ? execution.turnDomains.filter(isChatToolCategorySlug)
+    : [];
+  if (!modelPurpose && turnDomains.length === 0) return null;
+  return { modelPurpose, turnDomains };
+}
+
+function latestAssistantExecutionContext(
+  messages: readonly ChatMessage[]
+): AssistantExecutionContext | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === 'assistant') {
-      return extractMessageText(messages[index]);
+      return assistantExecutionContext(messages[index].metadata);
     }
   }
-  return '';
+  return null;
 }
 
 export function isTrainingPlanningTurn(
-  messages: readonly ChatMessage[]
+  messages: readonly ChatMessage[],
+  currentTurnDomains?: readonly string[]
 ): boolean {
   const latestUser = [...messages]
     .reverse()
@@ -992,11 +1071,19 @@ export function isTrainingPlanningTurn(
     /\b(?:trainings?plan|workout\s*plan|training program|workout (?:bauen|erstellen|anpassen|ändern|aendern|bearbeiten|klonen|planen)|speediance(?:-|\s)*(?:workout|training|plan)|aufwärms[aä]tze?|warm-?up sets?|periodisier|hypertroph|muskelaufbau|\ba\s*\/\s*b\b|übungen? austausch|replace exercise|adjust sets?)\b/i;
   if (directPlanning.test(userText)) return true;
 
-  const isConfirmation =
-    /^(?:ja|yes|yep|jo|ok(?:ay)?|passt|genau|mach(?: das)?|bitte|bestätigt|bestaetigt)[.! ]*$/i.test(
-      userText
-    );
-  return isConfirmation && directPlanning.test(latestAssistantText(messages));
+  const previousTurn = latestAssistantExecutionContext(messages);
+  if (previousTurn?.modelPurpose !== 'training_planner') return false;
+
+  // Continue a planner turn from its persisted structured state, not from a
+  // hard-coded list of confirmation phrases or a keyword found in old prose.
+  // A clearly introduced non-training domain always overrides that state.
+  const explicitDomains = currentTurnDomains?.length
+    ? currentTurnDomains.filter(isChatToolCategorySlug)
+    : classifyByKeywords(userText);
+  return !explicitDomains.some(
+    (domain) =>
+      domain !== 'exercise' && domain !== 'coaching' && domain !== 'reports'
+  );
 }
 
 export function resolveChatModelName(
@@ -1326,7 +1413,7 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
   {
     category: 'exercise',
     keywords:
-      /\b(run|ran|running|walk|walked|walking|jog|jogged|jogging|lift|lifted|lifting|workout|workouts|exercise|exercises|reps|sets|cardio|strength|gym|heart rate|bpm|treadmill|squats?|bench press|swim|swam|swimming|bike|biking|cycling|cycled|yoga|hike[ds]?|hiking|steps|push-?ups?|pull-?ups?|training|trained|worked out)\b/i,
+      /\b(run|ran|running|walk|walked|walking|jog|jogged|jogging|lift|lifted|lifting|workout|workouts|exercise|exercises|reps|sets|cardio|strength|gym|heart rate|bpm|vo2\s*max|vo2max|treadmill|squats?|bench press|swim|swam|swimming|bike|biking|cycling|cycled|yoga|hike[ds]?|hiking|steps|push-?ups?|pull-?ups?|training|trained|worked out)\b/i,
   },
   {
     category: 'food',
@@ -1361,6 +1448,11 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
     category: 'profile',
     keywords:
       /\b(profile|habit|habits|preference|preferences|settings|timezone|unit|units)\b/i,
+  },
+  {
+    category: 'medications',
+    keywords:
+      /\b(medication|medications|medicine|medicines|medikament|medikamente|medikamenten|tablette|tabletten|dose|dosage|dosis)\b/i,
   },
 ];
 
@@ -1455,7 +1547,16 @@ async function classifyUserIntent(
       content: extractMessageText(m),
     }));
 
-    const classificationPrompt = `Analyze the conversation history (especially the user's latest reply) and determine which of the following health tracking domains are relevant. Choose all that apply.
+    const previousExecution = latestAssistantExecutionContext(messages);
+    const structuredPreviousDomains = previousExecution?.turnDomains.length
+      ? previousExecution.turnDomains.join(', ')
+      : 'none';
+    const classificationPrompt = `Analyze the two-message conversation below and determine which health tracking domains are relevant to the user's latest reply. Choose all that apply.
+
+The immediately preceding assistant turn has these application-recorded domains: ${structuredPreviousDomains}.
+- If the latest reply is underspecified, it continues only that immediately preceding assistant turn and inherits its recorded domains.
+- An explicit new subject in the latest reply overrides the preceding domains.
+- Never use any older conversation topic to classify the latest reply.
 
 Available domains:
 - exercise: tracking workouts, logging sets/reps, running, cardio, strength, steps.
@@ -1465,6 +1566,7 @@ Available domains:
 - reports: viewing progress charts, summaries, TDEE, or reports.
 - coaching: general coaching advice, guidance, tips, or motivation.
 - profile: changing settings, preferences, timezone, habits, or profile details.
+- medications: viewing or logging medicines, medication schedules, doses, or adherence.
 
 Your response must contain ONLY the matched domain names as a comma-separated list (e.g., "exercise, food" or "checkin" or "none"). Do not include any other text.`;
 
@@ -1498,6 +1600,7 @@ Your response must contain ONLY the matched domain names as a comma-separated li
       'coaching',
       'profile',
       'vision',
+      'medications',
     ];
     for (const cat of validCategories) {
       if (parts.includes(cat)) {
@@ -1520,6 +1623,80 @@ Your response must contain ONLY the matched domain names as a comma-separated li
   // defer to the profile's default set (resolveCategories in ai/tools/index.ts)
   // rather than guessing a fixed subset. sparky_enable_tools covers any gap.
   return [];
+}
+
+export function resolveTurnToolCategories(
+  messages: readonly ChatMessage[],
+  classifiedCategories: readonly ChatToolCategorySlug[],
+  allowedCategories?: readonly string[]
+): ChatToolCategorySlug[] | undefined {
+  const inheritedDomains =
+    latestAssistantExecutionContext(messages)?.turnDomains;
+  const requested =
+    classifiedCategories.length > 0
+      ? [...classifiedCategories]
+      : inheritedDomains && inheritedDomains.length > 0
+        ? inheritedDomains
+        : undefined;
+  if (!requested) return allowedCategories?.filter(isChatToolCategorySlug);
+  if (!allowedCategories || allowedCategories.length === 0) return requested;
+
+  const allowed = new Set(allowedCategories.filter(isChatToolCategorySlug));
+  const constrained = requested.filter((category) => allowed.has(category));
+  return constrained.length > 0
+    ? constrained
+    : allowedCategories.filter(isChatToolCategorySlug);
+}
+
+async function resolveChatTurnRuntime(
+  messages: ChatMessage[],
+  aiService: ChatAiServiceConfig,
+  authenticatedUserId: string,
+  actorIsAdmin: boolean,
+  toolCategories?: readonly string[]
+) {
+  const networkPolicy = deriveAiNetworkPolicy(aiService, actorIsAdmin);
+  const normalModelName = resolveChatModelName(aiService, false);
+  const normalModelInstance = createChatModelInstance(
+    aiService,
+    normalModelName,
+    networkPolicy
+  );
+  const categoriesAreManual = Boolean(
+    toolCategories && toolCategories.length > 0
+  );
+  let activeCategories: readonly string[] | undefined = toolCategories;
+  if (!process.env.VITEST) {
+    const classifiedCategories = await classifyUserIntent(
+      messages,
+      normalModelInstance,
+      buildChatProviderOptions(
+        aiService.service_type,
+        authenticatedUserId,
+        normalModelName
+      )
+    );
+    activeCategories = resolveTurnToolCategories(
+      messages,
+      classifiedCategories,
+      toolCategories
+    );
+  }
+
+  const planningTurn = isTrainingPlanningTurn(messages, activeCategories);
+  const modelName = resolveChatModelName(aiService, planningTurn);
+  const modelInstance =
+    modelName === normalModelName
+      ? normalModelInstance
+      : createChatModelInstance(aiService, modelName, networkPolicy);
+
+  return {
+    planningTurn,
+    modelName,
+    modelInstance,
+    categoriesAreManual,
+    activeCategories,
+  };
 }
 
 async function processChatMessage(
@@ -1556,33 +1733,19 @@ async function processChatMessage(
       throw new Error('API key missing for selected AI service.');
     }
 
-    const planningTurn = isTrainingPlanningTurn(messages);
-    const modelName = resolveChatModelName(aiService, planningTurn);
-    const networkPolicy = deriveAiNetworkPolicy(aiService, actorIsAdmin);
-
-    const modelInstance = createChatModelInstance(
-      aiService,
+    const {
+      planningTurn,
       modelName,
-      networkPolicy
+      modelInstance,
+      categoriesAreManual,
+      activeCategories,
+    } = await resolveChatTurnRuntime(
+      messages,
+      aiService,
+      authenticatedUserId,
+      actorIsAdmin,
+      toolCategories
     );
-
-    // A non-empty toolCategories here is the user's explicit in-chat selection
-    // (a strict ceiling); an empty one falls through to auto-classification.
-    const categoriesAreManual = Boolean(
-      toolCategories && toolCategories.length > 0
-    );
-    let activeCategories: readonly string[] | undefined = toolCategories;
-    if (!process.env.VITEST && !categoriesAreManual) {
-      activeCategories = await classifyUserIntent(
-        messages,
-        modelInstance,
-        buildChatProviderOptions(
-          aiService.service_type,
-          authenticatedUserId,
-          modelName
-        )
-      );
-    }
 
     const {
       systemPromptContent,
@@ -1590,6 +1753,7 @@ async function processChatMessage(
       activeToolNames,
       prepareStep,
       toolProfile,
+      selectedCategories,
     } = await prepareChatContext(
       authenticatedUserId,
       aiService.service_type,
@@ -1598,7 +1762,8 @@ async function processChatMessage(
       categoriesAreManual,
       aiService.system_prompt,
       interactionOptions?.allowAskUser !== false &&
-        !latestUserAnsweredQuickReply(messages)
+        !latestUserAnsweredQuickReply(messages),
+      toolCategories
     );
     const chatToolMetadata = buildChatToolConfigurationMetadata(
       serviceConfigId,
@@ -1685,7 +1850,7 @@ async function processChatMessage(
       repairedFoodDiaryWrite = true;
       log(
         'warn',
-        '[chat] Assistant claimed a food diary write without a verified entry; retrying the tool workflow once.'
+        '[chat] A requested food diary write ended after lookup without a verified entry; retrying the food tool workflow once.'
       );
       result = await runGeneration([
         ...llmMessages,
@@ -1770,7 +1935,8 @@ async function processChatMessage(
           metadata: buildAssistantExecutionMetadata(
             toolOutcomes,
             planningTurn,
-            modelName
+            modelName,
+            selectedCategories
           ),
           parts: assistantParts,
         })
@@ -2241,10 +2407,15 @@ function needsFoodDiaryRepair(
   assistantText: string,
   outcomes: readonly ChatToolOutcome[]
 ): boolean {
+  const attemptedFoodLookup = outcomes.some(
+    (outcome) =>
+      outcome.name === 'sparky_manage_food' &&
+      outcome.action === 'lookup_food_nutrition'
+  );
   return (
     userRequestedFoodDiaryWrite(messages) &&
-    assistantClaimsFoodDiaryWrite(assistantText) &&
-    !latestSuccessfulFoodDiaryWrite(outcomes)
+    !latestSuccessfulFoodDiaryWrite(outcomes) &&
+    (assistantClaimsFoodDiaryWrite(assistantText) || attemptedFoodLookup)
   );
 }
 
@@ -2345,10 +2516,15 @@ function toolErrorCode(output: string): string | null {
 function buildAssistantExecutionMetadata(
   outcomes: readonly ChatToolOutcome[],
   planningTurn: boolean,
-  modelName: string
+  modelName: string,
+  turnDomains: readonly ChatToolCategorySlug[]
 ): Record<string, unknown> {
-  return {
+  const assistantExecution: AssistantExecutionContext = {
     modelPurpose: planningTurn ? 'training_planner' : 'chat',
+    turnDomains: [...turnDomains],
+  };
+  return {
+    ...assistantExecution,
     modelName,
     toolAudit: outcomes.map((outcome) => ({
       toolName: outcome.name,
@@ -2357,6 +2533,10 @@ function buildAssistantExecutionMetadata(
       mutationDomain: outcome.mutationDomain,
       errorCode: toolErrorCode(outcome.output),
     })),
+    // assistant-ui preserves application metadata only beneath `custom`.
+    // Keep this minimal copy so the next live web turn receives the same
+    // structured continuation state as a reloaded web or Telegram turn.
+    custom: { assistantExecution },
   };
 }
 
@@ -2546,7 +2726,10 @@ function withVerifiedCompletionGuard(
 // unknown top-level keys, so a bare `{ usage }` would be stripped before it
 // reaches the thread message. `metadata.custom.usage` survives, and the adapter
 // reads exactly that path.
-export function mapUsageToMetadata(u: LanguageModelUsage) {
+export function mapUsageToMetadata(
+  u: LanguageModelUsage,
+  assistantExecution?: AssistantExecutionContext | null
+) {
   return {
     custom: {
       usage: {
@@ -2555,6 +2738,7 @@ export function mapUsageToMetadata(u: LanguageModelUsage) {
         totalTokens: u.totalTokens,
         cachedInputTokens: u.inputTokenDetails?.cacheReadTokens,
       },
+      ...(assistantExecution && { assistantExecution }),
     },
   };
 }
@@ -2582,38 +2766,24 @@ async function processChatMessageStream(
       throw new Error('AI service setting not found for the provided ID.');
     }
 
-    const planningTurn = isTrainingPlanningTurn(messages);
-    const modelName = resolveChatModelName(aiService, planningTurn);
-    const networkPolicy = deriveAiNetworkPolicy(aiService, actorIsAdmin);
+    const {
+      planningTurn,
+      modelName,
+      modelInstance,
+      categoriesAreManual,
+      activeCategories,
+    } = await resolveChatTurnRuntime(
+      messages,
+      aiService,
+      authenticatedUserId,
+      actorIsAdmin,
+      toolCategories
+    );
 
     log(
       'info',
       `Streaming chat message with service: ${aiService.service_type}, model: ${modelName}`
     );
-
-    const modelInstance = createChatModelInstance(
-      aiService,
-      modelName,
-      networkPolicy
-    );
-
-    // A non-empty toolCategories here is the user's explicit in-chat selection
-    // (a strict ceiling); an empty one falls through to auto-classification.
-    const categoriesAreManual = Boolean(
-      toolCategories && toolCategories.length > 0
-    );
-    let activeCategories: readonly string[] | undefined = toolCategories;
-    if (!process.env.VITEST && !categoriesAreManual) {
-      activeCategories = await classifyUserIntent(
-        messages,
-        modelInstance,
-        buildChatProviderOptions(
-          aiService.service_type,
-          authenticatedUserId,
-          modelName
-        )
-      );
-    }
 
     const {
       systemPromptContent,
@@ -2621,6 +2791,7 @@ async function processChatMessageStream(
       activeToolNames,
       prepareStep,
       toolProfile,
+      selectedCategories,
     } = await prepareChatContext(
       authenticatedUserId,
       aiService.service_type,
@@ -2628,7 +2799,8 @@ async function processChatMessageStream(
       activeCategories,
       categoriesAreManual,
       aiService.system_prompt,
-      !latestUserAnsweredQuickReply(messages)
+      !latestUserAnsweredQuickReply(messages),
+      toolCategories
     );
     const chatToolMetadata = buildChatToolConfigurationMetadata(
       serviceConfigId,
@@ -2798,7 +2970,8 @@ async function processChatMessageStream(
             metadata: buildAssistantExecutionMetadata(
               toolOutcomes,
               planningTurn,
-              modelName
+              modelName,
+              selectedCategories
             ),
             parts: assistantParts,
           })
@@ -2817,7 +2990,17 @@ async function processChatMessageStream(
         result.toUIMessageStream({
           messageMetadata: ({ part }) =>
             part.type === 'finish'
-              ? mapUsageToMetadata(part.totalUsage)
+              ? mapUsageToMetadata(
+                  part.totalUsage,
+                  assistantExecutionContext(
+                    buildAssistantExecutionMetadata(
+                      toolOutcomes,
+                      planningTurn,
+                      modelName,
+                      selectedCategories
+                    )
+                  )
+                )
               : undefined,
         }),
         toolOutcomes,

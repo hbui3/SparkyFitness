@@ -104,6 +104,7 @@ interface RuntimeChatMessagePart {
 interface RuntimeChatMessage {
   role: string;
   content: string;
+  metadata?: unknown;
   parts?: RuntimeChatMessagePart[];
 }
 
@@ -482,6 +483,7 @@ async function answerTelegramChat(
         return {
           role: String(entry.message_type),
           content: String(entry.content),
+          metadata: entry.metadata,
           ...(parts && { parts }),
         };
       });
