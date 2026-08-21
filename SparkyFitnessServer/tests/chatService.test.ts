@@ -6,13 +6,14 @@ import chatService, {
   mapUsageToMetadata,
   buildChatStopConditions,
   isTrainingPlanningTurn,
+  resolveTurnToolCategories,
   resolveChatModelName,
   verifiedTrainingPlannerText,
   prependPersistentCoachContext,
 } from '../services/chatService.js';
 
 describe('training planner routing and verification', () => {
-  it('routes plan construction and a contextual confirmation to the planner', () => {
+  it('routes plan construction and only structured planner continuation state to the planner', () => {
     expect(
       isTrainingPlanningTurn([
         { role: 'user', content: 'Baue mir einen A/B Trainingsplan.' },
@@ -23,8 +24,16 @@ describe('training planner routing and verification', () => {
         {
           role: 'assistant',
           content: 'Soll ich den Speediance Workout Plan jetzt erstellen?',
+          metadata: {
+            custom: {
+              assistantExecution: {
+                modelPurpose: 'training_planner',
+                turnDomains: ['exercise'],
+              },
+            },
+          },
         },
-        { role: 'user', content: 'ja' },
+        { role: 'user', content: 'Ja mach' },
       ])
     ).toBe(true);
     expect(
@@ -32,6 +41,59 @@ describe('training planner routing and verification', () => {
         { role: 'user', content: 'Wie viele Kalorien habe ich noch?' },
       ])
     ).toBe(false);
+    expect(
+      isTrainingPlanningTurn(
+        [
+          {
+            role: 'assistant',
+            content: 'Der Trainingsplan ist bereit.',
+            metadata: {
+              modelPurpose: 'training_planner',
+              turnDomains: ['exercise'],
+            },
+          },
+          { role: 'user', content: '300 g Reis' },
+        ],
+        ['food']
+      )
+    ).toBe(false);
+  });
+
+  it('binds an underspecified reply to the immediate food turn instead of stale training history', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'Soll ich deinen Trainingsplan umbauen?',
+        metadata: {
+          custom: {
+            assistantExecution: {
+              modelPurpose: 'training_planner',
+              turnDomains: ['exercise'],
+            },
+          },
+        },
+      },
+      { role: 'user', content: '300g Basmati Reis zum Lunch' },
+      {
+        role: 'assistant',
+        content:
+          'Kein Treffer. Ich kann das Lebensmittel schätzen und anlegen.',
+        metadata: {
+          custom: {
+            assistantExecution: {
+              modelPurpose: 'chat',
+              turnDomains: ['food'],
+            },
+          },
+        },
+      },
+      { role: 'user', content: 'Ja mach' },
+    ];
+
+    expect(isTrainingPlanningTurn(messages)).toBe(false);
+    expect(
+      resolveTurnToolCategories(messages, [], ['food', 'exercise', 'coaching'])
+    ).toEqual(['food']);
   });
 
   it('uses a configurable planner model and defaults OpenAI planning to gpt-5.4', () => {
@@ -1704,6 +1766,20 @@ describe('chatService', () => {
             outputTokens: 380,
             totalTokens: 1620,
             cachedInputTokens: 980,
+          },
+          assistantExecution: {
+            modelPurpose: 'chat',
+            turnDomains: [
+              'food',
+              'exercise',
+              'checkin',
+              'goals',
+              'reports',
+              'coaching',
+              'vision',
+              'profile',
+              'medications',
+            ],
           },
         },
       });

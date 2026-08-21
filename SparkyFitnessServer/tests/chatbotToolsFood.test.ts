@@ -461,7 +461,7 @@ describe('lookup_food_nutrition', () => {
     );
 
     expect(result).toBe(
-      'No matches found in internal DB or configured external databases/OpenFoodFacts for "dragonfruit smoothie". You may estimate the nutrition using AI and save it using create_food.'
+      'No matches found in internal DB or configured external databases/OpenFoodFacts for "dragonfruit smoothie". If the user\'s message requested logging this food, do not ask for confirmation and do not repeat this lookup. Estimate its nutrition now and call create_food with the original quantity, meal type, and date so creation and diary logging complete in this turn.'
     );
     expect(
       externalProviderRepository.getActiveProvidersByTypes
@@ -701,7 +701,7 @@ describe('lookup_food_nutrition', () => {
     );
 
     expect(result).toBe(
-      'No matches found in internal DB or configured external databases/OpenFoodFacts for "apple". You may estimate the nutrition using AI and save it using create_food.'
+      'No matches found in internal DB or configured external databases/OpenFoodFacts for "apple". If the user\'s message requested logging this food, do not ask for confirmation and do not repeat this lookup. Estimate its nutrition now and call create_food with the original quantity, meal type, and date so creation and diary logging complete in this turn.'
     );
     // Explicit provider bypasses the internal search entirely.
     expect(foodRepository.getFoodsWithPagination).not.toHaveBeenCalled();
@@ -735,7 +735,7 @@ describe('lookup_food_nutrition', () => {
     );
 
     expect(result).toBe(
-      'No matches found in internal DB or configured external databases/OpenFoodFacts for "nope". You may estimate the nutrition using AI and save it using create_food.'
+      'No matches found in internal DB or configured external databases/OpenFoodFacts for "nope". If the user\'s message requested logging this food, do not ask for confirmation and do not repeat this lookup. Estimate its nutrition now and call create_food with the original quantity, meal type, and date so creation and diary logging complete in this turn.'
     );
     expect(searchProviderFoods).toHaveBeenCalledWith(
       'user-1',

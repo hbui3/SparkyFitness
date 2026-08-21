@@ -92,6 +92,16 @@ export interface MessageMetadata {
   imageUrl?: string;
   is_fallback?: boolean;
   foodName?: string;
+  modelPurpose?: 'chat' | 'training_planner';
+  turnDomains?: string[];
+  custom?: {
+    assistantExecution?: {
+      modelPurpose?: 'chat' | 'training_planner';
+      turnDomains?: string[];
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 }
 
 export interface TextPart {

@@ -18,7 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useChatToolCategories } from '@/contexts/ChatToolCategoriesContext';
 import { useEffect } from 'react';
 
-import { MessagePart, ImagePart } from '@/types/Chatbot_types';
+import { MessagePart, ImagePart, MessageMetadata } from '@/types/Chatbot_types';
 import { type UIMessage } from 'ai';
 
 interface SparkyChatInnerProps {
@@ -30,6 +30,7 @@ interface SparkyChatInnerProps {
     id: string;
     content: string;
     isUser: boolean;
+    metadata?: MessageMetadata;
     parts?: MessagePart[];
   }>;
 }
@@ -143,6 +144,7 @@ const SparkyChatInner = ({
       content: msg.content,
       parts,
       attachments,
+      metadata: msg.metadata,
     };
   }) as unknown as NonNullable<
     Parameters<typeof useChatRuntime>[0]

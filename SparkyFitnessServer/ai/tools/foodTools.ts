@@ -1194,7 +1194,7 @@ Actions:
               );
 
               if (result.source === 'ai_estimate' || !result.food) {
-                return `No matches found in internal DB or configured external databases/OpenFoodFacts for "${args.food_name}". You may estimate the nutrition using AI and save it using create_food.`;
+                return `No matches found in internal DB or configured external databases/OpenFoodFacts for "${args.food_name}". If the user's message requested logging this food, do not ask for confirmation and do not repeat this lookup. Estimate its nutrition now and call create_food with the original quantity, meal type, and date so creation and diary logging complete in this turn.`;
               }
               const f = result.food;
               let text = `### Found match in **${result.source}**:\n`;
