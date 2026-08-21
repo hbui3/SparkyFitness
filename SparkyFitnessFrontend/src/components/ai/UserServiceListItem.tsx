@@ -66,6 +66,8 @@ export const UserServiceListItem = ({
           ? editData.is_active
           : service.is_active,
       model_name: editData.model_name || service.model_name || '',
+      planning_model_name:
+        editData.planning_model_name ?? service.planning_model_name ?? '',
       showCustomModelInput: editData.showCustomModelInput ?? false,
       custom_model_name: editData.custom_model_name ?? service.model_name ?? '',
       chat_tool_profile:
@@ -112,6 +114,13 @@ export const UserServiceListItem = ({
               {serviceTypeLabel}
               {service.model_name && ` - ${service.model_name}`}
               {service.custom_url && ` - ${service.custom_url}`}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t('settings.aiService.planningModel')}:{' '}
+              {service.planning_model_name ||
+                (service.service_type === 'openai'
+                  ? 'gpt-5.4'
+                  : service.model_name)}
             </p>
           </div>
 

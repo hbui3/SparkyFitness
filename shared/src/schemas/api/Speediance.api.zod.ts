@@ -97,6 +97,54 @@ export const speedianceWorkoutDefinitionSchema = z.object({
     .default([]),
 });
 
+const speedianceExerciseIdentitySchema = speedianceWorkoutExerciseSchema.omit({
+  sets: true,
+});
+
+export const speedianceWorkoutTransformationSchema = z.discriminatedUnion(
+  "type",
+  [
+    z.object({
+      type: z.literal("add_warmups"),
+      groupIds: z.array(speedianceRemoteIdSchema).max(50).optional(),
+      setCount: z.number().int().min(1).max(3).optional().default(1),
+      repetitions: z.number().int().min(1).max(30).optional().default(10),
+      targetRm: z.number().int().min(1).max(30).optional().default(15),
+      restSeconds: z.number().int().min(0).max(300).optional().default(60),
+    }),
+    z.object({
+      type: z.literal("adjust_sets"),
+      groupId: speedianceRemoteIdSchema,
+      setType: speedianceSetTypeSchema.optional().default("working"),
+      setCount: z.number().int().min(1).max(12).optional(),
+      repetitions: z.number().int().min(1).max(99).optional(),
+      targetRm: z.number().int().min(1).max(30).optional(),
+      weightKg: z.number().min(0).max(250).optional(),
+      restSeconds: z.number().int().min(0).max(300).optional(),
+    }),
+    z.object({
+      type: z.literal("replace_exercise"),
+      groupId: speedianceRemoteIdSchema,
+      replacement: speedianceExerciseIdentitySchema,
+    }),
+  ],
+);
+
+export const speedianceTransformWorkoutRequestSchema = z.object({
+  providerId: z.string().uuid().optional(),
+  sourceCode: z.string().trim().min(1).max(200),
+  newName: z.string().trim().min(1).max(100).optional(),
+  transformations: z
+    .array(speedianceWorkoutTransformationSchema)
+    .min(1)
+    .max(50),
+  acknowledgedPreferenceIds: z
+    .array(z.string().uuid())
+    .max(50)
+    .optional()
+    .default([]),
+});
+
 export const speedianceWorkoutSummarySchema = z.object({
   id: speedianceRemoteIdSchema,
   code: z.string().min(1),
@@ -141,6 +189,7 @@ export const speedianceWorkoutScheduleResponseSchema = z.object({
 
 export const speediancePlanSessionSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
+  weekIndex: z.number().int().min(0).max(7).optional(),
   workout: speedianceWorkoutDefinitionSchema.omit({ providerId: true }),
 });
 
@@ -151,7 +200,8 @@ export const speedianceCreatePlanRequestSchema = z
     description: z.string().trim().max(1000).optional().default(""),
     startDate: calendarDaySchema,
     endDate: calendarDaySchema,
-    sessions: z.array(speediancePlanSessionSchema).min(1).max(7),
+    cycleLengthWeeks: z.number().int().min(1).max(8).optional(),
+    sessions: z.array(speediancePlanSessionSchema).min(1).max(56),
   })
   .superRefine((value, ctx) => {
     if (value.endDate < value.startDate) {
@@ -218,6 +268,10 @@ export const speedianceManageWorkoutRequestSchema = z.discriminatedUnion(
     z.object({
       action: z.literal("upsert"),
       workout: speedianceWorkoutDefinitionSchema,
+    }),
+    z.object({
+      action: z.literal("transform"),
+      request: speedianceTransformWorkoutRequestSchema,
     }),
     z.object({
       action: z.literal("schedule"),
@@ -353,6 +407,12 @@ export type SpeedianceCompletionUnit = z.infer<
 >;
 export type SpeedianceWorkoutDefinition = z.infer<
   typeof speedianceWorkoutDefinitionSchema
+>;
+export type SpeedianceWorkoutTransformation = z.infer<
+  typeof speedianceWorkoutTransformationSchema
+>;
+export type SpeedianceTransformWorkoutRequest = z.infer<
+  typeof speedianceTransformWorkoutRequestSchema
 >;
 export type SpeedianceWorkoutSummary = z.infer<
   typeof speedianceWorkoutSummarySchema

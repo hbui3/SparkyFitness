@@ -84,6 +84,7 @@ describe('workoutPlanTemplateService partial updates', () => {
       start_date: storedPlan.start_date,
       end_date: storedPlan.end_date,
       is_active: false,
+      cycle_length_weeks: 1,
       assignments: storedPlan.assignments,
       currentClientDate: '2026-08-20',
     });

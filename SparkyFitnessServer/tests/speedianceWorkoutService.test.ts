@@ -4,6 +4,10 @@ import type {
   SpeedianceExerciseSearchRequest,
   SpeedianceWorkoutDefinition,
 } from '@workspace/shared';
+import {
+  cycleWeekIndex,
+  speedianceCreatePlanRequestSchema,
+} from '@workspace/shared';
 import type { SpeedianceCustomWorkoutPayload } from '../integrations/speediance/speedianceApiClient.js';
 
 const mocks = vi.hoisted(() => ({
@@ -99,10 +103,120 @@ vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 import {
   createAndScheduleSpeedianceWorkout,
   createSpeediancePlan,
+  applySpeedianceWorkoutTransformations,
   deleteSpeedianceWorkout,
   searchSpeedianceExercises,
   upsertSpeedianceWorkout,
 } from '../integrations/speediance/speedianceWorkoutService.js';
+
+describe('applySpeedianceWorkoutTransformations', () => {
+  const workingExercise = {
+    groupId: '116',
+    variantId: '9001',
+    expectedTitle: 'Barbell Bench Press',
+    presetId: 1 as const,
+    completionUnit: 'repetitions' as const,
+    sets: [
+      {
+        repetitions: 10,
+        targetRm: 12,
+        setType: 'working' as const,
+        mode: 'standard' as const,
+        restSeconds: 90,
+      },
+    ],
+  };
+
+  it('adds a real warm-up block once and remains idempotent', () => {
+    const transformation = {
+      type: 'add_warmups' as const,
+      setCount: 2,
+      repetitions: 8,
+      targetRm: 15,
+      restSeconds: 45,
+    };
+    const first = applySpeedianceWorkoutTransformations(
+      [workingExercise],
+      [transformation]
+    );
+    const second = applySpeedianceWorkoutTransformations(first, [
+      transformation,
+    ]);
+
+    expect(first).toHaveLength(2);
+    expect(first[0]).toMatchObject({
+      groupId: '116',
+      presetId: 0,
+      sets: [
+        { repetitions: 8, setType: 'warmup' },
+        { repetitions: 8, setType: 'warmup' },
+      ],
+    });
+    expect(second).toHaveLength(2);
+  });
+
+  it('adjusts working sets without changing the exercise identity', () => {
+    const result = applySpeedianceWorkoutTransformations(
+      [workingExercise],
+      [
+        {
+          type: 'adjust_sets',
+          groupId: '116',
+          setType: 'working',
+          setCount: 3,
+          repetitions: 12,
+          weightKg: 35,
+          restSeconds: 120,
+        },
+      ]
+    );
+
+    expect(result[0]).toMatchObject({ groupId: '116', presetId: -1 });
+    expect(result[0]?.sets).toHaveLength(3);
+    expect(result[0]?.sets[2]).toMatchObject({
+      repetitions: 12,
+      weightKg: 35,
+      restSeconds: 120,
+      setType: 'working',
+    });
+  });
+});
+
+describe('alternating Speediance plan cycles', () => {
+  it('accepts the same weekday in different cycle weeks and repeats deterministically', () => {
+    const workout = {
+      name: 'Workout A',
+      acknowledgedPreferenceIds: [],
+      exercises: [
+        {
+          groupId: '116',
+          variantId: '9001',
+          expectedTitle: 'Bench Press',
+          sets: [{ repetitions: 10 }],
+        },
+      ],
+    };
+    const parsed = speedianceCreatePlanRequestSchema.safeParse({
+      planName: 'Alternating plan',
+      startDate: '2099-08-24',
+      endDate: '2099-09-30',
+      cycleLengthWeeks: 2,
+      sessions: [
+        { dayOfWeek: 1, weekIndex: 0, workout },
+        {
+          dayOfWeek: 1,
+          weekIndex: 1,
+          workout: { ...workout, name: 'Workout B' },
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(cycleWeekIndex('2099-08-24', '2099-08-24', 2)).toBe(0);
+    expect(cycleWeekIndex('2099-08-24', '2099-08-31', 2)).toBe(1);
+    expect(cycleWeekIndex('2099-08-24', '2099-09-07', 2)).toBe(0);
+  });
+});
 
 const scheduleDate = '2099-08-20';
 

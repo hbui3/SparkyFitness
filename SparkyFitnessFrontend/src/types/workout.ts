@@ -51,6 +51,7 @@ export interface WorkoutPlanAssignment {
   id?: string;
   template_id: string;
   day_of_week: number;
+  week_index?: number;
   workout_preset_id?: string;
   workout_preset_name?: string; // Populated from backend join
   exercise_id?: string;
@@ -70,6 +71,7 @@ export interface WorkoutPlanTemplate {
   start_date?: string;
   end_date?: string | null;
   is_active?: boolean;
+  cycle_length_weeks?: number;
   created_at?: string;
   updated_at?: string;
   assignments?: WorkoutPlanAssignment[];

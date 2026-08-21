@@ -9,6 +9,7 @@ interface WorkoutPlanAssignmentInput {
   workout_preset_id?: string | number | null;
   exercise_id?: string | null;
   day_of_week: number;
+  week_index?: number;
   sort_order?: number;
   sets?: unknown[];
 }
@@ -19,6 +20,7 @@ interface WorkoutPlanTemplateUpdateInput {
   start_date?: string | Date;
   end_date?: string | Date | null;
   is_active?: boolean;
+  cycle_length_weeks?: number;
   assignments?: WorkoutPlanAssignmentInput[];
   currentClientDate?: string;
 }
@@ -29,7 +31,32 @@ interface WorkoutPlanTemplateRecord {
   start_date: string | Date;
   end_date: string | Date | null;
   is_active: boolean;
+  cycle_length_weeks: number;
   assignments: WorkoutPlanAssignmentInput[];
+}
+
+function validatePlanCycle(
+  cycleLengthWeeks: number,
+  assignments: WorkoutPlanAssignmentInput[]
+): void {
+  if (
+    !Number.isInteger(cycleLengthWeeks) ||
+    cycleLengthWeeks < 1 ||
+    cycleLengthWeeks > 8
+  ) {
+    throw new Error('Workout plan cycle_length_weeks must be between 1 and 8.');
+  }
+  if (
+    assignments.some(
+      (assignment) =>
+        (assignment.week_index ?? 0) < 0 ||
+        (assignment.week_index ?? 0) >= cycleLengthWeeks
+    )
+  ) {
+    throw new Error(
+      'Every workout plan assignment week_index must fall within the plan cycle.'
+    );
+  }
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function createWorkoutPlanTemplate(userId: any, planData: any) {
@@ -40,6 +67,10 @@ async function createWorkoutPlanTemplate(userId: any, planData: any) {
   );
   // Validate assignments
   if (planData.assignments) {
+    validatePlanCycle(
+      Number(planData.cycle_length_weeks ?? 1),
+      planData.assignments
+    );
     for (const assignment of planData.assignments) {
       if (assignment.workout_preset_id) {
         const preset = await workoutPresetRepository.getWorkoutPresetById(
@@ -176,11 +207,17 @@ async function updateWorkoutPlanTemplate(
         ? updateData.end_date
         : existingTemplate.end_date,
     is_active: updateData.is_active ?? existingTemplate.is_active,
+    cycle_length_weeks:
+      updateData.cycle_length_weeks ?? existingTemplate.cycle_length_weeks ?? 1,
     assignments: updateData.assignments ?? existingTemplate.assignments,
     currentClientDate: updateData.currentClientDate,
   };
   // Validate assignments if they are being updated
   if (mergedUpdateData.assignments) {
+    validatePlanCycle(
+      mergedUpdateData.cycle_length_weeks,
+      mergedUpdateData.assignments
+    );
     for (const assignment of mergedUpdateData.assignments) {
       if (assignment.workout_preset_id) {
         const preset = await workoutPresetRepository.getWorkoutPresetById(

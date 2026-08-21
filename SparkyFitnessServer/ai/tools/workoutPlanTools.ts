@@ -15,6 +15,7 @@ const calendarDaySchema = z
 const workoutPlanAssignmentSchema = z
   .object({
     dayOfWeek: z.number().int().min(0).max(6),
+    weekIndex: z.number().int().min(0).max(7).optional(),
     workoutPresetName: z.string().trim().min(1).max(255),
   })
   .strict();
@@ -29,6 +30,7 @@ const upsertWorkoutPlanSchema = z
     startDate: calendarDaySchema,
     endDate: calendarDaySchema.optional(),
     isActive: z.boolean().optional().default(true),
+    cycleLengthWeeks: z.number().int().min(1).max(8).optional(),
     assignments: z.array(workoutPlanAssignmentSchema).min(1).max(14),
     currentClientDate: calendarDaySchema.optional(),
   })
@@ -36,7 +38,19 @@ const upsertWorkoutPlanSchema = z
   .refine((value) => !value.endDate || value.endDate >= value.startDate, {
     message: 'endDate must be on or after startDate',
     path: ['endDate'],
-  });
+  })
+  .refine(
+    (value) =>
+      value.assignments.every(
+        (assignment) =>
+          (assignment.weekIndex ?? 0) < (value.cycleLengthWeeks ?? 1)
+      ),
+    {
+      message:
+        'Every assignment weekIndex must be smaller than cycleLengthWeeks',
+      path: ['assignments'],
+    }
+  );
 
 const setWorkoutPlanActiveSchema = z
   .object({
@@ -61,6 +75,7 @@ interface WorkoutPresetLookup {
 interface WorkoutPlanAssignmentRecord {
   id?: number;
   day_of_week: number;
+  week_index: number;
   workout_preset_id: number;
   workout_preset_name?: string;
   exercise_id?: string | null;
@@ -75,7 +90,15 @@ interface WorkoutPlanRecord {
   start_date: string | Date;
   end_date: string | Date | null;
   is_active: boolean;
+  cycle_length_weeks: number;
   assignments: WorkoutPlanAssignmentRecord[];
+}
+
+class WorkoutPresetNotFoundError extends Error {
+  constructor(presetName: string) {
+    super(`Workout preset "${presetName}" was not found.`);
+    this.name = 'WorkoutPresetNotFoundError';
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,6 +128,7 @@ function asWorkoutPlan(value: unknown): WorkoutPlanRecord | null {
         ? value.end_date
         : null,
     is_active: value.is_active === true,
+    cycle_length_weeks: asPositiveInteger(value.cycle_length_weeks) ?? 1,
     assignments: Array.isArray(value.assignments)
       ? (value.assignments as WorkoutPlanAssignmentRecord[])
       : [],
@@ -130,7 +154,7 @@ async function resolvePreset(
     presetName
   );
   if (!isRecord(raw)) {
-    throw new Error(`Workout preset "${presetName}" was not found.`);
+    throw new WorkoutPresetNotFoundError(presetName);
   }
   const id = asPositiveInteger(raw.id);
   if (id === null) {
@@ -151,6 +175,7 @@ async function resolveAssignments(
       const preset = await resolvePreset(userId, assignment.workoutPresetName);
       return {
         day_of_week: assignment.dayOfWeek,
+        week_index: assignment.weekIndex ?? 0,
         workout_preset_id: preset.id,
         workout_preset_name: preset.name,
         exercise_id: null,
@@ -164,6 +189,13 @@ async function resolveAssignments(
 function workoutPlanToolError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   log('error', `[workoutPlanTools] Workout plan operation failed: ${message}`);
+  if (error instanceof WorkoutPresetNotFoundError) {
+    return toolError(
+      'WORKOUT_PRESET_NOT_FOUND',
+      message,
+      'Do not retry this native plan write with the same missing preset. For a Speediance program, call sparky_manage_speediance_workouts action=create_plan with the complete workouts and schedule; it upserts the Speediance workouts and canonical presets before writing the plan. For a native-only plan, create the missing workout preset first.'
+    );
+  }
   return toolError('WORKOUT_PLAN_ERROR', message);
 }
 
@@ -171,7 +203,7 @@ export function buildWorkoutPlanTools(userId: string, timezone: string) {
   return {
     sparky_manage_workout_plans: tool({
       description:
-        'List, create, update, or activate native SparkyFitness workout plans that are visible under Training > Workout Plans. A plan assigns complete existing workout presets to fixed weekdays (0=Sunday through 6=Saturday) and, when active, materializes future diary sessions through the existing workout-plan architecture. The list result includes the canonical completed/missed/upcoming training timeline and exact exercise, total-set, warm-up-set, and working-set counts; treat those values as authoritative and never infer them. Use list before describing or changing a plan. Call upsert or set_active only after the user explicitly asked to create, change, or activate the presented schedule. Prefer a stable multi-week plan over inventing a new workout each day; adapt it deliberately from saved training feedback. Speediance workouts should first exist as canonical Sparky workout presets with the same names.',
+        'List, create, update, or activate native SparkyFitness workout plans that are visible under Training > Workout Plans. A plan assigns complete existing workout presets to fixed weekdays (0=Sunday through 6=Saturday) and, when active, materializes future diary sessions through the existing workout-plan architecture. The list result includes the canonical completed/missed/upcoming training timeline and exact exercise, total-set, warm-up-set, and working-set counts; treat those values as authoritative and never infer them. Use list before describing or changing a plan. Call upsert or set_active only after the user explicitly asked to create, change, or activate the presented schedule. Every workoutPresetName passed to upsert must already exist in the list returned by sparky_manage_exercise action=get_workout_presets. Never use this tool to introduce a new Speediance workout: for a new or changed Speediance A/B or multi-week program, call sparky_manage_speediance_workouts action=create_plan instead; that single manager operation creates or updates all workouts and canonical presets before replacing the schedule. Prefer a stable multi-week plan over inventing a new workout each day and adapt it deliberately from saved training feedback.',
       inputSchema: manageWorkoutPlanSchema,
       execute: async (args) => {
         try {
@@ -208,6 +240,7 @@ export function buildWorkoutPlanTools(userId: string, timezone: string) {
                   start_date: existing.start_date,
                   end_date: existing.end_date,
                   is_active: args.isActive,
+                  cycle_length_weeks: existing.cycle_length_weeks,
                   assignments: existing.assignments,
                   currentClientDate,
                 }
@@ -225,6 +258,7 @@ export function buildWorkoutPlanTools(userId: string, timezone: string) {
             start_date: args.startDate,
             end_date: args.endDate ?? null,
             is_active: args.isActive,
+            cycle_length_weeks: args.cycleLengthWeeks ?? 1,
             assignments,
             currentClientDate,
           };

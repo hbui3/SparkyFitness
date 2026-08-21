@@ -86,6 +86,20 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((ub - ua) / 86_400_000);
 }
 
+/** Zero-based repeating plan week for `day`, anchored to the plan start day. */
+export function cycleWeekIndex(
+  startDay: string,
+  day: string,
+  cycleLengthWeeks: number,
+): number {
+  if (!Number.isInteger(cycleLengthWeeks) || cycleLengthWeeks < 1) {
+    throw new Error("cycleLengthWeeks must be a positive integer");
+  }
+  return (
+    Math.floor(Math.max(0, daysBetween(startDay, day)) / 7) % cycleLengthWeeks
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Timezone-aware operations
 // ---------------------------------------------------------------------------

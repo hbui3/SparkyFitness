@@ -14,11 +14,12 @@ export const aiServiceSettingsSchema = z.object({
   updated_at: z.coerce.date().nullable().optional(),
   system_prompt: z.string().nullable(),
   model_name: z.string().nullable(),
+  planning_model_name: z.string().nullable().optional(),
   encrypted_api_key: z.string().nullable(),
   api_key_iv: z.string().nullable().optional(),
   api_key_tag: z.string().nullable().optional(),
   is_public: z.boolean(),
-  chat_tool_profile: z.enum(['full', 'core']).optional(),
+  chat_tool_profile: z.enum(["full", "core"]).optional(),
 });
 
 export const aiServiceSettingsInitializerSchema = z.object({
@@ -32,11 +33,12 @@ export const aiServiceSettingsInitializerSchema = z.object({
   updated_at: z.coerce.date().optional(),
   system_prompt: z.string().optional().nullable(),
   model_name: z.string().optional().nullable(),
+  planning_model_name: z.string().optional().nullable(),
   encrypted_api_key: z.string().optional().nullable(),
   api_key_iv: z.string().optional().nullable(),
   api_key_tag: z.string().optional().nullable(),
   is_public: z.boolean().optional(),
-  chat_tool_profile: z.enum(['full', 'core']).optional(),
+  chat_tool_profile: z.enum(["full", "core"]).optional(),
 });
 
 export const aiServiceSettingsMutatorSchema = z.object({
@@ -50,11 +52,12 @@ export const aiServiceSettingsMutatorSchema = z.object({
   updated_at: z.coerce.date().optional(),
   system_prompt: z.string().optional().nullable(),
   model_name: z.string().optional().nullable(),
+  planning_model_name: z.string().optional().nullable(),
   encrypted_api_key: z.string().optional().nullable(),
   api_key_iv: z.string().optional().nullable(),
   api_key_tag: z.string().optional().nullable(),
   is_public: z.boolean().optional(),
-  chat_tool_profile: z.enum(['full', 'core']).optional(),
+  chat_tool_profile: z.enum(["full", "core"]).optional(),
 });
 
 export type AiServiceSettings = z.infer<typeof aiServiceSettingsSchema>;

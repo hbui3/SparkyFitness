@@ -5,17 +5,15 @@ import {
   addDays,
   compareDays,
   dayOfWeek,
+  cycleWeekIndex,
   localDateToDay,
   setsDurationMinutes,
 } from '@workspace/shared';
 
 async function createExerciseEntriesFromTemplate(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  templateId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  today: any
+  templateId: string | number,
+  userId: string,
+  today: string
 ) {
   const { default: exerciseService } =
     await import('../services/exerciseService.js');
@@ -35,12 +33,14 @@ async function createExerciseEntriesFromTemplate(
           wpt.start_date,
           wpt.end_date,
           wpt.is_active,
+          wpt.cycle_length_weeks,
           COALESCE(
               (
                   SELECT json_agg(
                       json_build_object(
                           'id', wpta.id,
                           'day_of_week', wpta.day_of_week,
+                          'week_index', wpta.week_index,
                           'workout_preset_id', wpta.workout_preset_id,
                           'exercise_id', wpta.exercise_id
                       )
@@ -91,15 +91,24 @@ async function createExerciseEntriesFromTemplate(
     while (compareDays(currentDay, endDay) <= 0) {
       const entryDate = currentDay;
       const currentDayOfWeek = dayOfWeek(entryDate);
+      const cycleLengthWeeks = Math.max(
+        1,
+        Number(template.cycle_length_weeks ?? 1)
+      );
+      const currentWeekIndex = cycleWeekIndex(
+        startDay,
+        entryDate,
+        cycleLengthWeeks
+      );
       for (const assignment of template.assignments) {
-        if (assignment.day_of_week === currentDayOfWeek) {
+        if (
+          assignment.day_of_week === currentDayOfWeek &&
+          Number(assignment.week_index ?? 0) === currentWeekIndex
+        ) {
           const processExercise = async (
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            exerciseId: any,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            sets: any,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            notes: any
+            exerciseId: string,
+            sets: Record<string, unknown>[],
+            notes: string | null
           ) => {
             const exerciseDetails = await getExerciseById(exerciseId, userId);
             log(

@@ -959,6 +959,56 @@ interface ChatAiServiceConfig {
   service_type: string;
   api_key?: string | null;
   custom_url?: string | null;
+  model_name?: string | null;
+  planning_model_name?: string | null;
+}
+
+const TRAINING_PLANNER_SYSTEM_PROMPT = `
+Training-program execution contract:
+- Before describing an existing Speediance workout or plan, read it with the canonical manager tool. Exact exercises, set types, weights, dates, and cycle weeks must come from a successful tool result.
+- For simple edits or cloning, use sparky_manage_speediance_workouts action=transform. For an A/B or multi-week Speediance program, use one action=create_plan so workouts are written before the native plan is replaced.
+- Never submit a new Speediance workout name to sparky_manage_workout_plans. That native tool accepts existing presets only; action=create_plan on the Speediance manager is the canonical creation path.
+- When the user already explicitly requested the write, or confirms a presented write with a short answer such as "ja mach", execute it in this turn. Do not ask for the same confirmation again. If a recoverable tool error names a canonical next tool, follow that route within the current turn instead of repeating the failed call or falling back to another proposal.
+- Never say that a workout or plan was created, changed, scheduled, activated, or already contains a feature unless the corresponding read/write tool succeeded in this turn. If a tool fails, report that failure and do not turn the intended change into prose that sounds completed.
+- A plan proposal is not a completed plan. Clearly distinguish proposed from verified and written state.`;
+
+function latestAssistantText(messages: readonly ChatMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'assistant') {
+      return extractMessageText(messages[index]);
+    }
+  }
+  return '';
+}
+
+export function isTrainingPlanningTurn(
+  messages: readonly ChatMessage[]
+): boolean {
+  const latestUser = [...messages]
+    .reverse()
+    .find((message) => message.role === 'user');
+  const userText = latestUser ? extractMessageText(latestUser).trim() : '';
+  const directPlanning =
+    /\b(?:trainings?plan|workout\s*plan|training program|workout (?:bauen|erstellen|anpassen|ändern|aendern|bearbeiten|klonen|planen)|speediance(?:-|\s)*(?:workout|training|plan)|aufwärms[aä]tze?|warm-?up sets?|periodisier|hypertroph|muskelaufbau|\ba\s*\/\s*b\b|übungen? austausch|replace exercise|adjust sets?)\b/i;
+  if (directPlanning.test(userText)) return true;
+
+  const isConfirmation =
+    /^(?:ja|yes|yep|jo|ok(?:ay)?|passt|genau|mach(?: das)?|bitte|bestätigt|bestaetigt)[.! ]*$/i.test(
+      userText
+    );
+  return isConfirmation && directPlanning.test(latestAssistantText(messages));
+}
+
+export function resolveChatModelName(
+  aiService: ChatAiServiceConfig,
+  planningTurn: boolean
+): string {
+  const normalModel =
+    aiService.model_name?.trim() || getDefaultModel(aiService.service_type);
+  if (!planningTurn) return normalModel;
+  const configuredPlanner = aiService.planning_model_name?.trim();
+  if (configuredPlanner) return configuredPlanner;
+  return aiService.service_type === 'openai' ? 'gpt-5.4' : normalModel;
 }
 
 // Resolves the AI SDK model instance for a chat service: native adapters for
@@ -1506,8 +1556,8 @@ async function processChatMessage(
       throw new Error('API key missing for selected AI service.');
     }
 
-    const modelName =
-      aiService.model_name || getDefaultModel(aiService.service_type);
+    const planningTurn = isTrainingPlanningTurn(messages);
+    const modelName = resolveChatModelName(aiService, planningTurn);
     const networkPolicy = deriveAiNetworkPolicy(aiService, actorIsAdmin);
 
     const modelInstance = createChatModelInstance(
@@ -1561,6 +1611,9 @@ async function processChatMessage(
       authenticatedUserId,
       modelName
     );
+    const effectiveSystemPrompt = planningTurn
+      ? `${systemPromptContent}\n${TRAINING_PLANNER_SYSTEM_PROMPT}`
+      : systemPromptContent;
 
     // Map conversation history messages to CoreMessage format, then apply the
     // shared context-window controls (image strip, token budget, user-first).
@@ -1601,7 +1654,7 @@ async function processChatMessage(
     const runGeneration = (generationMessages: BlockingGenerationMessages) =>
       generateText({
         model: modelInstance,
-        system: systemPromptContent,
+        system: effectiveSystemPrompt,
         messages: generationMessages,
         tools,
         // Narrows the published/sent tool schemas to this turn's classified
@@ -1690,6 +1743,11 @@ async function processChatMessage(
         finalContent = unconfirmedFoodLogText(result.text);
       }
     }
+    finalContent = verifiedTrainingPlannerText(
+      finalContent,
+      toolOutcomes,
+      planningTurn
+    );
 
     if (finalContent) {
       const assistantParts: Record<string, unknown>[] = [
@@ -1709,6 +1767,11 @@ async function processChatMessage(
           user_id: userId,
           content: finalContent,
           messageType: 'assistant',
+          metadata: buildAssistantExecutionMetadata(
+            toolOutcomes,
+            planningTurn,
+            modelName
+          ),
           parts: assistantParts,
         })
         .catch((err: unknown) =>
@@ -2013,6 +2076,16 @@ function mutationDomainFor(
   if (toolName === 'sparky_schedule_speediance_workout') {
     return 'exercise';
   }
+  if (
+    toolName === 'sparky_manage_speediance_workouts' &&
+    action !== 'list' &&
+    action !== 'get'
+  ) {
+    return 'exercise';
+  }
+  if (toolName === 'sparky_manage_workout_plans' && action !== 'list') {
+    return 'exercise';
+  }
   if (toolName === 'sparky_manage_training_feedback' && action !== 'context') {
     return 'exercise';
   }
@@ -2265,6 +2338,79 @@ function fallbackFromToolOutcomes(
   return successfulResult?.output || EMPTY_RESPONSE_ERROR_TEXT;
 }
 
+function toolErrorCode(output: string): string | null {
+  return /^Error \[([A-Z_]+)\]:/.exec(output)?.[1] ?? null;
+}
+
+function buildAssistantExecutionMetadata(
+  outcomes: readonly ChatToolOutcome[],
+  planningTurn: boolean,
+  modelName: string
+): Record<string, unknown> {
+  return {
+    modelPurpose: planningTurn ? 'training_planner' : 'chat',
+    modelName,
+    toolAudit: outcomes.map((outcome) => ({
+      toolName: outcome.name,
+      action: outcome.action,
+      success: outcome.success,
+      mutationDomain: outcome.mutationDomain,
+      errorCode: toolErrorCode(outcome.output),
+    })),
+  };
+}
+
+function assistantClaimsTrainingMutation(text: string): boolean {
+  const negative =
+    /\b(?:nicht|kein(?:e|en|er|es)?|fehlgeschlagen|konnte[^.!?\n]{0,30}nicht|not|failed|could not|couldn['’]?t)\b/i;
+  if (negative.test(text)) return false;
+  return /\b(?:ich habe|wurde|ist jetzt|erfolgreich|successfully|i(?:'ve| have))\b[^.!?\n]{0,140}\b(?:erstellt|angelegt|geändert|aendern|angepasst|aktualisiert|gespeichert|eingeplant|aktiviert|hinzugefügt|ueberarbeitet|überarbeitet|created|changed|updated|saved|scheduled|activated|added|modified)\b/i.test(
+    text
+  );
+}
+
+function assistantClaimsVerifiedTrainingState(text: string): boolean {
+  return /\b(?:plan|workout|training|aufwärms[aä]tze?|warm-?up sets?)\b[^.!?\n]{0,100}\b(?:enthält|enthaelt|hat bereits|ist aktiv|is active|already (?:has|contains)|contains)\b/i.test(
+    text
+  );
+}
+
+function isTrainingManagerOutcome(outcome: ChatToolOutcome): boolean {
+  return (
+    outcome.name === 'sparky_manage_speediance_workouts' ||
+    outcome.name === 'sparky_manage_workout_plans' ||
+    outcome.name === 'sparky_schedule_speediance_workout'
+  );
+}
+
+export function verifiedTrainingPlannerText(
+  text: string,
+  outcomes: readonly ChatToolOutcome[],
+  planningTurn: boolean
+): string {
+  if (!planningTurn || !text.trim()) return text;
+  const managerOutcomes = outcomes.filter(isTrainingManagerOutcome);
+  const successfulMutation = managerOutcomes.some(
+    (outcome) => outcome.success && outcome.mutationDomain === 'exercise'
+  );
+  if (assistantClaimsTrainingMutation(text) && !successfulMutation) {
+    const failure = [...managerOutcomes]
+      .reverse()
+      .find((outcome) => !outcome.success && outcome.mutationDomain);
+    return (
+      failure?.output ||
+      'Die Trainingsänderung wurde in diesem Durchlauf nicht durch einen erfolgreichen Schreibvorgang bestätigt. Es wurde deshalb nichts als abgeschlossen gemeldet.'
+    );
+  }
+  const successfulVerification = managerOutcomes.some(
+    (outcome) => outcome.success
+  );
+  if (assistantClaimsVerifiedTrainingState(text) && !successfulVerification) {
+    return 'Den aktuellen Trainingszustand konnte ich in diesem Durchlauf nicht verifizieren. Ich melde daher keine Plan- oder Warm-up-Eigenschaft als bestätigt.';
+  }
+  return text;
+}
+
 function actionFromOutcomes(outcomes: readonly ChatToolOutcome[]): string {
   const successful = outcomes.filter((outcome) => outcome.success);
   if (
@@ -2318,18 +2464,48 @@ function actionFromOutcomes(outcomes: readonly ChatToolOutcome[]): string {
 // turn with finishReason 'error' and an empty completion instead of a thrown
 // error, so the stream closes cleanly and clients render nothing. Inject an
 // explicit error chunk so the UI surfaces a failure instead of staying silent.
-function withEmptyCompletionGuard(
+function withVerifiedCompletionGuard(
   stream: ReadableStream<UIMessageChunk>,
-  toolOutcomes: readonly ChatToolOutcome[]
+  toolOutcomes: readonly ChatToolOutcome[],
+  planningTurn: boolean
 ): ReadableStream<UIMessageChunk> {
   let sawText = false;
+  let bufferedText = '';
+  const bufferedTextChunks: UIMessageChunk[] = [];
   return stream.pipeThrough(
     new TransformStream<UIMessageChunk, UIMessageChunk>({
       transform(chunk, controller) {
-        if (chunk.type === 'text-delta' && chunk.delta.trim()) {
-          sawText = true;
+        if (planningTurn && chunk.type.startsWith('text-')) {
+          bufferedTextChunks.push(chunk);
+          if (chunk.type === 'text-delta') {
+            bufferedText += chunk.delta;
+            if (chunk.delta.trim()) sawText = true;
+          }
+          return;
         }
-        if (chunk.type === 'finish' && !sawText) {
+        if (chunk.type === 'text-delta' && chunk.delta.trim()) sawText = true;
+        if (chunk.type === 'finish') {
+          if (planningTurn && sawText) {
+            const verified = verifiedTrainingPlannerText(
+              bufferedText,
+              toolOutcomes,
+              true
+            );
+            if (verified === bufferedText) {
+              for (const textChunk of bufferedTextChunks) {
+                controller.enqueue(textChunk);
+              }
+            } else {
+              const id = `verified-planner-result-${Date.now()}`;
+              controller.enqueue({ type: 'text-start', id });
+              controller.enqueue({ type: 'text-delta', id, delta: verified });
+              controller.enqueue({ type: 'text-end', id });
+            }
+          }
+          if (sawText) {
+            controller.enqueue(chunk);
+            return;
+          }
           if (
             toolOutcomes.some((outcome) => outcome.name === ASK_USER_TOOL_NAME)
           ) {
@@ -2406,8 +2582,8 @@ async function processChatMessageStream(
       throw new Error('AI service setting not found for the provided ID.');
     }
 
-    const modelName =
-      aiService.model_name || getDefaultModel(aiService.service_type);
+    const planningTurn = isTrainingPlanningTurn(messages);
+    const modelName = resolveChatModelName(aiService, planningTurn);
     const networkPolicy = deriveAiNetworkPolicy(aiService, actorIsAdmin);
 
     log(
@@ -2465,6 +2641,9 @@ async function processChatMessageStream(
       authenticatedUserId,
       modelName
     );
+    const effectiveSystemPrompt = planningTurn
+      ? `${systemPromptContent}\n${TRAINING_PLANNER_SYSTEM_PROMPT}`
+      : systemPromptContent;
 
     // Map client messages to CoreMessage format, then apply the shared
     // context-window controls (image strip, token budget, user-first).
@@ -2487,7 +2666,7 @@ async function processChatMessageStream(
     const toolOutcomes: ChatToolOutcome[] = [];
     const result = streamText({
       model: modelInstance,
-      system: systemPromptContent,
+      system: effectiveSystemPrompt,
       messages: llmMessages as NonNullable<
         Parameters<typeof streamText>[0]['messages']
       >,
@@ -2532,11 +2711,14 @@ async function processChatMessageStream(
         totalUsage,
         toolCalls,
       }) => {
-        const verifiedText =
+        const verifiedText = verifiedTrainingPlannerText(
           text.trim() ||
-          (toolOutcomes.length > 0
-            ? fallbackFromToolOutcomes(toolOutcomes)
-            : '');
+            (toolOutcomes.length > 0
+              ? fallbackFromToolOutcomes(toolOutcomes)
+              : ''),
+          toolOutcomes,
+          planningTurn
+        );
         const observedUsage = totalUsage ?? usage;
         log(
           'info',
@@ -2613,6 +2795,11 @@ async function processChatMessageStream(
               }) ||
               '',
             messageType: 'assistant',
+            metadata: buildAssistantExecutionMetadata(
+              toolOutcomes,
+              planningTurn,
+              modelName
+            ),
             parts: assistantParts,
           })
           .catch((err: unknown) =>
@@ -2626,14 +2813,15 @@ async function processChatMessageStream(
     });
 
     return {
-      stream: withEmptyCompletionGuard(
+      stream: withVerifiedCompletionGuard(
         result.toUIMessageStream({
           messageMetadata: ({ part }) =>
             part.type === 'finish'
               ? mapUsageToMetadata(part.totalUsage)
               : undefined,
         }),
-        toolOutcomes
+        toolOutcomes,
+        planningTurn
       ),
     };
   } catch (error) {

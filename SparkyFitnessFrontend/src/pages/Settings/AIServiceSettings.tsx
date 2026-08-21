@@ -107,6 +107,7 @@ const AIServiceSettings = () => {
       system_prompt: '',
       is_active: false,
       model_name: '',
+      planning_model_name: 'gpt-5.4',
       showCustomModelInput: false,
       custom_model_name: '',
       chat_tool_profile: 'full',
@@ -170,6 +171,7 @@ const AIServiceSettings = () => {
         system_prompt: globalSetting.system_prompt || '',
         is_active: true,
         model_name: globalSetting.model_name || undefined,
+        planning_model_name: globalSetting.planning_model_name || undefined,
         chat_tool_profile: globalSetting.chat_tool_profile ?? 'full',
       };
       await addService(overrideData);
@@ -268,6 +270,7 @@ const AIServiceSettings = () => {
         system_prompt: '',
         is_active: false,
         model_name: '',
+        planning_model_name: 'gpt-5.4',
         showCustomModelInput: false,
         custom_model_name: '',
         chat_tool_profile: 'full',
@@ -511,6 +514,7 @@ const AIServiceSettings = () => {
         system_prompt: originalService.system_prompt ?? '',
         is_active: isActive,
         model_name: originalService.model_name ?? '',
+        planning_model_name: originalService.planning_model_name ?? '',
         showCustomModelInput: false,
         custom_model_name: '',
       });
@@ -564,6 +568,7 @@ const AIServiceSettings = () => {
       system_prompt: service.system_prompt || '',
       is_active: service.is_active,
       model_name: isCustomModel ? '' : service.model_name || '',
+      planning_model_name: service.planning_model_name ?? '',
       showCustomModelInput: isCustomModel,
       custom_model_name: service.model_name ?? '',
       chat_tool_profile: service.chat_tool_profile ?? 'full',

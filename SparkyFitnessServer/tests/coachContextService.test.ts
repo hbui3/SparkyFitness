@@ -83,9 +83,11 @@ describe('coachContextService', () => {
           description: null,
           startDate: '2026-08-24',
           endDate: '2026-10-18',
+          cycleLengthWeeks: 1,
           assignments: [
             {
               dayOfWeek: 1,
+              weekIndex: 0,
               presetId: 44,
               workoutName: 'Full Body A',
               exerciseCount: 7,
