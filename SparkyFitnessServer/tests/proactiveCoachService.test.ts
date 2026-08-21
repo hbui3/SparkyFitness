@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import proactiveCoachService from '../services/proactiveCoachService.js';
+import { adaptiveStateSignature } from '../services/proactiveCoachService.js';
 import coachProfileRepository, {
   type ProactiveCoachCandidate,
 } from '../models/coachProfileRepository.js';
 import coachContextService, {
   type CoachContextSnapshot,
 } from '../services/coachContextService.js';
+import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
@@ -17,6 +19,11 @@ vi.mock('../models/coachProfileRepository.js', () => ({
 vi.mock('../services/coachContextService.js', () => ({
   default: {
     getCoachContextSnapshot: vi.fn(),
+  },
+}));
+vi.mock('../services/plannedWorkoutScheduleService.js', () => ({
+  default: {
+    carryForwardMissedWorkouts: vi.fn(),
   },
 }));
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
@@ -136,6 +143,9 @@ describe('proactiveCoachService', () => {
       snapshot
     );
     vi.mocked(
+      plannedWorkoutScheduleService.carryForwardMissedWorkouts
+    ).mockResolvedValue([]);
+    vi.mocked(
       coachProfileRepository.saveProactiveMessageIfDue
     ).mockResolvedValue(true);
   });
@@ -175,6 +185,53 @@ describe('proactiveCoachService', () => {
         new Date('2026-08-23T19:01:00.000Z')
       )
     ).toBeNull();
+  });
+
+  it('prioritizes a carried-forward planned workout with concrete names', () => {
+    const scheduledSnapshot: CoachContextSnapshot = {
+      ...snapshot,
+      trainingSchedule: {
+        dueToday: [
+          {
+            name: 'Sparky Full Body A',
+            date: '2026-08-23',
+            workoutPresetId: 44,
+            workoutPlanAssignmentId: 9,
+            completed: false,
+          },
+        ],
+        completedToday: [],
+        missedYesterday: [
+          {
+            name: 'Sparky Full Body A',
+            date: '2026-08-22',
+            workoutPresetId: 44,
+            workoutPlanAssignmentId: 9,
+            completed: false,
+          },
+        ],
+        carriedForwardToday: [],
+      },
+    };
+
+    const message = proactiveCoachService.renderAdaptiveCoachMessage(
+      scheduledSnapshot,
+      'de',
+      '2026-08-23T07:00',
+      ['training']
+    );
+
+    expect(message).toContain('Sparky Full Body A');
+    expect(message).toContain('gestern nicht absolviert');
+    expect(
+      adaptiveStateSignature(
+        scheduledSnapshot,
+        ['training'],
+        '2026-08-23T07:00'
+      )
+    ).not.toBe(
+      adaptiveStateSignature(snapshot, ['training'], '2026-08-23T07:00')
+    );
   });
 
   it('renders current values and a concrete adaptive action', () => {

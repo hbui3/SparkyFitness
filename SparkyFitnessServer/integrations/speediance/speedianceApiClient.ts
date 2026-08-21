@@ -400,6 +400,21 @@ export class SpeedianceApiClient {
     }
   }
 
+  async deleteCustomWorkout(templateId: number): Promise<unknown> {
+    try {
+      const response = await this.http.delete(
+        '/api/app/customTrainingTemplate',
+        {
+          headers: this.authenticatedHeaders(),
+          params: { ids: templateId },
+        }
+      );
+      return this.unwrapWrite(response.data, 'custom workout deletion');
+    } catch (error) {
+      this.rethrowWriteError(error, 'custom workout deletion');
+    }
+  }
+
   async getTrainingCalendarMonth(
     month: string,
     deviceType = 1

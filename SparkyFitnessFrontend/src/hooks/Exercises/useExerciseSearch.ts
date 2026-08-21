@@ -86,7 +86,10 @@ export const exerciseProvidersOptions = () => ({
   queryFn: async () => {
     const fetched = await getExternalDataProviders();
     return fetched.filter(
-      (p) => getProviderCategory(p).includes('exercise') && p.is_active
+      (p) =>
+        getProviderCategory(p).includes('exercise') &&
+        p.is_active &&
+        p.provider_type.toLowerCase() !== 'speediance'
     );
   },
 });

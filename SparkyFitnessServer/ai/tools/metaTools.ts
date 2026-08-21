@@ -14,7 +14,7 @@ import { formatZodError } from './errors.js';
 export const CATEGORY_SUMMARIES: Record<ChatToolCategorySlug, string> = {
   food: 'log meals/water, search foods, view diaries (tools: sparky_manage_food, sparky_list_foods, sparky_get_food_details, sparky_search_foods, sparky_get_food_diary, sparky_get_nutrition_summary, sparky_get_recent_food_entries, sparky_get_food_usage)',
   exercise:
-    'log workouts, search exercises, view exercise diaries (tools: sparky_manage_exercise, sparky_list_exercises, sparky_get_exercise_details, sparky_search_exercises, sparky_get_exercise_diary, sparky_get_daily_exercise_totals, sparky_get_recent_exercise_entries, sparky_get_exercise_usage, sparky_get_exercise_progress)',
+    'log and plan workouts, learn training preferences, manage Speediance workouts, and view exercise diaries (tools: sparky_manage_exercise, sparky_list_exercises, sparky_get_exercise_details, sparky_search_exercises, sparky_get_exercise_diary, sparky_get_daily_exercise_totals, sparky_get_recent_exercise_entries, sparky_get_exercise_usage, sparky_get_exercise_progress, sparky_manage_training_feedback, sparky_manage_workout_plans, sparky_search_speediance_exercises, sparky_manage_speediance_workouts)',
   checkin:
     'log weight, measurements, mood, sleep, fasting, check-ins (tools: sparky_manage_checkin)',
   goals:

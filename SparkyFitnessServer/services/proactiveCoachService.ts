@@ -8,6 +8,7 @@ import coachContextService, {
   type CoachContextSnapshot,
 } from './coachContextService.js';
 import coachEventService from './coachEventService.js';
+import plannedWorkoutScheduleService from './plannedWorkoutScheduleService.js';
 import { log } from '../config/logging.js';
 
 export const ADAPTIVE_COACH_START_MINUTES = 7 * 60;
@@ -135,6 +136,12 @@ export function adaptiveStateSignature(
       ? {
           workoutCount: snapshot.week.workoutCount,
           recommendation: snapshot.adaptiveTraining,
+          dueToday:
+            snapshot.trainingSchedule?.dueToday.map((item) => item.name) ?? [],
+          missedYesterday:
+            snapshot.trainingSchedule?.missedYesterday.map(
+              (item) => item.name
+            ) ?? [],
         }
       : null,
     recovery: categories.includes('recovery')
@@ -156,6 +163,18 @@ function adaptiveFocusDe(
 ): string {
   const { today } = snapshot;
   const slot = minuteLabel(slotMinutes);
+  const dueWorkout = snapshot.trainingSchedule?.dueToday[0];
+  const missedWorkout = snapshot.trainingSchedule?.missedYesterday.find(
+    (item) => item.workoutPresetId === dueWorkout?.workoutPresetId
+  );
+  if (categories.includes('training') && dueWorkout) {
+    if (missedWorkout && slotMinutes < 11 * 60) {
+      return `Du hast „${missedWorkout.name}“ gestern nicht absolviert. Ich habe es deshalb auf heute vorgezogen; es steht heute mit hoher Priorität an.`;
+    }
+    return slotMinutes < 16 * 60
+      ? `Das konkret geplante Training „${dueWorkout.name}“ steht heute noch an. Plane jetzt ein realistisches Zeitfenster dafür ein.`
+      : `„${dueWorkout.name}“ ist heute weiterhin offen. Wenn du trainieren kannst, starte es jetzt; wenn ein echter Hinderungsgrund besteht, sag mir kurz Bescheid, damit ich den Plan gezielt anpasse.`;
+  }
   if (
     categories.includes('recovery') &&
     ((snapshot.recovery.trainingReadinessScore ?? 100) < 40 ||
@@ -207,6 +226,18 @@ function adaptiveFocusEn(
 ): string {
   const { today } = snapshot;
   const slot = minuteLabel(slotMinutes);
+  const dueWorkout = snapshot.trainingSchedule?.dueToday[0];
+  const missedWorkout = snapshot.trainingSchedule?.missedYesterday.find(
+    (item) => item.workoutPresetId === dueWorkout?.workoutPresetId
+  );
+  if (categories.includes('training') && dueWorkout) {
+    if (missedWorkout && slotMinutes < 11 * 60) {
+      return `You did not complete “${missedWorkout.name}” yesterday, so I carried it forward. It is a high-priority workout today.`;
+    }
+    return slotMinutes < 16 * 60
+      ? `The scheduled workout “${dueWorkout.name}” is still due today. Choose a realistic time window for it now.`
+      : `“${dueWorkout.name}” is still open today. Start it now if you can; if there is a real constraint, tell me so I can adjust the plan deliberately.`;
+  }
   if (
     categories.includes('recovery') &&
     ((snapshot.recovery.trainingReadinessScore ?? 100) < 40 ||
@@ -291,6 +322,10 @@ function signed(value: number): string {
 
 function dailyFocusDe(snapshot: CoachContextSnapshot): string {
   const { today } = snapshot;
+  const dueWorkout = snapshot.trainingSchedule?.dueToday[0];
+  if (dueWorkout) {
+    return `Das geplante Training „${dueWorkout.name}“ steht heute noch an.`;
+  }
   if (today.caloriesConsumed === 0) {
     return 'Trage deine erste Mahlzeit ein, damit ich den restlichen Tag sinnvoll einordnen kann.';
   }
@@ -308,6 +343,10 @@ function dailyFocusDe(snapshot: CoachContextSnapshot): string {
 
 function dailyFocusEn(snapshot: CoachContextSnapshot): string {
   const { today } = snapshot;
+  const dueWorkout = snapshot.trainingSchedule?.dueToday[0];
+  if (dueWorkout) {
+    return `The scheduled workout “${dueWorkout.name}” is still due today.`;
+  }
   if (today.caloriesConsumed === 0) {
     return 'Log your first meal so I can put the rest of the day into context.';
   }
@@ -410,6 +449,12 @@ export async function processDueProactiveCoachMessages(
       try {
         const kinds = getDueMessageKinds(candidate, now);
         if (kinds.length === 0) continue;
+        if (candidate.proactiveCategories.includes('training')) {
+          await plannedWorkoutScheduleService.carryForwardMissedWorkouts(
+            candidate.userId,
+            instantToDay(now, candidate.timezone)
+          );
+        }
         const snapshot = await coachContextService.getCoachContextSnapshot(
           candidate.userId,
           candidate.timezone

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,6 +8,11 @@ const __dirname = path.dirname(__filename);
 
 const SHARED_SCHEMA_FILE =
   '../../shared/src/schemas/api/ExerciseEntries.api.zod.ts';
+
+// This file starts a fresh TypeScript subprocess for each schema assertion.
+// Under the full parallel suite Windows can need more than Vitest's default
+// five seconds to schedule a subprocess even though isolated runs are fast.
+vi.setConfig({ testTimeout: 15_000 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function runSchema(schemaName: any, payload: any) {

@@ -15,6 +15,9 @@ import goalService from './goalService.js';
 import { getDailySummary } from './dailySummaryService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import adaptiveTrainingService from './adaptiveTrainingService.js';
+import plannedWorkoutScheduleService, {
+  type PlannedWorkoutScheduleStatus,
+} from './plannedWorkoutScheduleService.js';
 import {
   canonicalSleepScore,
   canonicalSleepSeconds,
@@ -94,6 +97,7 @@ export interface CoachContextSnapshot {
   weight30Days: CoachWeightTrend;
   recovery: CoachRecoveryContext;
   adaptiveTraining: AdaptiveTrainingRecommendation;
+  trainingSchedule?: PlannedWorkoutScheduleStatus;
 }
 
 interface GoalRecord {
@@ -387,22 +391,27 @@ export async function getCoachContextSnapshot(
   const longDates = buildDateRange(longStart, today);
   const weekDates = longDates.slice(-7);
 
-  const [canonicalGoals, dailySummary, trend, adaptiveTraining] =
-    await Promise.all([
-      getCanonicalCoachGoals(userId, tz),
-      getDailySummary({
-        actorUserId: userId,
-        targetUserId: userId,
-        date: today,
-        includeCheckin: true,
-      }),
-      getTrendContext(userId, today, weekStart, longStart, longDates),
-      adaptiveTrainingService.getAdaptiveTrainingDashboard(
-        userId,
-        userId,
-        today
-      ),
-    ]);
+  const [
+    canonicalGoals,
+    dailySummary,
+    trend,
+    adaptiveTraining,
+    trainingSchedule,
+  ] = await Promise.all([
+    getCanonicalCoachGoals(userId, tz),
+    getDailySummary({
+      actorUserId: userId,
+      targetUserId: userId,
+      date: today,
+      includeCheckin: true,
+    }),
+    getTrendContext(userId, today, weekStart, longStart, longDates),
+    adaptiveTrainingService.getAdaptiveTrainingDashboard(userId, userId, today),
+    plannedWorkoutScheduleService.getPlannedWorkoutScheduleStatus(
+      userId,
+      today
+    ),
+  ]);
 
   const {
     nutritionRows,
@@ -510,6 +519,7 @@ export async function getCoachContextSnapshot(
     },
     recovery: buildRecoveryContext(recoveryRows, adaptiveTraining.muscleLoad),
     adaptiveTraining: adaptiveTraining.recommendation,
+    trainingSchedule,
   };
 }
 
@@ -570,6 +580,16 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
       ? `Adaptive training recommendation for ${adaptiveTraining.date}: ${adaptiveTraining.presetName ?? 'workout'} (fit score ${adaptiveTraining.score}/100, volume factor ${adaptiveTraining.volumeFactor}). Treat this as the canonical training recommendation in web and Telegram.`
       : `Adaptive training recommendation for ${adaptiveTraining.date}: recovery day (readiness/fit score ${adaptiveTraining.score}/100). Treat this as the canonical training recommendation in web and Telegram.`
   );
+  if ((snapshot.trainingSchedule?.dueToday.length ?? 0) > 0) {
+    lines.push(
+      `Scheduled workouts still due today: ${snapshot.trainingSchedule?.dueToday.map((item) => item.name).join(', ')}. Treat these as concrete plan commitments, not generic recommendations.`
+    );
+  }
+  if ((snapshot.trainingSchedule?.missedYesterday.length ?? 0) > 0) {
+    lines.push(
+      `Missed scheduled workouts from yesterday: ${snapshot.trainingSchedule?.missedYesterday.map((item) => item.name).join(', ')}. They are carried forward by the proactive scheduler and should be acknowledged explicitly.`
+    );
+  }
   return lines;
 }
 
@@ -579,6 +599,12 @@ function nextTodayAction(
 ): string {
   const { today, recovery } = snapshot;
   const de = language.toLowerCase().startsWith('de');
+  const dueWorkout = snapshot.trainingSchedule?.dueToday[0];
+  if (dueWorkout) {
+    return de
+      ? `Das geplante Training „${dueWorkout.name}“ steht heute noch an.`
+      : `The scheduled workout “${dueWorkout.name}” is still due today.`;
+  }
   if ((recovery.trainingReadinessScore ?? 100) < 40) {
     return de
       ? 'Heute Erholung priorisieren und Training bewusst leicht halten.'

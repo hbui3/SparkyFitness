@@ -1,13 +1,26 @@
 import {
+  addDays,
+  dayOfWeek,
   todayInZone,
+  type SpeedianceCompletionUnit,
+  type SpeedianceCreatePlanRequest,
+  type SpeedianceCreatePlanResponse,
   type SpeedianceCreateAndScheduleWorkoutRequest,
   type SpeedianceCreateAndScheduleWorkoutResponse,
   type SpeedianceExercise,
   type SpeedianceExerciseSearchRequest,
   type SpeedianceExerciseSearchResponse,
   type SpeedianceResistanceMode,
+  type SpeedianceTemplatePreset,
+  type SpeedianceWorkoutDefinition,
+  type SpeedianceWorkoutDetail,
+  type SpeedianceWorkoutDeleteResponse,
   type SpeedianceWorkoutExercise,
+  type SpeedianceWorkoutListResponse,
+  type SpeedianceWorkoutScheduleResponse,
   type SpeedianceWorkoutSet,
+  type SpeedianceWorkoutSummary,
+  type SpeedianceWorkoutUpsertResponse,
 } from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import { loadUserTimezone } from '../../utils/timezoneLoader.js';
@@ -19,9 +32,11 @@ import {
   type SpeedianceCustomWorkoutPayload,
 } from './speedianceApiClient.js';
 import { getSpeedianceProviderCredentials } from './speedianceRepository.js';
+import exerciseRepository from '../../models/exercise.js';
+import workoutPresetRepository from '../../models/workoutPresetRepository.js';
+import workoutPlanTemplateService from '../../services/workoutPlanTemplateService.js';
 
 const GYM_MONSTER_DEVICE_TYPE = 1;
-const GAIN_MUSCLE_PRESET_ID = 1;
 const DEFAULT_WORKOUT_COACH_LANGUAGE = 'de';
 const CREATE_VISIBILITY_RETRY_MS = 300;
 const CREATE_VISIBILITY_ATTEMPTS = 3;
@@ -35,6 +50,22 @@ interface SpeedianceTemplateIdentity {
 interface ResolvedWorkoutPayload {
   payload: SpeedianceCustomWorkoutPayload;
   remoteSetCount: number;
+}
+
+interface NativeExerciseRow {
+  id: string;
+  user_id?: string | null;
+  source?: string | null;
+}
+
+interface NativeWorkoutPresetRow {
+  id: number;
+  description?: string | null;
+}
+
+interface NativeWorkoutPlanRow {
+  id: string | number;
+  plan_name: string;
 }
 
 interface CanonicalRemoteAction {
@@ -232,6 +263,7 @@ async function enrichLibraryExercise(
   if (!title || !variantId) return null;
   const accessories = parseRemoteIds(detail.accessories);
   const completionMethod = Number(detail.completionMethod ?? 1);
+  const selectCompletionMethod = Number(detail.selectCompletionMethod ?? 0);
   const dataStatType = Number(detail.dataStatType ?? 0);
   return {
     ...exercise,
@@ -245,7 +277,15 @@ async function enrichLibraryExercise(
       .filter((name): name is string => Boolean(name)),
     isUnilateral: Number(detail.isLeftRight ?? 0) === 1,
     compatibleForWorkout:
-      dataStatType !== 6 && completionMethod === 1 && preferredVariant !== null,
+      preferredVariant !== null &&
+      (completionMethod === 1 ||
+        completionMethod === 2 ||
+        completionMethod === 5 ||
+        (completionMethod === 0 && selectCompletionMethod === 1) ||
+        dataStatType === 6),
+    completionMethod,
+    selectCompletionMethod,
+    dataStatType,
   };
 }
 
@@ -353,7 +393,7 @@ function resolveVariantId(
   return numericRemoteId(variantId, 'Exercise variant ID');
 }
 
-function validateRepBasedExercise(
+function validateWorkoutExercise(
   detail: Record<string, unknown>,
   exercise: SpeedianceWorkoutExercise
 ): void {
@@ -370,49 +410,95 @@ function validateRepBasedExercise(
 
   const dataStatType = Number(detail.dataStatType ?? 0);
   const completionMethod = Number(detail.completionMethod ?? 1);
-  if (dataStatType === 6 || completionMethod !== 1) {
+  const selectCompletionMethod = Number(detail.selectCompletionMethod ?? 0);
+  const unit = exercise.completionUnit ?? 'repetitions';
+  const expectedCompletionMethod =
+    unit === 'repetitions' ? 1 : unit === 'seconds' ? 2 : 5;
+  if (
+    dataStatType !== 6 &&
+    completionMethod !== expectedCompletionMethod &&
+    !(
+      unit === 'seconds' &&
+      completionMethod === 0 &&
+      selectCompletionMethod === 1
+    )
+  ) {
     throw new SpeedianceWorkoutValidationError(
-      `"${actualTitle}" is not a supported repetition-based resistance exercise.`
+      `"${actualTitle}" does not support the selected completion unit (${unit}).`
     );
   }
+}
+
+function setTarget(
+  set: SpeedianceWorkoutSet,
+  unit: SpeedianceCompletionUnit
+): number {
+  if (unit === 'seconds') return set.durationSeconds ?? set.repetitions;
+  if (unit === 'calories') return set.calorieTarget ?? set.repetitions;
+  return set.repetitions;
+}
+
+function completionMethodNumber(unit: SpeedianceCompletionUnit): number {
+  return unit === 'repetitions' ? 1 : unit === 'seconds' ? 2 : 5;
+}
+
+function presetWeight(
+  set: SpeedianceWorkoutSet,
+  presetId: SpeedianceTemplatePreset
+): number {
+  return presetId === -1 ? (set.weightKg ?? 3.5) : 3.5;
 }
 
 function actionPayload(
   detail: Record<string, unknown>,
   exercise: SpeedianceWorkoutExercise
 ): { action: SpeedianceCustomWorkoutActionPayload; remoteSetCount: number } {
-  validateRepBasedExercise(detail, exercise);
+  validateWorkoutExercise(detail, exercise);
+  const unit = exercise.completionUnit ?? 'repetitions';
+  const presetId = exercise.presetId ?? 1;
+  const isVita = Number(detail.dataStatType ?? 0) === 6;
   const unilateral = Number(detail.isLeftRight ?? 0) === 1;
   const sets = expandSets(exercise.sets, unilateral);
-  const repetitions = sets.map((set) => String(set.repetitions));
+  const repetitions = sets.map((set) => String(setTarget(set, unit)));
   const rests = sets.map((set) => String(set.restSeconds));
   const modes = sets.map((set) => String(modeNumber(set.mode)));
   const targetRms = sets.map((set) => String(set.targetRm));
+  const completionMethod = completionMethodNumber(unit);
   const leftRight = sets.map((_set, index) =>
     unilateral ? String((index % 2) + 1) : '0'
   );
-  const capacity = sets.reduce(
-    (sum, set) => sum + set.repetitions * set.targetRm * 2.2,
-    0
-  );
+  const capacity = isVita
+    ? 0
+    : sets.reduce(
+        (sum, set) =>
+          sum +
+          setTarget(set, unit) *
+            (presetId === -1 ? presetWeight(set, presetId) : set.targetRm) *
+            2.2,
+        0
+      );
+  const weights = isVita
+    ? sets.map(() => '0')
+    : sets.map((set) => String(presetWeight(set, presetId)));
+  const counterweights = isVita || presetId === -1 ? '' : targetRms.join(',');
 
   return {
     action: {
       groupId: numericRemoteId(exercise.groupId, 'Exercise group ID'),
       actionLibraryId: resolveVariantId(detail, exercise),
-      templatePresetId: GAIN_MUSCLE_PRESET_ID,
+      templatePresetId: presetId,
       setsAndReps: repetitions.join(','),
       breakTime: rests.join(','),
       breakTime2: rests.join(','),
       sportMode: modes.join(','),
       leftRight: leftRight.join(','),
       selectCompletionMethod: sets.map(() => '1').join(','),
-      completionMethod: sets.map(() => '1').join(','),
-      countType: sets.map(() => '1').join(','),
-      weights: sets.map(() => '3.5').join(','),
-      counterweight2: targetRms.join(','),
-      counterweight: targetRms.join(','),
-      level: sets.map(() => '0').join(','),
+      completionMethod: sets.map(() => String(completionMethod)).join(','),
+      countType: sets.map(() => String(completionMethod)).join(','),
+      weights: weights.join(','),
+      counterweight2: counterweights,
+      counterweight: counterweights,
+      level: sets.map((set) => String(set.level ?? 0)).join(','),
       capacity,
     },
     remoteSetCount: sets.length,
@@ -421,7 +507,7 @@ function actionPayload(
 
 async function buildWorkoutPayload(
   api: SpeedianceApiClient,
-  request: SpeedianceCreateAndScheduleWorkoutRequest
+  request: SpeedianceWorkoutDefinition
 ): Promise<ResolvedWorkoutPayload> {
   const actions: SpeedianceCustomWorkoutActionPayload[] = [];
   let remoteSetCount = 0;
@@ -636,6 +722,43 @@ async function ensureTemplate(
   return { identity, created: true };
 }
 
+async function upsertTemplate(
+  api: SpeedianceApiClient,
+  payload: SpeedianceCustomWorkoutPayload,
+  request: SpeedianceWorkoutDefinition
+): Promise<{ identity: SpeedianceTemplateIdentity; created: boolean }> {
+  if (!request.remoteId && !request.remoteCode) {
+    return ensureTemplate(api, payload);
+  }
+  if (!request.remoteId || !request.remoteCode) {
+    throw new SpeedianceWorkoutValidationError(
+      'Editing a Speediance workout requires both remoteId and remoteCode.'
+    );
+  }
+  const current = await api.getCustomWorkoutDetail(request.remoteCode);
+  const currentName = isRecord(current) ? stringValue(current.name) : null;
+  const currentIdentity =
+    templateIdentity(current) ??
+    (currentName
+      ? { id: request.remoteId, code: request.remoteCode, name: currentName }
+      : null);
+  if (currentIdentity?.id !== request.remoteId) {
+    throw new SpeedianceWorkoutConflictError(
+      'The selected Speediance workout identity changed. Reload it before editing.'
+    );
+  }
+  if (customWorkoutMatches(current, payload)) {
+    return { identity: currentIdentity, created: false };
+  }
+  await api.updateCustomWorkout(
+    numericRemoteId(request.remoteId, 'Workout template ID'),
+    payload
+  );
+  const identity = { ...currentIdentity, name: payload.name };
+  await verifyTemplate(api, identity, payload);
+  return { identity, created: false };
+}
+
 function calendarEntries(calendar: unknown[], day: string): unknown[] {
   const calendarDay = records(calendar).find(
     (item) => stringValue(item.date) === day
@@ -722,16 +845,68 @@ async function ensureScheduled(
   return 'scheduled';
 }
 
-export async function createAndScheduleSpeedianceWorkout(
+async function ensureUnscheduled(
+  api: SpeedianceApiClient,
+  day: string,
+  templateCode: string
+): Promise<'unscheduled' | 'already_unscheduled'> {
+  const month = day.slice(0, 7);
+  const beforeCalendar = await api.getTrainingCalendarMonth(
+    month,
+    GYM_MONSTER_DEVICE_TYPE
+  );
+  const beforeEntries = calendarEntries(beforeCalendar, day);
+  const existing = matchingReservations(beforeEntries, templateCode);
+  if (existing.length > 1) {
+    throw new SpeedianceWorkoutConflictError(
+      'Speediance contains duplicate reservations for this workout and date.'
+    );
+  }
+  if (existing.length === 0) return 'already_unscheduled';
+  const unrelatedBefore = unrelatedState(beforeEntries, templateCode);
+  await api.setTemplateReservation(
+    day,
+    templateCode,
+    0,
+    GYM_MONSTER_DEVICE_TYPE
+  );
+  const afterCalendar = await api.getTrainingCalendarMonth(
+    month,
+    GYM_MONSTER_DEVICE_TYPE
+  );
+  const afterEntries = calendarEntries(afterCalendar, day);
+  if (matchingReservations(afterEntries, templateCode).length !== 0) {
+    throw new SpeedianceApiError(
+      'Speediance unscheduling state could not be verified.'
+    );
+  }
+  if (
+    JSON.stringify(unrelatedState(afterEntries, templateCode)) !==
+    JSON.stringify(unrelatedBefore)
+  ) {
+    throw new SpeedianceApiError(
+      'Speediance changed unrelated calendar entries while unscheduling.'
+    );
+  }
+  return 'unscheduled';
+}
+
+function preferenceExerciseNames(
+  request: SpeedianceWorkoutDefinition
+): Set<string> {
+  return new Set(
+    request.exercises.map((exercise) => normalizeLabel(exercise.expectedTitle))
+  );
+}
+
+async function assertTrainingPreferences(
   userId: string,
-  request: SpeedianceCreateAndScheduleWorkoutRequest
-): Promise<SpeedianceCreateAndScheduleWorkoutResponse> {
+  request: SpeedianceWorkoutDefinition
+): Promise<void> {
   const learningContext =
     await trainingFeedbackService.getTrainingLearningContext(userId);
   const acknowledged = new Set(request.acknowledgedPreferenceIds);
-  const requestedExerciseNames = new Set(
-    request.exercises.map((exercise) => normalizeLabel(exercise.expectedTitle))
-  );
+  const requestedExerciseNames = preferenceExerciseNames(request);
   const blocked = learningContext.preferences.filter(
     (preference) =>
       preference.kind === 'exercise' &&
@@ -748,7 +923,579 @@ export async function createAndScheduleSpeedianceWorkout(
         )}. Choose an alternative, or include its preference ID in acknowledgedPreferenceIds only after the user explicitly overrides it.`
     );
   }
+}
 
+function nativeSetNotes(
+  exercise: SpeedianceWorkoutExercise,
+  set: SpeedianceWorkoutSet
+): string {
+  const presetId = exercise.presetId ?? 1;
+  const parts = [`Speediance preset ${presetId}`];
+  if (presetId !== -1) parts.push(`target RM ${set.targetRm}`);
+  parts.push(`mode ${set.mode}`);
+  return parts.join('; ');
+}
+
+async function findOrCreateNativeExercise(
+  userId: string,
+  exercise: SpeedianceWorkoutExercise
+): Promise<NativeExerciseRow> {
+  let row = (await exerciseRepository.getExerciseBySourceAndSourceId(
+    'Speediance',
+    exercise.groupId,
+    userId
+  )) as NativeExerciseRow | null;
+  const primaryMuscles = exercise.primaryMuscle ? [exercise.primaryMuscle] : [];
+  if (!row) {
+    row = (await exerciseRepository.createExercise({
+      user_id: userId,
+      name: exercise.expectedTitle,
+      category: exercise.category ?? 'Strength',
+      source: 'Speediance',
+      source_id: exercise.groupId,
+      is_custom: true,
+      shared_with_public: false,
+      equipment: exercise.accessoryNames ?? [],
+      primary_muscles: primaryMuscles,
+      secondary_muscles: [],
+      modality:
+        (exercise.completionUnit ?? 'repetitions') === 'repetitions'
+          ? 'weight_reps'
+          : 'duration',
+    })) as NativeExerciseRow | null;
+  } else if (row.user_id === userId && row.source === 'Speediance') {
+    row = (await exerciseRepository.updateExercise(row.id, userId, {
+      name: exercise.expectedTitle,
+      category: exercise.category ?? 'Strength',
+      equipment: exercise.accessoryNames ?? [],
+      primary_muscles: primaryMuscles,
+      modality:
+        (exercise.completionUnit ?? 'repetitions') === 'repetitions'
+          ? 'weight_reps'
+          : 'duration',
+    })) as NativeExerciseRow | null;
+  }
+  if (!row) {
+    throw new SpeedianceWorkoutValidationError(
+      `Unable to create the native Sparky exercise "${exercise.expectedTitle}".`
+    );
+  }
+  return row;
+}
+
+async function syncNativeWorkoutPreset(
+  userId: string,
+  request: SpeedianceWorkoutDefinition
+): Promise<number> {
+  const exercises = [];
+  for (
+    let exerciseIndex = 0;
+    exerciseIndex < request.exercises.length;
+    exerciseIndex++
+  ) {
+    const exercise = request.exercises[exerciseIndex];
+    if (!exercise) continue;
+    const nativeExercise = await findOrCreateNativeExercise(userId, exercise);
+    exercises.push({
+      exercise_id: nativeExercise.id,
+      image_url: null,
+      sort_order: exerciseIndex,
+      superset_group: null,
+      sets: exercise.sets.map((set, setIndex) => ({
+        set_number: setIndex + 1,
+        set_type: set.setType === 'warmup' ? 'warmup' : 'normal',
+        reps:
+          (exercise.completionUnit ?? 'repetitions') === 'repetitions'
+            ? set.repetitions
+            : null,
+        weight: set.weightKg ?? null,
+        duration:
+          exercise.completionUnit === 'seconds'
+            ? (set.durationSeconds ?? set.repetitions)
+            : null,
+        distance: null,
+        rest_time: set.restSeconds,
+        notes: nativeSetNotes(exercise, set),
+      })),
+    });
+  }
+
+  let preset = request.remoteCode
+    ? ((await workoutPresetRepository.getWorkoutPresetBySpeedianceCode(
+        userId,
+        request.remoteCode
+      )) as NativeWorkoutPresetRow | null)
+    : null;
+  preset ??= (await workoutPresetRepository.getWorkoutPresetByName(
+    userId,
+    request.name
+  )) as NativeWorkoutPresetRow | null;
+  const description = `Managed by the Sparky Speediance workout manager. Remote code: ${request.remoteCode ?? 'pending'}`;
+  if (!preset) {
+    preset = (await workoutPresetRepository.createWorkoutPreset({
+      user_id: userId,
+      name: request.name,
+      description,
+      is_public: false,
+      exercises,
+    })) as NativeWorkoutPresetRow | null;
+  } else {
+    const managerOwned = preset.description?.includes('Speediance') ?? false;
+    if (!managerOwned) {
+      throw new SpeedianceWorkoutConflictError(
+        `A native Sparky workout named "${request.name}" already exists and is not managed by Speediance. Rename one of the workouts before syncing.`
+      );
+    }
+    preset = (await workoutPresetRepository.updateWorkoutPreset(
+      preset.id,
+      userId,
+      {
+        name: request.name,
+        description,
+        is_public: false,
+        exercises,
+      }
+    )) as NativeWorkoutPresetRow | null;
+  }
+  if (!preset) {
+    throw new SpeedianceWorkoutValidationError(
+      `Unable to synchronize the native Sparky workout "${request.name}".`
+    );
+  }
+  return preset.id;
+}
+
+function workoutExerciseCount(value: Record<string, unknown>): number {
+  if (Array.isArray(value.actionLibraryList))
+    return value.actionLibraryList.length;
+  const count = Number(value.actionCount ?? value.exerciseCount ?? 0);
+  return Number.isFinite(count) && count >= 0 ? Math.round(count) : 0;
+}
+
+async function nativePresetId(
+  userId: string,
+  name: string,
+  remoteCode?: string
+): Promise<number | null> {
+  const byRemoteCode = remoteCode
+    ? ((await workoutPresetRepository.getWorkoutPresetBySpeedianceCode(
+        userId,
+        remoteCode
+      )) as NativeWorkoutPresetRow | null)
+    : null;
+  const preset =
+    byRemoteCode ??
+    ((await workoutPresetRepository.getWorkoutPresetByName(
+      userId,
+      name
+    )) as NativeWorkoutPresetRow | null);
+  return preset?.id ?? null;
+}
+
+export async function listSpeedianceWorkouts(
+  userId: string,
+  providerId?: string
+): Promise<SpeedianceWorkoutListResponse> {
+  const { api } = await authenticatedClient(userId, providerId);
+  const raw = await api.getCustomWorkouts(GYM_MONSTER_DEVICE_TYPE);
+  const workouts: SpeedianceWorkoutSummary[] = [];
+  for (const item of records(raw)) {
+    const identity = templateIdentity(item);
+    if (!identity) continue;
+    workouts.push({
+      ...identity,
+      exerciseCount: workoutExerciseCount(item),
+      nativeWorkoutPresetId: await nativePresetId(
+        userId,
+        identity.name,
+        identity.code
+      ),
+    });
+  }
+  workouts.sort((left, right) => left.name.localeCompare(right.name));
+  return { workouts };
+}
+
+function numberList(value: unknown): number[] {
+  return String(value ?? '')
+    .split(',')
+    .map(Number)
+    .filter((item) => Number.isFinite(item));
+}
+
+function listValue(values: number[], index: number, fallback: number): number {
+  return values[index] ?? values[0] ?? fallback;
+}
+
+function resistanceMode(value: number): SpeedianceResistanceMode {
+  if (value === 2) return 'chains';
+  if (value === 3) return 'eccentric';
+  return 'standard';
+}
+
+function templatePreset(value: unknown): SpeedianceTemplatePreset {
+  const preset = Number(value);
+  return preset === -1 ||
+    preset === 0 ||
+    preset === 1 ||
+    preset === 3 ||
+    preset === 5
+    ? preset
+    : 1;
+}
+
+function completionUnit(value: number): SpeedianceCompletionUnit {
+  if (value === 5) return 'calories';
+  if (value === 2) return 'seconds';
+  return 'repetitions';
+}
+
+function workoutSetsFromRemote(
+  action: Record<string, unknown>,
+  presetId: SpeedianceTemplatePreset,
+  unilateral: boolean
+): SpeedianceWorkoutSet[] {
+  const targets = numberList(action.setsAndReps);
+  const rests = numberList(action.breakTime2 ?? action.breakTime);
+  const modes = numberList(action.sportMode);
+  const targetRms = numberList(action.counterweight2 ?? action.counterweight);
+  const weights = numberList(action.weights);
+  const levels = numberList(action.level);
+  const completionMethods = numberList(action.completionMethod);
+  const leftRight = numberList(action.leftRight);
+  const sets: SpeedianceWorkoutSet[] = [];
+  for (let index = 0; index < targets.length; index++) {
+    if (unilateral && listValue(leftRight, index, 0) === 2) continue;
+    const target = targets[index] ?? 1;
+    const unit = completionUnit(listValue(completionMethods, index, 1));
+    sets.push({
+      repetitions: Math.max(1, Math.round(target)),
+      targetRm: Math.max(1, Math.round(listValue(targetRms, index, 12))),
+      weightKg: presetId === -1 ? listValue(weights, index, 3.5) : undefined,
+      durationSeconds: unit === 'seconds' ? Math.round(target) : undefined,
+      calorieTarget: unit === 'calories' ? Math.round(target) : undefined,
+      level:
+        listValue(levels, index, 0) > 0
+          ? Math.round(listValue(levels, index, 0))
+          : undefined,
+      setType: presetId === 0 ? 'warmup' : 'working',
+      mode: resistanceMode(listValue(modes, index, 1)),
+      restSeconds: Math.max(0, Math.round(listValue(rests, index, 90))),
+    });
+  }
+  return sets;
+}
+
+async function detailExercise(
+  api: SpeedianceApiClient,
+  action: Record<string, unknown>,
+  accessoryNamesById: Map<string, string>
+): Promise<SpeedianceWorkoutExercise | null> {
+  const groupId = remoteId(action.groupId);
+  const variantId = remoteId(action.actionLibraryId);
+  if (!groupId || !variantId) return null;
+  const detail = await api.getActionLibraryGroup(groupId);
+  if (!isRecord(detail)) return null;
+  const expectedTitle = stringValue(detail.title) ?? stringValue(detail.name);
+  if (!expectedTitle) return null;
+  const presetId = templatePreset(action.templatePresetId);
+  const unilateral = Number(detail.isLeftRight ?? 0) === 1;
+  const accessories = parseRemoteIds(detail.accessories);
+  const actionCompletionMethod =
+    numberList(action.completionMethod)[0] ??
+    Number(detail.completionMethod ?? 1);
+  const selectCompletionMethod =
+    numberList(action.selectCompletionMethod)[0] ??
+    Number(detail.selectCompletionMethod ?? 0);
+  const unit =
+    actionCompletionMethod === 0 && selectCompletionMethod === 1
+      ? 'seconds'
+      : completionUnit(actionCompletionMethod);
+  return {
+    groupId,
+    variantId,
+    expectedTitle,
+    category: stringValue(detail.trainingPartName),
+    primaryMuscle: stringValue(detail.mainMuscleGroupName),
+    accessoryNames: accessories
+      .map((id) => accessoryNamesById.get(id))
+      .filter((name): name is string => Boolean(name)),
+    dataStatType: Number(detail.dataStatType ?? 0),
+    presetId,
+    completionUnit: unit,
+    sets: workoutSetsFromRemote(action, presetId, unilateral),
+  };
+}
+
+export async function getSpeedianceWorkout(
+  userId: string,
+  code: string,
+  providerId?: string
+): Promise<SpeedianceWorkoutDetail> {
+  const { api } = await authenticatedClient(userId, providerId);
+  const detail = await api.getCustomWorkoutDetail(code);
+  if (!isRecord(detail)) {
+    throw new SpeedianceWorkoutValidationError('Speediance workout not found.');
+  }
+  const listIdentity = (
+    await exactTemplates(api, stringValue(detail.name) ?? '')
+  ).find((item) => item.code === code);
+  const identity = templateIdentity(detail) ?? listIdentity;
+  if (!identity) {
+    throw new SpeedianceWorkoutValidationError(
+      'Speediance workout identity could not be resolved.'
+    );
+  }
+  const accessoryNamesById = accessoryNameMap(await api.getAccessories());
+  const exercises: SpeedianceWorkoutExercise[] = [];
+  for (const action of records(detail.actionLibraryList)) {
+    const parsed = await detailExercise(api, action, accessoryNamesById);
+    if (parsed && parsed.sets.length > 0) exercises.push(parsed);
+  }
+  return {
+    ...identity,
+    exerciseCount: exercises.length,
+    nativeWorkoutPresetId: await nativePresetId(
+      userId,
+      identity.name,
+      identity.code
+    ),
+    exercises,
+  };
+}
+
+async function upsertWithClient(
+  userId: string,
+  api: SpeedianceApiClient,
+  request: SpeedianceWorkoutDefinition
+): Promise<SpeedianceWorkoutUpsertResponse> {
+  const resolved = await buildWorkoutPayload(api, request);
+  const template = await upsertTemplate(api, resolved.payload, request);
+  const nativeWorkoutPresetId = await syncNativeWorkoutPreset(userId, {
+    ...request,
+    remoteId: template.identity.id,
+    remoteCode: template.identity.code,
+  });
+  return {
+    success: true,
+    workout: {
+      ...template.identity,
+      created: template.created,
+      exerciseCount: request.exercises.length,
+      remoteSetCount: resolved.remoteSetCount,
+      nativeWorkoutPresetId,
+    },
+  };
+}
+
+export async function upsertSpeedianceWorkout(
+  userId: string,
+  request: SpeedianceWorkoutDefinition
+): Promise<SpeedianceWorkoutUpsertResponse> {
+  await assertTrainingPreferences(userId, request);
+  const { api } = await authenticatedClient(userId, request.providerId);
+  return upsertWithClient(userId, api, request);
+}
+
+async function validateScheduleDay(
+  userId: string,
+  date: string,
+  timezone: string
+): Promise<void> {
+  const today = todayInZone(timezone);
+  if (date < today) {
+    throw new SpeedianceWorkoutValidationError(
+      `Speediance workouts cannot be scheduled in the past (${date} < ${today}) for user ${userId}.`
+    );
+  }
+}
+
+export async function setSpeedianceWorkoutSchedule(
+  userId: string,
+  code: string,
+  date: string,
+  scheduled: boolean,
+  providerId?: string
+): Promise<SpeedianceWorkoutScheduleResponse> {
+  const { api, timezone } = await authenticatedClient(userId, providerId);
+  if (scheduled) await validateScheduleDay(userId, date, timezone);
+  const status = scheduled
+    ? await ensureScheduled(api, date, code)
+    : await ensureUnscheduled(api, date, code);
+  return { success: true, code, date, status };
+}
+
+export async function deleteSpeedianceWorkout(
+  userId: string,
+  id: string,
+  code: string,
+  confirmName: string,
+  providerId?: string
+): Promise<SpeedianceWorkoutDeleteResponse> {
+  const { api } = await authenticatedClient(userId, providerId);
+  const detail = await api.getCustomWorkoutDetail(code);
+  const currentName = isRecord(detail) ? stringValue(detail.name) : null;
+  if (!currentName || currentName !== confirmName) {
+    throw new SpeedianceWorkoutConflictError(
+      'The confirmation name does not match the current Speediance workout. Reload it before deleting.'
+    );
+  }
+  const detailId = isRecord(detail) ? remoteId(detail.id) : null;
+  if (detailId && detailId !== id) {
+    throw new SpeedianceWorkoutConflictError(
+      'The selected Speediance workout identity changed. Reload it before deleting.'
+    );
+  }
+  await api.deleteCustomWorkout(numericRemoteId(id, 'Workout template ID'));
+  const remaining = await api.getCustomWorkouts(GYM_MONSTER_DEVICE_TYPE);
+  if (
+    records(remaining).some((item) => {
+      const identity = templateIdentity(item);
+      return identity?.id === id || identity?.code === code;
+    })
+  ) {
+    throw new SpeedianceApiError(
+      'Speediance deletion could not be verified. Do not retry blindly.'
+    );
+  }
+  log(
+    'info',
+    `[speedianceWorkoutService] Deleted remote workout ${id} for user ${userId}; the native Sparky preset was preserved.`
+  );
+  return {
+    success: true,
+    id,
+    code,
+    name: currentName,
+    nativeWorkoutPresetPreserved: true,
+  };
+}
+
+function uniquePlanDays(request: SpeedianceCreatePlanRequest): void {
+  const days = request.sessions.map((session) => session.dayOfWeek);
+  if (new Set(days).size !== days.length) {
+    throw new SpeedianceWorkoutValidationError(
+      'A Speediance plan can contain only one workout per weekday.'
+    );
+  }
+}
+
+export async function createSpeediancePlan(
+  userId: string,
+  request: SpeedianceCreatePlanRequest
+): Promise<SpeedianceCreatePlanResponse> {
+  uniquePlanDays(request);
+  const { api, timezone } = await authenticatedClient(
+    userId,
+    request.providerId
+  );
+  await validateScheduleDay(userId, request.startDate, timezone);
+  const resolvedSessions: Array<{
+    dayOfWeek: number;
+    name: string;
+    code: string;
+    nativeWorkoutPresetId: number;
+  }> = [];
+  for (const session of request.sessions) {
+    const definition: SpeedianceWorkoutDefinition = {
+      ...session.workout,
+      providerId: request.providerId,
+    };
+    await assertTrainingPreferences(userId, definition);
+    const result = await upsertWithClient(userId, api, definition);
+    if (result.workout.nativeWorkoutPresetId === null) {
+      throw new SpeedianceWorkoutValidationError(
+        `Native Sparky preset for "${result.workout.name}" is missing.`
+      );
+    }
+    resolvedSessions.push({
+      dayOfWeek: session.dayOfWeek,
+      name: result.workout.name,
+      code: result.workout.code,
+      nativeWorkoutPresetId: result.workout.nativeWorkoutPresetId,
+    });
+  }
+
+  const plans =
+    (await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(
+      userId
+    )) as NativeWorkoutPlanRow[];
+  const existing = plans.find((plan) => plan.plan_name === request.planName);
+  const planInput = {
+    plan_name: request.planName,
+    description:
+      request.description ||
+      'Managed by the Sparky Speediance workout manager.',
+    start_date: request.startDate,
+    end_date: request.endDate,
+    is_active: true,
+    currentClientDate: todayInZone(timezone),
+    assignments: resolvedSessions.map((session, index) => ({
+      day_of_week: session.dayOfWeek,
+      workout_preset_id: session.nativeWorkoutPresetId,
+      sort_order: index,
+    })),
+  };
+  const nativePlan = existing
+    ? await workoutPlanTemplateService.updateWorkoutPlanTemplate(
+        userId,
+        existing.id,
+        planInput
+      )
+    : await workoutPlanTemplateService.createWorkoutPlanTemplate(
+        userId,
+        planInput
+      );
+  const nativePlanRecord = nativePlan as NativeWorkoutPlanRow;
+
+  let scheduledDates = 0;
+  const failedDates: Array<{ date: string; workoutName: string }> = [];
+  for (
+    let date = request.startDate;
+    date <= request.endDate;
+    date = addDays(date, 1)
+  ) {
+    const session = resolvedSessions.find(
+      (candidate) => candidate.dayOfWeek === dayOfWeek(date)
+    );
+    if (!session) continue;
+    try {
+      await ensureScheduled(api, date, session.code);
+      scheduledDates++;
+    } catch (error) {
+      log(
+        'error',
+        `[speedianceWorkoutService] Unable to schedule ${session.name} on ${date}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      failedDates.push({ date, workoutName: session.name });
+    }
+  }
+
+  return {
+    success: true,
+    plan: {
+      id: String(nativePlanRecord.id),
+      name: request.planName,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      workoutCount: resolvedSessions.length,
+      scheduledDates,
+      failedDates,
+    },
+  };
+}
+
+export async function createAndScheduleSpeedianceWorkout(
+  userId: string,
+  request: SpeedianceCreateAndScheduleWorkoutRequest
+): Promise<SpeedianceCreateAndScheduleWorkoutResponse> {
+  const definition: SpeedianceWorkoutDefinition = {
+    providerId: request.providerId,
+    name: request.name,
+    exercises: request.exercises,
+    acknowledgedPreferenceIds: request.acknowledgedPreferenceIds,
+  };
+  await assertTrainingPreferences(userId, definition);
   const { api, timezone } = await authenticatedClient(
     userId,
     request.providerId
@@ -760,28 +1507,27 @@ export async function createAndScheduleSpeedianceWorkout(
     );
   }
 
-  const resolved = await buildWorkoutPayload(api, request);
-  const template = await ensureTemplate(api, resolved.payload);
+  const upserted = await upsertWithClient(userId, api, definition);
   const scheduleStatus = await ensureScheduled(
     api,
     request.scheduleDate,
-    template.identity.code
+    upserted.workout.code
   );
 
   log(
     'info',
-    `[speedianceWorkoutService] ${template.created ? 'Created' : 'Reused'} and ${scheduleStatus} workout ${template.identity.id} for user ${userId} on ${request.scheduleDate}.`
+    `[speedianceWorkoutService] ${upserted.workout.created ? 'Created' : 'Updated/reused'} and ${scheduleStatus} workout ${upserted.workout.id} for user ${userId} on ${request.scheduleDate}.`
   );
 
   return {
     success: true,
     workout: {
-      id: template.identity.id,
-      code: template.identity.code,
-      name: template.identity.name,
-      created: template.created,
-      exerciseCount: request.exercises.length,
-      remoteSetCount: resolved.remoteSetCount,
+      id: upserted.workout.id,
+      code: upserted.workout.code,
+      name: upserted.workout.name,
+      created: upserted.workout.created,
+      exerciseCount: upserted.workout.exerciseCount,
+      remoteSetCount: upserted.workout.remoteSetCount,
     },
     schedule: {
       date: request.scheduleDate,
@@ -792,5 +1538,11 @@ export async function createAndScheduleSpeedianceWorkout(
 
 export default {
   searchSpeedianceExercises,
+  listSpeedianceWorkouts,
+  getSpeedianceWorkout,
+  upsertSpeedianceWorkout,
+  setSpeedianceWorkoutSchedule,
+  deleteSpeedianceWorkout,
+  createSpeediancePlan,
   createAndScheduleSpeedianceWorkout,
 };
