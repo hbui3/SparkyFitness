@@ -68,7 +68,7 @@ describe('TrainingCalendar', () => {
           },
         ],
       },
-    } as ReturnType<typeof useTrainingTimeline>);
+    } as unknown as ReturnType<typeof useTrainingTimeline>);
   });
 
   afterEach(() => jest.useRealTimers());

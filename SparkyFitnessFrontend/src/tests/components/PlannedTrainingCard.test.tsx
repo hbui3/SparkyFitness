@@ -52,7 +52,7 @@ describe('PlannedTrainingCard', () => {
           },
         ],
       },
-    } as ReturnType<typeof useTrainingTimeline>);
+    } as unknown as ReturnType<typeof useTrainingTimeline>);
 
     render(
       <MemoryRouter>

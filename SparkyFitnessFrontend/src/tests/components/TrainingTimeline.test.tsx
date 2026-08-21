@@ -85,7 +85,7 @@ describe('TrainingTimeline', () => {
         ],
         days: [],
       },
-    } as ReturnType<typeof useTrainingTimeline>);
+    } as unknown as ReturnType<typeof useTrainingTimeline>);
 
     render(<TrainingTimeline />);
 
