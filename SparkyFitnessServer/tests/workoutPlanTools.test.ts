@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildWorkoutPlanTools } from '../ai/tools/workoutPlanTools.js';
 import workoutPlanTemplateService from '../services/workoutPlanTemplateService.js';
 import workoutPresetRepository from '../models/workoutPresetRepository.js';
+import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
 
 vi.mock('../services/workoutPlanTemplateService.js', () => ({
   default: {
@@ -15,6 +16,10 @@ vi.mock('../models/workoutPresetRepository.js', () => ({
   default: {
     getWorkoutPresetByName: vi.fn(),
   },
+}));
+
+vi.mock('../services/plannedWorkoutScheduleService.js', () => ({
+  default: { getTrainingTimeline: vi.fn() },
 }));
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
@@ -53,6 +58,30 @@ describe('sparky_manage_workout_plans', () => {
       id: name === 'Upper A' ? 41 : 42,
       name,
     }));
+    vi.mocked(
+      plannedWorkoutScheduleService.getTrainingTimeline
+    ).mockResolvedValue({
+      today: '2026-08-21',
+      rangeStart: '2026-07-22',
+      rangeEnd: '2026-12-19',
+      activePlans: [],
+      items: [
+        {
+          id: 'planned-1',
+          date: '2026-08-24',
+          name: 'Upper A',
+          source: 'Workout Plan',
+          status: 'planned',
+          workoutPresetId: 41,
+          workoutPlanAssignmentId: 15,
+          exerciseCount: 7,
+          totalSetCount: 18,
+          warmupSetCount: 0,
+          workingSetCount: 18,
+        },
+      ],
+      days: [],
+    });
   });
 
   it('lists native workout plans', async () => {
@@ -67,6 +96,7 @@ describe('sparky_manage_workout_plans', () => {
     const result = await tool.execute!({ action: 'list' }, toolOptions);
 
     expect(result).toContain('Sparky Muskelaufbau');
+    expect(result).toContain('"warmupSetCount":0');
     expect(
       workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId
     ).toHaveBeenCalledWith('user-1');

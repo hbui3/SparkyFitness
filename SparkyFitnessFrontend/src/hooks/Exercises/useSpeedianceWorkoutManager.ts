@@ -7,6 +7,7 @@ import {
   setSpeedianceReservation,
 } from '@/api/Exercises/speedianceWorkoutManager';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { workoutPlanKeys } from './useWorkoutPlans';
 
 export const speedianceWorkoutKeys = {
   all: ['speediance-workouts'] as const,
@@ -55,6 +56,7 @@ export function useSaveSpeedianceWorkout() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: speedianceWorkoutKeys.all });
       queryClient.invalidateQueries({ queryKey: ['workoutPresets'] });
+      queryClient.invalidateQueries({ queryKey: workoutPlanKeys.timeline() });
       queryClient.setQueryData(
         speedianceWorkoutKeys.detail(result.workout.code),
         undefined
@@ -64,6 +66,7 @@ export function useSaveSpeedianceWorkout() {
 }
 
 export function useSetSpeedianceReservation() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       code,
@@ -76,6 +79,9 @@ export function useSetSpeedianceReservation() {
       scheduled: boolean;
       providerId?: string;
     }) => setSpeedianceReservation(code, date, scheduled, providerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: workoutPlanKeys.timeline() });
+    },
   });
 }
 
@@ -95,6 +101,7 @@ export function useDeleteSpeedianceWorkout() {
     }) => deleteSpeedianceWorkout(id, code, name, providerId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: speedianceWorkoutKeys.all });
+      queryClient.invalidateQueries({ queryKey: workoutPlanKeys.timeline() });
     },
   });
 }

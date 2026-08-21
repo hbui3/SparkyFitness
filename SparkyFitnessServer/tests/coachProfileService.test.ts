@@ -9,6 +9,7 @@ import trainingFeedbackService from '../services/trainingFeedbackService.js';
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
     getCoachProfile: vi.fn(),
+    getCoachLanguage: vi.fn(),
     upsertCoachProfile: vi.fn(),
   },
 }));
@@ -67,6 +68,7 @@ describe('coachProfileService', () => {
     vi.mocked(coachProfileRepository.getCoachProfile).mockResolvedValue(
       storedProfile as never
     );
+    vi.mocked(coachProfileRepository.getCoachLanguage).mockResolvedValue('de');
     vi.mocked(
       AllergenPreferenceService.getAllergenPreferences
     ).mockResolvedValue([

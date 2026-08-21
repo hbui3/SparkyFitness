@@ -1,4 +1,8 @@
 import { apiCall } from '@/api/api';
+import type {
+  TrainingTimelineQuery,
+  TrainingTimelineResponse,
+} from '@workspace/shared';
 import type { WorkoutPlanTemplate } from '@/types/workout';
 
 export const getWorkoutPlanTemplates = async (): Promise<
@@ -6,6 +10,15 @@ export const getWorkoutPlanTemplates = async (): Promise<
 > => {
   return apiCall('/workout-plan-templates', {
     method: 'GET',
+  });
+};
+
+export const getTrainingTimeline = async (
+  range: TrainingTimelineQuery = {}
+): Promise<TrainingTimelineResponse> => {
+  return apiCall('/workout-plan-templates/timeline', {
+    method: 'GET',
+    params: range,
   });
 };
 

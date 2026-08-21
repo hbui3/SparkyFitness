@@ -51,7 +51,10 @@ vi.mock('../services/adaptiveTrainingService.js', () => ({
   default: { getAdaptiveTrainingDashboard: vi.fn() },
 }));
 vi.mock('../services/plannedWorkoutScheduleService.js', () => ({
-  default: { getPlannedWorkoutScheduleStatus: vi.fn() },
+  default: {
+    getPlannedWorkoutScheduleStatus: vi.fn(),
+    getTrainingTimeline: vi.fn(),
+  },
 }));
 
 describe('coachContextService', () => {
@@ -66,6 +69,66 @@ describe('coachContextService', () => {
       completedToday: [],
       missedYesterday: [],
       carriedForwardToday: [],
+    });
+    vi.mocked(
+      plannedWorkoutScheduleService.getTrainingTimeline
+    ).mockResolvedValue({
+      today: '2026-08-18',
+      rangeStart: '2026-07-19',
+      rangeEnd: '2026-12-16',
+      activePlans: [
+        {
+          id: 1,
+          name: 'Sparky Muskelaufbau',
+          description: null,
+          startDate: '2026-08-24',
+          endDate: '2026-10-18',
+          assignments: [
+            {
+              dayOfWeek: 1,
+              presetId: 44,
+              workoutName: 'Full Body A',
+              exerciseCount: 7,
+              totalSetCount: 18,
+              warmupSetCount: 0,
+              workingSetCount: 18,
+            },
+          ],
+        },
+      ],
+      items: [
+        {
+          id: 'planned-1',
+          date: '2026-08-24',
+          name: 'Full Body A',
+          source: 'Workout Plan',
+          status: 'planned',
+          workoutPresetId: 44,
+          workoutPlanAssignmentId: 9,
+          exerciseCount: 7,
+          totalSetCount: 18,
+          warmupSetCount: 0,
+          workingSetCount: 18,
+        },
+      ],
+      days: [
+        {
+          date: '2026-08-18',
+          status: 'in_progress',
+          scheduledWorkoutCount: 1,
+          completedScheduledWorkoutCount: 0,
+          completedWorkoutCount: 0,
+          scheduledExerciseCount: 7,
+          completedScheduledExerciseCount: 2,
+          scheduledSetCount: 18,
+          completedScheduledSetCount: 5,
+          scheduledWarmupSetCount: 2,
+          completedScheduledWarmupSetCount: 2,
+          scheduledNames: ['Full Body A'],
+          completedNames: [],
+          sources: [],
+        },
+      ],
     });
     vi.mocked(onboardingRepository.getOnboardingGoalData).mockResolvedValue({
       primary_goal: 'gain_weight',
@@ -244,6 +307,9 @@ describe('coachContextService', () => {
         expect.stringContaining('Last 7 days'),
         expect.stringContaining('Last 30 days'),
         expect.stringContaining('+1.2 kg'),
+        expect.stringContaining('0 warm-up sets'),
+        expect.stringContaining('scheduled sets 5/18'),
+        expect.stringContaining('2026-08-24 planned Full Body A'),
       ])
     );
   });

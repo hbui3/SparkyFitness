@@ -348,15 +348,19 @@ async function validateMealSuggestion(
 async function getPersistentChatContext(
   userId: string
 ): Promise<string | null> {
-  const [storedProfile, allergens] = await Promise.all([
+  const [storedProfile, allergens, preferredLanguage] = await Promise.all([
     coachProfileRepository.getCoachProfile(userId),
     getAllergenNames(userId),
+    coachProfileRepository.getCoachLanguage(userId),
   ]);
   const lines: string[] = [];
   let memoryInstruction: string | null = null;
   const profile = toResponse(storedProfile);
 
   if (profile.enabled) {
+    lines.push(
+      `Preferred response language: ${preferredLanguage}. Keep the complete answer in the language of the user's latest message; use this preference when that message is ambiguous. Never mix in words or characters from an unrelated writing system.`
+    );
     const snapshot = await coachContextService
       .getCoachContextSnapshot(userId)
       .catch((error) => {
@@ -440,6 +444,7 @@ async function getPersistentChatContext(
     'The automatic daily values are the authoritative live database snapshot and already include earlier chat-logged entries. Never re-add values from chat history. After any write, use a retrieval tool or its verified result instead of mental arithmetic when stating the new total.',
     'When the user gives post-workout feedback, call sparky_manage_training_feedback with action=record. Save a training preference only when the user explicitly states a stable like, dislike, required item, schedule choice, or constraint; do not infer a lasting preference from one difficult session.',
     'When proposing or scheduling a workout, apply the structured training-feedback volume/rest guidance and active preferences above. Do not use an avoided exercise or override a constraint unless the user explicitly asks to override that specific preference. Treat pain/discomfort as a caution signal, not a diagnosis.',
+    'Never claim that an existing workout contains warm-up sets, exercises, or set counts unless those exact values appear in the authoritative training timeline or were just returned by an exact workout retrieval tool. A warm-up count of 0 means that no warm-up sets are configured.',
     'For every new meal or recipe suggestion, call sparky_validate_meal_suggestion with the complete ingredient list before presenting it. Revise blocked suggestions. Foods the user says they already consumed may still be logged.',
   ].join('\n');
 }

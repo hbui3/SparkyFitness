@@ -4,6 +4,7 @@ import {
   todayInZone,
   type AdaptiveTrainingRecommendation,
   type CoachTodayStatusResponse,
+  type TrainingTimelineResponse,
 } from '@workspace/shared';
 import onboardingRepository from '../models/onboardingRepository.js';
 import preferenceRepository from '../models/preferenceRepository.js';
@@ -98,6 +99,7 @@ export interface CoachContextSnapshot {
   recovery: CoachRecoveryContext;
   adaptiveTraining: AdaptiveTrainingRecommendation;
   trainingSchedule?: PlannedWorkoutScheduleStatus;
+  trainingTimeline?: TrainingTimelineResponse;
 }
 
 interface GoalRecord {
@@ -397,6 +399,7 @@ export async function getCoachContextSnapshot(
     trend,
     adaptiveTraining,
     trainingSchedule,
+    trainingTimeline,
   ] = await Promise.all([
     getCanonicalCoachGoals(userId, tz),
     getDailySummary({
@@ -411,6 +414,7 @@ export async function getCoachContextSnapshot(
       userId,
       today
     ),
+    plannedWorkoutScheduleService.getTrainingTimeline(userId, today),
   ]);
 
   const {
@@ -520,6 +524,7 @@ export async function getCoachContextSnapshot(
     recovery: buildRecoveryContext(recoveryRows, adaptiveTraining.muscleLoad),
     adaptiveTraining: adaptiveTraining.recommendation,
     trainingSchedule,
+    trainingTimeline,
   };
 }
 
@@ -588,6 +593,48 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
   if ((snapshot.trainingSchedule?.missedYesterday.length ?? 0) > 0) {
     lines.push(
       `Missed scheduled workouts from yesterday: ${snapshot.trainingSchedule?.missedYesterday.map((item) => item.name).join(', ')}. They are carried forward by the proactive scheduler and should be acknowledged explicitly.`
+    );
+  }
+  if (snapshot.trainingTimeline) {
+    const timeline = snapshot.trainingTimeline;
+    lines.push(
+      'Training timeline facts below are authoritative. Never infer exercise, set, or warm-up counts from a workout name or description. If warm-up sets are 0, state explicitly that none are configured.'
+    );
+    if (timeline.activePlans.length === 0) {
+      lines.push('Active training plans: none.');
+    } else {
+      lines.push(
+        `Active training plans: ${timeline.activePlans
+          .map(
+            (plan) =>
+              `${plan.name} (${plan.startDate} to ${plan.endDate ?? 'open-ended'}): ${plan.assignments
+                .map(
+                  (assignment) =>
+                    `weekday ${assignment.dayOfWeek} ${assignment.workoutName} — ${assignment.exerciseCount} exercises, ${assignment.totalSetCount} total sets, ${assignment.warmupSetCount} warm-up sets, ${assignment.workingSetCount} other/working sets`
+                )
+                .join('; ')}`
+          )
+          .join(' | ')}`
+      );
+    }
+    const todayTraining = timeline.days.find(
+      (day) => day.date === timeline.today
+    );
+    lines.push(
+      todayTraining
+        ? `Today's canonical training progress (${timeline.today}): status ${todayTraining.status}; scheduled workouts ${todayTraining.completedScheduledWorkoutCount}/${todayTraining.scheduledWorkoutCount}; scheduled exercises ${todayTraining.completedScheduledExerciseCount}/${todayTraining.scheduledExerciseCount}; scheduled sets ${todayTraining.completedScheduledSetCount}/${todayTraining.scheduledSetCount}; scheduled warm-up sets ${todayTraining.completedScheduledWarmupSetCount}/${todayTraining.scheduledWarmupSetCount}; all completed workouts today ${todayTraining.completedWorkoutCount}; planned ${todayTraining.scheduledNames.join(', ') || 'none'}; completed ${todayTraining.completedNames.join(', ') || 'none'}; completed sources ${todayTraining.sources.join(', ') || 'none'}. Use this exact progress for questions, reminders, and proactive messages.`
+        : `Today's canonical training progress (${timeline.today}): no scheduled or completed workout.`
+    );
+    const relevantItems = timeline.items;
+    lines.push(
+      relevantItems.length === 0
+        ? 'Canonical training chronology: no completed, missed, or upcoming workouts in range.'
+        : `Canonical training chronology (${timeline.rangeStart} to ${timeline.rangeEnd}): ${relevantItems
+            .map(
+              (item) =>
+                `${item.date} ${item.status} ${item.name} [${item.source}; ${item.exerciseCount} exercises; ${item.totalSetCount} total sets; ${item.warmupSetCount} warm-up sets; ${item.workingSetCount} other/working sets]`
+            )
+            .join(' | ')}`
     );
   }
   return lines;
