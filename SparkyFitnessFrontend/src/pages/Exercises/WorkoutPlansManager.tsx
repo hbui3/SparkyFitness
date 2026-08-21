@@ -41,6 +41,8 @@ import { DataTable } from '@/components/ui/DataTable';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Badge } from '@/components/ui/badge';
+import TrainingTimeline from './TrainingTimeline';
+import TrainingCalendar from './TrainingCalendar';
 
 const WorkoutPlansManager = () => {
   const { t } = useTranslation();
@@ -392,6 +394,10 @@ const WorkoutPlansManager = () => {
           )}
         </CardContent>
       </Card>
+
+      <TrainingCalendar />
+
+      <TrainingTimeline />
 
       <BulkActionToolbar
         selectedCount={selectedCount}

@@ -2415,6 +2415,8 @@
     "selectedCount": "{{selectedCount}} selected",
     "skip": "Skip",
     "success": "Success",
+    "source": "Source",
+    "today": "Today",
     "view": "View details",
     "weight": "Weight",
     "workout": "Workout",
@@ -2425,6 +2427,11 @@
     "dailyEnergyGoal": "Daily Energy Goal",
     "waterIntake": "Water Intake",
     "exercise": "Exercise",
+    "plannedTraining": "Planned training",
+    "noTrainingPlanned": "No workout is planned for this day.",
+    "openTrainingCalendar": "Open training calendar",
+    "trainingProgress": "Training progress",
+    "unplannedTrainingCompleted": "{{count}} completed workout was not part of the schedule.",
     "widgets": {
       "layout": "Customize layout",
       "done": "Done",
@@ -4955,6 +4962,32 @@
     "rpe": "RPE",
     "type": "Type",
     "weight": "weight"
+  },
+  "trainingTimeline": {
+    "title": "Training timeline",
+    "description": "Your active plan, completed training, missed sessions, and every upcoming workout in one chronology.",
+    "chronology": "Recent and upcoming training",
+    "exactCounts": "{{exercises}} exercises · {{sets}} sets · {{warmups}} warm-up sets",
+    "noWarmups": "No warm-up sets configured",
+    "empty": "No training is available in this period.",
+    "failedToLoad": "Failed to load the training timeline.",
+    "status": {
+      "completed": "Completed",
+      "in_progress": "In progress",
+      "planned": "Planned",
+      "missed": "Missed"
+    }
+  },
+  "trainingCalendar": {
+    "title": "Training calendar",
+    "description": "All planned and completed workouts in one calendar.",
+    "previousMonth": "Previous month",
+    "nextMonth": "Next month",
+    "workoutCount": "{{count}} workouts",
+    "noTraining": "No planned or completed workout on this day.",
+    "workouts": "Workouts",
+    "exercises": "Exercises",
+    "sets": "Sets"
   },
   "food": {
     "imagesLabel": "Images",

@@ -18,6 +18,7 @@ import {
   UtensilsCrossed,
   Dumbbell,
   HeartPulse,
+  CalendarCheck2,
 } from 'lucide-react';
 import { DailyHealthMetricsCard } from '@/components/Health/DailyHealthMetricsCard';
 import { useDailyHealthMetrics } from '@/hooks/useGenericHealth';
@@ -55,10 +56,13 @@ import {
 } from '@/hooks/Diary/useFoodEntries';
 import { todayInZone, prefillEntryTime } from '@workspace/shared';
 import { useDailySummary } from '@/hooks/Diary/useDailyProgress';
+import { useAuth } from '@/hooks/useAuth';
+import PlannedTrainingCard from './PlannedTrainingCard';
 
 const Diary = () => {
   const { t } = useTranslation();
   const { activeUserId } = useActiveUser();
+  const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const { timezone, loggingLevel, energyUnit, convertEnergy } =
@@ -358,9 +362,9 @@ const Diary = () => {
       todaysHealthMetrics.training_readiness_score != null)
   );
 
-  // Build the ordered widget registry: energy, nutrition, water, one card per
-  // visible meal type, then exercise. Keys match buildWidgetKeys() so the saved
-  // grid layout reconciles cleanly against the user's current meal types.
+  // Build the ordered widget registry: energy, nutrition, water, the owner's
+  // planned training, one card per visible meal type, then exercise. Keys match
+  // buildWidgetKeys() so saved layouts reconcile with the current widget set.
   const widgets: DiaryWidget[] = useMemo(() => {
     if (!effectiveGoals) return [];
     const list: DiaryWidget[] = [
@@ -392,6 +396,15 @@ const Diary = () => {
         render: () => <WaterIntake selectedDate={selectedDate} />,
       },
     ];
+
+    if (currentUserId === user?.id) {
+      list.push({
+        key: 'trainingPlan',
+        title: t('diary.plannedTraining', 'Planned training'),
+        icon: CalendarCheck2,
+        render: () => <PlannedTrainingCard selectedDate={selectedDate} />,
+      });
+    }
 
     if (hasDisplayableHealthMetrics) {
       list.push({
@@ -483,6 +496,8 @@ const Diary = () => {
     hasDisplayableHealthMetrics,
     todaysHealthMetrics,
     loadingHealthMetrics,
+    currentUserId,
+    user?.id,
     t,
   ]);
 

@@ -5,14 +5,41 @@ import {
   createWorkoutPlanTemplate,
   updateWorkoutPlanTemplate,
   deleteWorkoutPlanTemplate,
+  getTrainingTimeline,
 } from '@/api/Exercises/workoutPlanTemplates';
 import type { WorkoutPlanTemplate } from '@/types/workout';
+import type { TrainingTimelineQuery } from '@workspace/shared';
 
 export const workoutPlanKeys = {
   all: ['workoutPlanTemplates'] as const,
   lists: () => [...workoutPlanKeys.all, 'list'] as const,
   details: () => [...workoutPlanKeys.all, 'detail'] as const,
   detail: (id: string) => [...workoutPlanKeys.details(), id] as const,
+  timelines: () => [...workoutPlanKeys.all, 'timeline'] as const,
+  timeline: (range: TrainingTimelineQuery = {}) =>
+    [
+      ...workoutPlanKeys.timelines(),
+      range.startDate ?? 'default',
+      range.endDate ?? 'default',
+    ] as const,
+};
+
+export const useTrainingTimeline = (
+  userId?: string,
+  range: TrainingTimelineQuery = {}
+) => {
+  const { t } = useTranslation();
+  return useQuery({
+    queryKey: workoutPlanKeys.timeline(range),
+    queryFn: () => getTrainingTimeline(range),
+    enabled: !!userId,
+    meta: {
+      errorMessage: t(
+        'trainingTimeline.failedToLoad',
+        'Failed to load the training timeline.'
+      ),
+    },
+  });
 };
 
 // --- Queries ---
@@ -54,6 +81,7 @@ export const useCreateWorkoutPlanTemplateMutation = () => {
     }) => createWorkoutPlanTemplate(userId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: workoutPlanKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: workoutPlanKeys.timelines() });
     },
     meta: {
       successMessage: t(
@@ -82,6 +110,7 @@ export const useUpdateWorkoutPlanTemplateMutation = () => {
     }) => updateWorkoutPlanTemplate(id, data),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: workoutPlanKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: workoutPlanKeys.timelines() });
       queryClient.invalidateQueries({
         queryKey: workoutPlanKeys.detail(variables.id),
       });
@@ -121,6 +150,7 @@ export const useDeleteWorkoutPlanTemplateMutation = () => {
     mutationFn: (id: string) => deleteWorkoutPlanTemplate(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: workoutPlanKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: workoutPlanKeys.timelines() });
     },
     meta: {
       successMessage: t(

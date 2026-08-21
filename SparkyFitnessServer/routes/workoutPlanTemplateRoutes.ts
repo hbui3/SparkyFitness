@@ -1,6 +1,13 @@
 import express from 'express';
+import {
+  addDays,
+  todayInZone,
+  trainingTimelineQuerySchema,
+} from '@workspace/shared';
 import { authenticate } from '../middleware/authMiddleware.js';
 import workoutPlanTemplateService from '../services/workoutPlanTemplateService.js';
+import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
+import { loadUserTimezone } from '../utils/timezoneLoader.js';
 const router = express.Router();
 /**
  * @swagger
@@ -70,6 +77,57 @@ router.get('/', authenticate, async (req, res, next) => {
         req.userId
       );
     res.status(200).json(plans);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /workout-plan-templates/timeline:
+ *   get:
+ *     summary: Get the canonical training timeline
+ *     tags: [Fitness & Workouts]
+ *     description: Returns active plans plus canonical completed, missed, and upcoming workouts with exact set counts.
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: The canonical training timeline.
+ *       401:
+ *         description: Unauthorized.
+ */
+router.get('/timeline', authenticate, async (req, res, next) => {
+  try {
+    const timezone = await loadUserTimezone(req.userId);
+    const parsed = trainingTimelineQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const today = todayInZone(timezone);
+    const { startDate, endDate } = parsed.data;
+    if (
+      startDate !== undefined &&
+      endDate !== undefined &&
+      (endDate < startDate || endDate > addDays(startDate, 366))
+    ) {
+      return res.status(400).json({
+        error: 'Timeline range must be ordered and no longer than 367 days.',
+      });
+    }
+    const timeline =
+      startDate !== undefined && endDate !== undefined
+        ? await plannedWorkoutScheduleService.getTrainingTimelineForRange(
+            req.userId,
+            today,
+            startDate,
+            endDate
+          )
+        : await plannedWorkoutScheduleService.getTrainingTimeline(
+            req.userId,
+            today
+          );
+    res.status(200).json(timeline);
   } catch (error) {
     next(error);
   }

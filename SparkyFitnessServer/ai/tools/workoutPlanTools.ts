@@ -2,6 +2,7 @@ import { tool } from 'ai';
 import { todayInZone } from '@workspace/shared';
 import { z } from 'zod';
 import workoutPlanTemplateService from '../../services/workoutPlanTemplateService.js';
+import plannedWorkoutScheduleService from '../../services/plannedWorkoutScheduleService.js';
 import workoutPresetRepository from '../../models/workoutPresetRepository.js';
 import { log } from '../../config/logging.js';
 import { formatJsonResult } from './formatting.js';
@@ -170,13 +171,18 @@ export function buildWorkoutPlanTools(userId: string, timezone: string) {
   return {
     sparky_manage_workout_plans: tool({
       description:
-        'List, create, update, or activate native SparkyFitness workout plans that are visible under Training > Workout Plans. A plan assigns complete existing workout presets to fixed weekdays (0=Sunday through 6=Saturday) and, when active, materializes future diary sessions through the existing workout-plan architecture. Use list before changing a plan. Call upsert or set_active only after the user explicitly asked to create, change, or activate the presented schedule. Prefer a stable multi-week plan over inventing a new workout each day; adapt it deliberately from saved training feedback. Speediance workouts should first exist as canonical Sparky workout presets with the same names.',
+        'List, create, update, or activate native SparkyFitness workout plans that are visible under Training > Workout Plans. A plan assigns complete existing workout presets to fixed weekdays (0=Sunday through 6=Saturday) and, when active, materializes future diary sessions through the existing workout-plan architecture. The list result includes the canonical completed/missed/upcoming training timeline and exact exercise, total-set, warm-up-set, and working-set counts; treat those values as authoritative and never infer them. Use list before describing or changing a plan. Call upsert or set_active only after the user explicitly asked to create, change, or activate the presented schedule. Prefer a stable multi-week plan over inventing a new workout each day; adapt it deliberately from saved training feedback. Speediance workouts should first exist as canonical Sparky workout presets with the same names.',
       inputSchema: manageWorkoutPlanSchema,
       execute: async (args) => {
         try {
           const plans = await listPlans(userId);
           if (args.action === 'list') {
-            return formatJsonResult({ plans });
+            const timeline =
+              await plannedWorkoutScheduleService.getTrainingTimeline(
+                userId,
+                todayInZone(timezone)
+              );
+            return formatJsonResult({ plans, timeline });
           }
 
           const currentClientDate =
