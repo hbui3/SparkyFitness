@@ -23,6 +23,13 @@ export interface ExerciseCaloriesByDate {
   calories_burned: number;
 }
 
+export interface CanonicalExerciseCalorieSplit {
+  entry_date: string;
+  active_calories: number;
+  other_calories: number;
+  activity_steps: number;
+}
+
 export interface CanonicalWorkoutAggregates {
   total_calories_burned: number;
   workout_count: number;
@@ -109,23 +116,58 @@ export async function getCanonicalWorkoutEntries(
 export function calculateExerciseCaloriesByDate(
   rows: ReportExerciseEntryRow[]
 ): ExerciseCaloriesByDate[] {
-  const totals = new Map<string, { active: number; workouts: number }>();
+  return calculateExerciseCalorieSplitsByDate(rows).map((split) => ({
+    entry_date: split.entry_date,
+    calories_burned: Math.max(split.active_calories, split.other_calories),
+  }));
+}
+
+export function calculateExerciseCalorieSplitsByDate(
+  rows: ReportExerciseEntryRow[]
+): CanonicalExerciseCalorieSplit[] {
+  const totals = new Map<
+    string,
+    { active: number; workouts: number; steps: number }
+  >();
   for (const row of rows) {
-    const current = totals.get(row.entry_date) ?? { active: 0, workouts: 0 };
+    const current = totals.get(row.entry_date) ?? {
+      active: 0,
+      workouts: 0,
+      steps: 0,
+    };
     const calories = finiteNumber(row.calories_burned) ?? 0;
-    if (row.exercise_name === 'Active Calories') {
+    if (
+      row.exercise_name === 'Active Calories' &&
+      row.exercise_preset_entry_id === null
+    ) {
       current.active += calories;
     } else {
       current.workouts += calories;
     }
+    current.steps += finiteNumber(row.steps) ?? 0;
     totals.set(row.entry_date, current);
   }
   return [...totals.entries()]
     .map(([entry_date, total]) => ({
       entry_date,
-      calories_burned: Math.max(total.active, total.workouts),
+      active_calories: total.active,
+      other_calories: total.workouts,
+      activity_steps: total.steps,
     }))
     .sort((first, second) => first.entry_date.localeCompare(second.entry_date));
+}
+
+export async function getCanonicalExerciseCalorieSplits(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<CanonicalExerciseCalorieSplit[]> {
+  const canonical = await getCanonicalWorkoutEntries(
+    userId,
+    startDate,
+    endDate
+  );
+  return calculateExerciseCalorieSplitsByDate(canonical.allEntries);
 }
 
 export function calculateCanonicalWorkoutAggregates(
@@ -164,6 +206,8 @@ export default {
   deduplicateWorkoutRows,
   getCanonicalWorkoutEntries,
   calculateExerciseCaloriesByDate,
+  calculateExerciseCalorieSplitsByDate,
+  getCanonicalExerciseCalorieSplits,
   calculateCanonicalWorkoutAggregates,
   getCanonicalWorkoutAggregates,
 };

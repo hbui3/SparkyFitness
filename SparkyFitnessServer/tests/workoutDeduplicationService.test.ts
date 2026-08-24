@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ReportExerciseEntryRow } from '../models/reportRepository.js';
 import {
   calculateCanonicalWorkoutAggregates,
+  calculateExerciseCalorieSplitsByDate,
   calculateExerciseCaloriesByDate,
   deduplicateWorkoutRows,
 } from '../services/workoutDeduplicationService.js';
@@ -93,6 +94,14 @@ describe('workoutDeduplicationService', () => {
     });
     expect(calculateExerciseCaloriesByDate(canonical.allEntries)).toEqual([
       { entry_date: '2026-08-19', calories_burned: 587 },
+    ]);
+    expect(calculateExerciseCalorieSplitsByDate(canonical.allEntries)).toEqual([
+      {
+        entry_date: '2026-08-19',
+        active_calories: 587,
+        other_calories: 237,
+        activity_steps: 0,
+      },
     ]);
     expect(calculateCanonicalWorkoutAggregates(canonical.allEntries)).toEqual({
       total_calories_burned: 237,

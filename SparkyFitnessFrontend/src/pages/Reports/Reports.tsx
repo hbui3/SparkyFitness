@@ -28,6 +28,7 @@ import MoodChart from '@/pages/Reports/MoodChart';
 import { useCustomNutrients } from '@/hooks/Foods/useCustomNutrients';
 import { useMoodEntries } from '@/hooks/CheckIn/useMood';
 import {
+  useCalorieBalanceRange,
   useExerciseDashboardData,
   useRawStressData,
   useReportsData,
@@ -127,6 +128,11 @@ const Reports = () => {
     activeUserId
   );
 
+  // Folded into `loading` below so the calorie chart never paints raw goals first and
+  // then jumps once the balance lands.
+  const { data: calorieBalanceByDate, isLoading: calorieBalanceLoading } =
+    useCalorieBalanceRange(startDate, endDate, activeUserId);
+
   // Der globale Ladezustand
   const loading =
     !startDate ||
@@ -136,13 +142,13 @@ const Reports = () => {
     stressLoading ||
     dashboardLoading ||
     fastingLoading ||
-    reportsLoading;
+    reportsLoading ||
+    calorieBalanceLoading;
 
   const {
     nutritionData = [],
     tabularData = [],
     exerciseEntries = [],
-    exerciseCaloriesByDate,
     exerciseDuplicateSummary,
     measurementData = [],
     customCategories = [],
@@ -201,14 +207,14 @@ const Reports = () => {
                 nutritionData={nutritionData}
                 customNutrients={customNutrients}
                 goals={goalData}
-                exerciseEntries={exerciseEntries}
-                exerciseCaloriesByDate={exerciseCaloriesByDate}
+                calorieBalanceByDate={calorieBalanceByDate}
               />
             </ChartErrorBoundary>
             <ChartErrorBoundary>
               <NutritionChartsGrid
                 nutritionData={nutritionData}
                 customNutrients={customNutrients}
+                calorieBalanceByDate={calorieBalanceByDate}
                 goals={goalData}
               />
             </ChartErrorBoundary>

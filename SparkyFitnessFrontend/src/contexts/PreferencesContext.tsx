@@ -30,8 +30,14 @@ import {
   useSetPrimaryWaterContainerMutation,
 } from '@/hooks/Settings/useWaterContainers';
 import { getErrorMessage } from '@/utils/api';
-import { CalorieGoalAdjustmentMode } from '@/utils/calorieCalculations';
-import { GoalMode, GoalModeCalculationMethod } from '@workspace/shared';
+import {
+  CalorieGoalAdjustmentMode,
+  GoalMode,
+  GoalModeCalculationMethod,
+  CalorieSafetyFloorMode,
+  DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
+  type UserPreferences as SharedUserPreferences,
+} from '@workspace/shared';
 
 import {
   kgToLbs,
@@ -59,12 +65,14 @@ export type WeightUnit = 'kg' | 'lbs' | 'st_lbs';
 export type MeasurementUnit = 'cm' | 'inches' | 'ft_in';
 export type DistanceUnit = 'km' | 'miles';
 export type LoggingLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'SILENT';
-export type calorieGoalAdjustmentMode =
-  | 'dynamic'
-  | 'fixed'
-  | 'percentage'
-  | 'tdee'
-  | 'adaptive';
+/**
+ * @deprecated Import `CalorieGoalAdjustmentMode` from `@workspace/shared` instead.
+ *
+ * Kept as an alias for the existing import sites. It used to be a hand-maintained union
+ * that omitted `'smart'` even though the server has always supported it -- which is part
+ * of why an incomplete mode switch could compile without TypeScript objecting.
+ */
+export type calorieGoalAdjustmentMode = CalorieGoalAdjustmentMode;
 export type WaterDisplayUnit = 'ml' | 'oz' | 'liter';
 
 // Conversion constant
@@ -116,6 +124,8 @@ interface PreferencesContextType {
   goalMode: GoalMode;
   goalModeCalculationMethod: GoalModeCalculationMethod;
   goalModeCustomPercentage: number;
+  calorieSafetyFloorMode: CalorieSafetyFloorMode;
+  calorieSafetyFloorValue: number;
   setMeasurementDecimalPlaces: (places: number) => void;
   setGoalMode: (mode: GoalMode) => void;
   setGoalModeCalculationMethod: (method: GoalModeCalculationMethod) => void;
@@ -229,6 +239,8 @@ export interface DefaultPreferences {
   goal_mode: GoalMode;
   goal_mode_calculation_method: GoalModeCalculationMethod;
   goal_mode_custom_percentage: number;
+  calorie_safety_floor_mode: SharedUserPreferences['calorie_safety_floor_mode'];
+  calorie_safety_floor_value: SharedUserPreferences['calorie_safety_floor_value'];
 }
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(
@@ -278,9 +290,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
   const [itemDisplayLimit, setItemDisplayLimitState] = useState<number>(10);
   const [foodDisplayLimit, setFoodDisplayLimitState] = useState<number>(10);
   const [calorieGoalAdjustmentMode, setCalorieGoalAdjustmentModeState] =
-    useState<'dynamic' | 'fixed' | 'percentage' | 'tdee' | 'adaptive'>(
-      'dynamic'
-    );
+    useState<CalorieGoalAdjustmentMode>('dynamic');
   const [exerciseCaloriePercentage, setExerciseCaloriePercentageState] =
     useState<number>(100);
   const [activityLevel, setActivityLevelState] =
@@ -338,6 +348,10 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
     useState<GoalModeCalculationMethod>('manual');
   const [goalModeCustomPercentage, setGoalModeCustomPercentageState] =
     useState<number>(0);
+  const [calorieSafetyFloorMode, setCalorieSafetyFloorModeState] =
+    useState<CalorieSafetyFloorMode>('standard');
+  const [calorieSafetyFloorValue, setCalorieSafetyFloorValueState] =
+    useState<number>(DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR);
 
   const fetchUserPreferences = useCallback(async () => {
     try {
@@ -607,6 +621,8 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
         first_day_of_week: 0,
         show_net_carbs: false,
         ai_assisted_conversions: true,
+        calorie_safety_floor_mode: 'standard',
+        calorie_safety_floor_value: DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
       };
       await upsertUserPreferences(defaultPrefs);
     } catch (err) {
@@ -728,6 +744,12 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
           data.goal_mode_calculation_method || 'manual'
         );
         setGoalModeCustomPercentageState(data.goal_mode_custom_percentage ?? 0);
+        setCalorieSafetyFloorModeState(
+          data.calorie_safety_floor_mode ?? 'standard'
+        );
+        setCalorieSafetyFloorValueState(
+          data.calorie_safety_floor_value ?? DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR
+        );
       } else {
         await createDefaultPreferences();
         await createDefaultWaterContainer();
@@ -899,6 +921,10 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
           newPrefs?.goalModeCalculationMethod ?? goalModeCalculationMethod,
         goal_mode_custom_percentage:
           newPrefs?.goalModeCustomPercentage ?? goalModeCustomPercentage,
+        calorie_safety_floor_mode:
+          newPrefs?.calorieSafetyFloorMode ?? calorieSafetyFloorMode,
+        calorie_safety_floor_value:
+          newPrefs?.calorieSafetyFloorValue ?? calorieSafetyFloorValue,
       };
 
       try {
@@ -957,6 +983,8 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
       goalMode,
       goalModeCalculationMethod,
       goalModeCustomPercentage,
+      calorieSafetyFloorMode,
+      calorieSafetyFloorValue,
       updatePreferences,
       loadPreferences,
     ]
@@ -996,7 +1024,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const setCalorieGoalAdjustmentMode = useCallback(
-    (mode: 'dynamic' | 'fixed' | 'percentage' | 'tdee' | 'adaptive') => {
+    (mode: CalorieGoalAdjustmentMode) => {
       setCalorieGoalAdjustmentModeState(mode);
       saveAllPreferences({ calorieGoalAdjustmentMode: mode });
     },
@@ -1122,9 +1150,12 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
         const savedDateFormat = localStorage.getItem('dateFormat');
         const savedTimeFormat = localStorage.getItem('timeFormat');
         const savedLanguage = localStorage.getItem('language');
+        // The shared union, not another hand-maintained copy: the inline one here also
+        // omitted `'smart'`, so a stored `smart` was typed as impossible while flowing
+        // through at runtime — the same gap that hid the Diary's TDEE panel.
         const savedCalorieGoalAdjustmentMode = localStorage.getItem(
           'calorieGoalAdjustmentMode'
-        ) as 'dynamic' | 'fixed' | 'percentage' | 'tdee' | 'adaptive';
+        ) as CalorieGoalAdjustmentMode;
         const savedEnergyUnit = localStorage.getItem(
           'energyUnit'
         ) as EnergyUnit;
@@ -1200,6 +1231,8 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
       goalMode,
       goalModeCalculationMethod,
       goalModeCustomPercentage,
+      calorieSafetyFloorMode,
+      calorieSafetyFloorValue,
       setMeasurementDecimalPlaces: setMeasurementDecimalPlacesState,
       setGoalMode,
       setGoalModeCalculationMethod,
@@ -1293,6 +1326,8 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
       goalMode,
       goalModeCalculationMethod,
       goalModeCustomPercentage,
+      calorieSafetyFloorMode,
+      calorieSafetyFloorValue,
       setGoalMode,
       setGoalModeCalculationMethod,
       setGoalModeCustomPercentage,

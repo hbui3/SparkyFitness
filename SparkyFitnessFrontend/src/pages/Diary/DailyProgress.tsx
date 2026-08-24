@@ -23,7 +23,6 @@ import {
 
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { debug } from '@/utils/logging';
-import { computeExerciseCredited } from '@/utils/calorieCalculations';
 
 import {
   useDailyExerciseStats,
@@ -42,11 +41,17 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfileQuery } from '@/hooks/Settings/useProfile';
 import { useMostRecentMeasurement } from '@/hooks/CheckIn/useCheckIn';
 import {
+  ACTIVITY_MULTIPLIERS,
   calculateAge,
   computeCalorieTarget,
+  isAdaptiveTdeeMature,
+  ADAPTIVE_TDEE_GOAL_MIN_DAYS,
   calculateBmr,
+  computeExerciseCredited,
+  normalizeCalorieGoalAdjustmentMode,
+  resolveCalorieSafetyFloor,
+  DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
 } from '@workspace/shared';
-import { ACTIVITY_MULTIPLIERS } from '@/utils/calorieCalculations';
 import { CalorieTargetBreakdown } from '@/components/CalorieTargetBreakdown';
 import { useNutrientGoalPreferences } from '@/hooks/Settings/useNutrientGoalPreferences';
 
@@ -55,7 +60,7 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
   const navigate = useNavigate();
   const {
     loggingLevel,
-    calorieGoalAdjustmentMode,
+    calorieGoalAdjustmentMode: storedCalorieGoalAdjustmentMode,
     energyUnit,
     convertEnergy,
     weightUnit,
@@ -64,9 +69,18 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
     goalMode,
     goalModeCalculationMethod,
     goalModeCustomPercentage,
+    calorieSafetyFloorMode,
+    calorieSafetyFloorValue,
     activityLevel,
     timezone,
   } = usePreferences();
+
+  // `smart` computes identically to `tdee` server-side and arrives with a populated
+  // `tdeeProjection`, but it has no UI of its own — so the untranslated value fell
+  // through the `=== 'tdee'` check below and hid the Daily Burn panel entirely.
+  const calorieGoalAdjustmentMode = normalizeCalorieGoalAdjustmentMode(
+    storedCalorieGoalAdjustmentMode
+  );
 
   const { user } = useAuth();
   const { data: userProfile } = useProfileQuery(user?.id);
@@ -214,10 +228,25 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
 
   let adjustedManualGoal = rawManualGoal;
   if (calorieGoalAdjustmentMode === 'adaptive' && adaptiveTdeeData && bmr > 0) {
-    adjustedManualGoal = Math.max(
-      1200,
-      Math.round(adaptiveTdeeData.tdee + calorieGoalOffset)
+    // Mirrors goalService: hold the estimated baseline until the measured estimate
+    // is settled, so the diary matches the goal the server actually saves.
+    const adaptiveBaseline = isAdaptiveTdeeMature(
+      adaptiveTdeeData.tdee,
+      adaptiveTdeeData.isFallback,
+      adaptiveTdeeData.daysOfData
+    )
+      ? adaptiveTdeeData.tdee
+      : Math.round(bmr * activityMultiplier);
+    const adaptiveGoal = Math.round(adaptiveBaseline + calorieGoalOffset);
+    const adaptiveGoalFloor = resolveCalorieSafetyFloor(
+      calorieSafetyFloorMode,
+      calorieSafetyFloorValue,
+      DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR
     );
+    adjustedManualGoal =
+      adaptiveGoalFloor === null
+        ? adaptiveGoal
+        : Math.max(adaptiveGoalFloor, adaptiveGoal);
   }
 
   const previewResult = computeCalorieTarget({
@@ -239,6 +268,8 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
     bmrAlgorithm,
     currentGoalCalories: adjustedManualGoal,
     calculateBmrFn: calculateBmr,
+    calorieSafetyFloorMode,
+    calorieSafetyFloorValue,
   });
 
   debug(loggingLevel, 'DailyProgress: Calculated values', {
@@ -270,8 +301,8 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
       return `Goal target will use fallback BMR (${fallbackVal} ${unitStr}) due to: ${adaptiveTdeeData.fallbackReason}`;
     }
 
-    if (daysOfCalorieLogs < 14) {
-      return `Goal target will use fallback BMR (${fallbackVal} ${unitStr}) until 14 days of calorie logs are reached (currently ${daysOfCalorieLogs}/14 days logged).`;
+    if (daysOfCalorieLogs < ADAPTIVE_TDEE_GOAL_MIN_DAYS) {
+      return `Goal target will use fallback BMR (${fallbackVal} ${unitStr}) until ${ADAPTIVE_TDEE_GOAL_MIN_DAYS} days of calorie logs are reached (currently ${daysOfCalorieLogs}/${ADAPTIVE_TDEE_GOAL_MIN_DAYS} days logged).`;
     }
 
     return '';
@@ -627,7 +658,8 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
               )}
 
               {!adaptiveTdeeData.isFallback &&
-                (adaptiveTdeeData.daysOfData ?? 0) < 14 && (
+                (adaptiveTdeeData.daysOfData ?? 0) <
+                  ADAPTIVE_TDEE_GOAL_MIN_DAYS && (
                   <div className="flex items-start gap-1 mt-1 p-1.5 bg-blue-100 dark:bg-blue-900/30 rounded border border-blue-200 dark:border-blue-800">
                     <Info className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
                     <span className="text-[10px] text-blue-700 dark:text-blue-300">

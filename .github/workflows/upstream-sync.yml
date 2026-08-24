@@ -40,18 +40,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh label create upstream-sync \
+            --repo "${GITHUB_REPOSITORY}" \
             --color "1D76DB" \
             --description "Automated proposal containing official SparkyFitness upstream changes" \
             --force
           gh label create upstream-routine \
+            --repo "${GITHUB_REPOSITORY}" \
             --color "C2E0C6" \
             --description "No configured high-risk or overlapping paths detected" \
             --force
           gh label create upstream-review-required \
+            --repo "${GITHUB_REPOSITORY}" \
             --color "FBCA04" \
             --description "Touches fork-specific, sensitive, overlapping, or unusually large areas" \
             --force
           gh label create upstream-conflict \
+            --repo "${GITHUB_REPOSITORY}" \
             --color "D93F0B" \
             --description "The official upstream branch cannot be merged automatically" \
             --force
@@ -69,6 +73,7 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git" 2>/dev/null ||
             git remote set-url upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+          ISSUES_ENABLED="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues')"
 
           BASE_SHA="$(git rev-parse HEAD)"
           UPSTREAM_REF="upstream/${UPSTREAM_BRANCH}"
@@ -78,14 +83,18 @@ jobs:
             echo "has_changes=false" >> "${GITHUB_OUTPUT}"
             echo "Fork main already contains every upstream commit." >> "${GITHUB_STEP_SUMMARY}"
 
-            CONFLICT_ISSUE="$(gh issue list \
-              --state open \
-              --label upstream-conflict \
-              --json number \
-              --jq '.[0].number // empty')"
-            if [[ -n "${CONFLICT_ISSUE}" ]]; then
-              gh issue close "${CONFLICT_ISSUE}" \
-                --comment "The conflict is no longer present; fork main now contains the available upstream commits."
+            if [[ "${ISSUES_ENABLED}" == "true" ]]; then
+              CONFLICT_ISSUE="$(gh issue list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --state open \
+                --label upstream-conflict \
+                --json number \
+                --jq '.[0].number // empty')"
+              if [[ -n "${CONFLICT_ISSUE}" ]]; then
+                gh issue close "${CONFLICT_ISSUE}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --comment "The conflict is no longer present; fork main now contains the available upstream commits."
+              fi
             fi
             exit 0
           fi
@@ -164,23 +173,35 @@ jobs:
               printf '\nA human must decide how the fork-specific behavior and the upstream version should be combined.\n'
             } > "${CONFLICT_BODY}"
 
-            CONFLICT_ISSUE="$(gh issue list \
-              --state open \
-              --label upstream-conflict \
-              --json number \
-              --jq '.[0].number // empty')"
-            if [[ -n "${CONFLICT_ISSUE}" ]]; then
-              gh issue edit "${CONFLICT_ISSUE}" \
-                --title "Upstream sync requires a conflict decision" \
-                --body-file "${CONFLICT_BODY}" \
-                --add-label upstream-sync \
-                --add-label upstream-conflict
+            printf '\n' >> "${GITHUB_STEP_SUMMARY}"
+            cat "${CONFLICT_BODY}" >> "${GITHUB_STEP_SUMMARY}"
+
+            if [[ "${ISSUES_ENABLED}" == "true" ]]; then
+              CONFLICT_ISSUE="$(gh issue list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --state open \
+                --label upstream-conflict \
+                --json number \
+                --jq '.[0].number // empty')"
+              if [[ -n "${CONFLICT_ISSUE}" ]]; then
+                gh issue edit "${CONFLICT_ISSUE}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --title "Upstream sync requires a conflict decision" \
+                  --body-file "${CONFLICT_BODY}" \
+                  --add-label upstream-sync \
+                  --add-label upstream-conflict
+              else
+                gh issue create \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --title "Upstream sync requires a conflict decision" \
+                  --body-file "${CONFLICT_BODY}" \
+                  --label upstream-sync \
+                  --label upstream-conflict
+              fi
+              CONFLICT_REFERENCE='see the open `upstream-conflict` issue'
             else
-              gh issue create \
-                --title "Upstream sync requires a conflict decision" \
-                --body-file "${CONFLICT_BODY}" \
-                --label upstream-sync \
-                --label upstream-conflict
+              echo "::warning::Repository issues are disabled; conflict details are available in the workflow run summary."
+              CONFLICT_REFERENCE="see the failed workflow run summary"
             fi
 
             OPEN_PR="$(gh api \
@@ -202,7 +223,7 @@ jobs:
               gh api \
                 --method POST \
                 "repos/${GITHUB_REPOSITORY}/issues/${OPEN_PR}/comments" \
-                -f body='A newer upstream update has merge conflicts. This stale review PR was closed; see the open `upstream-conflict` issue.' \
+                -f "body=A newer upstream update has merge conflicts. This stale review PR was closed; ${CONFLICT_REFERENCE}." \
                 --silent
               gh api \
                 --method PATCH \
@@ -374,14 +395,18 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/${STALE_REVIEW_LABEL}" \
             --silent || true
 
-          CONFLICT_ISSUE="$(gh issue list \
-            --state open \
-            --label upstream-conflict \
-            --json number \
-            --jq '.[0].number // empty')"
-          if [[ -n "${CONFLICT_ISSUE}" ]]; then
-            gh issue close "${CONFLICT_ISSUE}" \
-              --comment "The newest upstream state now merges cleanly and is available in PR #${PR_NUMBER}."
+          if [[ "${ISSUES_ENABLED}" == "true" ]]; then
+            CONFLICT_ISSUE="$(gh issue list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --state open \
+              --label upstream-conflict \
+              --json number \
+              --jq '.[0].number // empty')"
+            if [[ -n "${CONFLICT_ISSUE}" ]]; then
+              gh issue close "${CONFLICT_ISSUE}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --comment "The newest upstream state now merges cleanly and is available in PR #${PR_NUMBER}."
+            fi
           fi
 
           echo "has_changes=true" >> "${GITHUB_OUTPUT}"

@@ -115,7 +115,8 @@ review approval, ready-for-review, merge, or direct `main` push operation.
   deployment, workflow, and dependency changes for focused review
 - Treats 20 commits, 50 files, or 1,500 changed lines as a large update
 - Dispatches the existing code/container CI and documentation build explicitly
-- Opens or updates an issue instead of guessing when Git reports conflicts
+- Writes the full conflict report to the workflow summary and, when repository
+  Issues are enabled, opens or updates a tracking issue instead of guessing
 
 **Safety**:
 
@@ -184,6 +185,16 @@ review approval, ready-for-review, merge, or direct `main` push operation.
 **Purpose**: Create release assets for published releases
 
 **Triggers**: Release publication
+
+---
+
+### Issue & PR Management Workflows
+
+#### `issue-auto-label.yml`
+
+**Purpose**: Automatically label newly opened or edited issues based on the issue template choices (e.g. `has-pr-volunteer`, `mobile`, `frontend`, `backend`).
+
+**Triggers**: Issues (opened, edited)
 
 ---
 
