@@ -10,10 +10,14 @@ import coachContextService, {
 import coachEventService from './coachEventService.js';
 import plannedWorkoutScheduleService from './plannedWorkoutScheduleService.js';
 import { log } from '../config/logging.js';
+import { evaluateProactiveCoachOpportunity } from './proactiveCoachDecisionService.js';
+import { composeAdaptiveCoachMessage } from './proactiveCoachMessageService.js';
 
 export const ADAPTIVE_COACH_START_MINUTES = 7 * 60;
 export const ADAPTIVE_COACH_END_MINUTES = 20 * 60;
 export const ADAPTIVE_COACH_INTERVAL_MINUTES = 2 * 60;
+export const ADAPTIVE_COACH_MIN_CHECK_GAP_MINUTES = 3;
+export const ADAPTIVE_COACH_MAX_CHECK_GAP_MINUTES = 8;
 
 function timeToMinutes(value: string): number {
   const [hour = '0', minute = '0'] = value.split(':');
@@ -44,15 +48,31 @@ export function getAdaptiveDeliverySlot(
   const localMinutes = local.hour * 60 + local.minute;
   const startMinutes = timeToMinutes(candidate.adaptiveStartTime);
   const endMinutes = timeToMinutes(candidate.adaptiveEndTime);
-  const intervalMinutes = candidate.adaptiveIntervalMinutes;
   if (localMinutes < startMinutes || localMinutes > endMinutes) {
     return null;
   }
-  const elapsed = localMinutes - startMinutes;
-  const slotMinutes =
-    startMinutes + Math.floor(elapsed / intervalMinutes) * intervalMinutes;
-  if (slotMinutes > endMinutes) return null;
-  return `${instantToDay(now, candidate.timezone)}T${minuteLabel(slotMinutes)}`;
+  const localDate = instantToDay(now, candidate.timezone);
+  let slotMinutes = startMinutes;
+  let latestDueSlot: number | null = null;
+  let index = 0;
+  while (slotMinutes <= endMinutes) {
+    const digest = createHash('sha256')
+      .update(`${candidate.userId}:${localDate}:${index}`)
+      .digest();
+    const gap =
+      ADAPTIVE_COACH_MIN_CHECK_GAP_MINUTES +
+      (digest.readUInt32BE(0) %
+        (ADAPTIVE_COACH_MAX_CHECK_GAP_MINUTES -
+          ADAPTIVE_COACH_MIN_CHECK_GAP_MINUTES +
+          1));
+    slotMinutes += gap;
+    if (slotMinutes > localMinutes || slotMinutes > endMinutes) break;
+    latestDueSlot = slotMinutes;
+    index += 1;
+  }
+  return latestDueSlot === null
+    ? null
+    : `${localDate}T${minuteLabel(latestDueSlot)}`;
 }
 
 export function getDueMessageKinds(
@@ -62,7 +82,7 @@ export function getDueMessageKinds(
   const kinds: ProactiveCoachMessageKind[] = [];
   const localDate = instantToDay(now, candidate.timezone);
   const adaptiveSlot = getAdaptiveDeliverySlot(candidate, now);
-  if (adaptiveSlot && candidate.adaptiveLastSentSlot !== adaptiveSlot) {
+  if (adaptiveSlot && candidate.adaptiveLastObservedSlot !== adaptiveSlot) {
     kinds.push('adaptive');
   }
   if (
@@ -460,48 +480,85 @@ export async function processDueProactiveCoachMessages(
           candidate.timezone
         );
         const localDate = instantToDay(now, candidate.timezone);
-        for (const kind of kinds) {
+        const scheduledKinds = kinds.filter((kind) => kind !== 'adaptive');
+        const kindsToProcess =
+          scheduledKinds.length > 0 ? scheduledKinds : kinds;
+        if (scheduledKinds.length > 0 && kinds.includes('adaptive')) {
+          const adaptiveDeliveryKey = getAdaptiveDeliverySlot(candidate, now);
+          if (adaptiveDeliveryKey) {
+            await coachProfileRepository.markAdaptiveSlotObserved(
+              candidate.userId,
+              adaptiveDeliveryKey
+            );
+          }
+        }
+        for (const kind of kindsToProcess) {
           const deliveryKey =
             kind === 'adaptive'
               ? getAdaptiveDeliverySlot(candidate, now)
               : localDate;
           if (!deliveryKey) continue;
-          const stateSignature =
-            kind === 'adaptive'
-              ? adaptiveStateSignature(
-                  snapshot,
-                  candidate.proactiveCategories,
-                  deliveryKey
-                )
-              : undefined;
-          if (
-            kind === 'adaptive' &&
-            stateSignature === candidate.adaptiveLastSignature
-          ) {
-            await coachProfileRepository.markAdaptiveSlotObserved(
-              candidate.userId,
+          if (kind === 'adaptive') {
+            const recentMessages =
+              await coachProfileRepository.listRecentProactiveMessages(
+                candidate.userId
+              );
+            const decision = evaluateProactiveCoachOpportunity({
+              snapshot,
+              categories: candidate.proactiveCategories,
+              timezone: candidate.timezone,
+              now,
+              minimumMessageIntervalMinutes: candidate.adaptiveIntervalMinutes,
+              lastAdaptiveMessageAt: candidate.adaptiveLastMessageAt,
+              lastUserMessageAt: candidate.lastUserMessageAt,
+              recentMessages,
+            });
+            if (!decision.shouldSend || !decision.opportunity) {
+              await coachProfileRepository.markAdaptiveSlotObserved(
+                candidate.userId,
+                deliveryKey
+              );
+              log(
+                'debug',
+                `Proactive coach observed ${deliveryKey} for user ${candidate.userId} without sending (${decision.reason}).`
+              );
+              continue;
+            }
+            const content = await composeAdaptiveCoachMessage({
+              userId: candidate.userId,
+              language: candidate.language,
               deliveryKey,
-              stateSignature
-            );
+              snapshot,
+              opportunity: decision.opportunity,
+              recentMessages,
+              coachingNotes: candidate.coachingNotes,
+              routines: candidate.routines,
+              memoryEnabled: candidate.memoryEnabled,
+            });
+            const saved =
+              await coachProfileRepository.saveProactiveMessageIfDue(
+                candidate.userId,
+                kind,
+                deliveryKey,
+                content,
+                decision.opportunity.stateSignature,
+                decision.opportunity
+              );
+            if (!saved) continue;
+            delivered++;
+            coachEventService.publish(candidate.userId, 'chat');
             continue;
           }
           const content =
-            kind === 'adaptive'
-              ? renderAdaptiveCoachMessage(
-                  snapshot,
-                  candidate.language,
-                  deliveryKey,
-                  candidate.proactiveCategories
-                )
-              : kind === 'daily'
-                ? renderDailyCoachMessage(snapshot, candidate.language)
-                : renderWeeklyCoachMessage(snapshot, candidate.language);
+            kind === 'daily'
+              ? renderDailyCoachMessage(snapshot, candidate.language)
+              : renderWeeklyCoachMessage(snapshot, candidate.language);
           const saved = await coachProfileRepository.saveProactiveMessageIfDue(
             candidate.userId,
             kind,
             deliveryKey,
             content,
-            stateSignature
+            undefined
           );
           if (!saved) continue;
           delivered++;

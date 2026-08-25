@@ -382,7 +382,7 @@ function CoachProfileForm({
                 <p className="text-xs text-muted-foreground">
                   {t(
                     'settings.coachProfile.adaptiveCheckInsDescription',
-                    'Every two hours from 07:00 to 20:00, Sparky checks today’s live values and only sends the next relevant action.'
+                    'Sparky wakes at varied short intervals, checks your live progress, and only writes when a timely coaching moment is worth interrupting you for.'
                   )}
                 </p>
               </div>
@@ -428,7 +428,7 @@ function CoachProfileForm({
               <Label htmlFor="adaptive-interval">
                 {t(
                   'settings.coachProfile.adaptiveInterval',
-                  'Interval (minutes)'
+                  'Minimum time between messages (minutes)'
                 )}
               </Label>
               <Input
