@@ -37,6 +37,11 @@ describe('coachProfileRepository proactive messages', () => {
           adaptive_interval_minutes: 120,
           proactive_categories: ['nutrition', 'hydration'],
           adaptive_last_signature: 'last-state',
+          adaptive_last_message_at: new Date('2026-08-17T17:00:00.000Z'),
+          last_user_message_at: null,
+          coaching_notes: 'Be direct',
+          routines: ['Train after work'],
+          memory_enabled: true,
           daily_check_in_enabled: true,
           daily_check_in_time: '20:00:00',
           daily_last_sent_on: '2026-08-17',
@@ -56,12 +61,17 @@ describe('coachProfileRepository proactive messages', () => {
         timezone: 'Europe/Berlin',
         language: 'de',
         adaptiveCheckInsEnabled: true,
-        adaptiveLastSentSlot: '2026-08-17T19:00',
+        adaptiveLastObservedSlot: '2026-08-17T19:00',
         adaptiveStartTime: '07:00',
         adaptiveEndTime: '20:00',
         adaptiveIntervalMinutes: 120,
         proactiveCategories: ['nutrition', 'hydration'],
         adaptiveLastSignature: 'last-state',
+        adaptiveLastMessageAt: '2026-08-17T17:00:00.000Z',
+        lastUserMessageAt: null,
+        coachingNotes: 'Be direct',
+        routines: ['Train after work'],
+        memoryEnabled: true,
         dailyCheckInEnabled: true,
         dailyCheckInTime: '20:00',
         dailyLastSentOn: '2026-08-17',
@@ -69,6 +79,30 @@ describe('coachProfileRepository proactive messages', () => {
         weeklyReviewDay: 0,
         weeklyReviewTime: '18:00',
         weeklyLastSentOn: null,
+      },
+    ]);
+  });
+
+  it('returns recent adaptive topics and signatures for repetition control', async () => {
+    userClient.query.mockResolvedValue({
+      rows: [
+        {
+          content: 'Heute ist dein Training der Hebel.',
+          topic: 'training',
+          state_signature: 'state-1',
+          created_at: new Date('2026-08-24T15:00:00.000Z'),
+        },
+      ],
+    });
+
+    await expect(
+      coachProfileRepository.listRecentProactiveMessages('user-1')
+    ).resolves.toEqual([
+      {
+        content: 'Heute ist dein Training der Hebel.',
+        topic: 'training',
+        stateSignature: 'state-1',
+        createdAt: '2026-08-24T15:00:00.000Z',
       },
     ]);
   });

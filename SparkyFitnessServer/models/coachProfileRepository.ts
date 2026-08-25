@@ -4,6 +4,11 @@ import type {
   UpdateCoachProfileRequest,
 } from '@workspace/shared';
 import { getClient, getSystemClient } from '../db/poolManager.js';
+import {
+  isProactiveCoachTopic,
+  type ProactiveCoachOpportunity,
+  type RecentProactiveCoachMessage,
+} from '../types/proactiveCoach.js';
 
 export type ProactiveCoachMessageKind = 'adaptive' | 'daily' | 'weekly';
 
@@ -12,12 +17,17 @@ export interface ProactiveCoachCandidate {
   timezone: string;
   language: string;
   adaptiveCheckInsEnabled: boolean;
-  adaptiveLastSentSlot: string | null;
+  adaptiveLastObservedSlot: string | null;
   adaptiveStartTime: string;
   adaptiveEndTime: string;
   adaptiveIntervalMinutes: number;
   proactiveCategories: ProactiveCoachCategory[];
   adaptiveLastSignature: string | null;
+  adaptiveLastMessageAt: string | null;
+  lastUserMessageAt: string | null;
+  coachingNotes: string | null;
+  routines: string[];
+  memoryEnabled: boolean;
   dailyCheckInEnabled: boolean;
   dailyCheckInTime: string;
   dailyLastSentOn: string | null;
@@ -169,6 +179,23 @@ async function listProactiveCoachCandidates(): Promise<
          cp.adaptive_interval_minutes,
          cp.proactive_categories,
          cp.adaptive_last_signature,
+         cp.coaching_notes,
+         cp.routines,
+         cp.memory_enabled,
+         (
+           SELECT MAX(history.created_at)
+           FROM sparky_chat_history history
+           WHERE history.user_id = cp.user_id
+             AND history.message_type = 'assistant'
+             AND history.metadata->>'source' = 'proactive_coach'
+             AND history.metadata->>'kind' = 'adaptive'
+         ) AS adaptive_last_message_at,
+         (
+           SELECT MAX(history.created_at)
+           FROM sparky_chat_history history
+           WHERE history.user_id = cp.user_id
+             AND history.message_type = 'user'
+         ) AS last_user_message_at,
          cp.daily_check_in_enabled,
          cp.daily_check_in_time,
          TO_CHAR(cp.daily_last_sent_on, 'YYYY-MM-DD') AS daily_last_sent_on,
@@ -190,7 +217,7 @@ async function listProactiveCoachCandidates(): Promise<
       timezone: String(row.timezone || 'UTC'),
       language: String(row.language || 'en'),
       adaptiveCheckInsEnabled: row.adaptive_check_ins_enabled === true,
-      adaptiveLastSentSlot:
+      adaptiveLastObservedSlot:
         typeof row.adaptive_last_sent_slot === 'string'
           ? row.adaptive_last_sent_slot
           : null,
@@ -204,6 +231,16 @@ async function listProactiveCoachCandidates(): Promise<
         typeof row.adaptive_last_signature === 'string'
           ? row.adaptive_last_signature
           : null,
+      adaptiveLastMessageAt: timestampString(row.adaptive_last_message_at),
+      lastUserMessageAt: timestampString(row.last_user_message_at),
+      coachingNotes:
+        typeof row.coaching_notes === 'string' ? row.coaching_notes : null,
+      routines: Array.isArray(row.routines)
+        ? row.routines.filter(
+            (value): value is string => typeof value === 'string'
+          )
+        : [],
+      memoryEnabled: row.memory_enabled === true,
       dailyCheckInEnabled: row.daily_check_in_enabled === true,
       dailyCheckInTime: String(row.daily_check_in_time).slice(0, 5),
       dailyLastSentOn:
@@ -217,6 +254,46 @@ async function listProactiveCoachCandidates(): Promise<
         typeof row.weekly_last_sent_on === 'string'
           ? row.weekly_last_sent_on
           : null,
+    }));
+  } finally {
+    client.release();
+  }
+}
+
+function timestampString(value: unknown): string | null {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== 'string') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+async function listRecentProactiveMessages(
+  userId: string,
+  limit = 8
+): Promise<RecentProactiveCoachMessage[]> {
+  const client = await getClient(userId, userId);
+  try {
+    const { rows } = await client.query(
+      `SELECT
+         content,
+         metadata->>'topic' AS topic,
+         metadata->>'stateSignature' AS state_signature,
+         created_at
+       FROM sparky_chat_history
+       WHERE user_id = $1
+         AND message_type = 'assistant'
+         AND metadata->>'source' = 'proactive_coach'
+         AND metadata->>'kind' = 'adaptive'
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [userId, Math.max(1, Math.min(20, Math.round(limit)))]
+    );
+    return rows.map((row: Record<string, unknown>) => ({
+      content: String(row.content ?? ''),
+      topic: isProactiveCoachTopic(row.topic) ? row.topic : null,
+      stateSignature:
+        typeof row.state_signature === 'string' ? row.state_signature : null,
+      createdAt: timestampString(row.created_at) ?? new Date(0).toISOString(),
     }));
   } finally {
     client.release();
@@ -243,7 +320,8 @@ async function saveProactiveMessageIfDue(
   kind: ProactiveCoachMessageKind,
   deliveryKey: string,
   content: string,
-  stateSignature?: string
+  stateSignature?: string,
+  opportunity?: Pick<ProactiveCoachOpportunity, 'topic' | 'score' | 'tone'>
 ): Promise<boolean> {
   const client = await getClient(userId, userId);
   const markerColumn =
@@ -285,6 +363,14 @@ async function saveProactiveMessageIfDue(
       kind,
       localDate: deliveryKey.slice(0, 10),
       deliveryKey,
+      ...(stateSignature ? { stateSignature } : {}),
+      ...(opportunity
+        ? {
+            topic: opportunity.topic,
+            relevanceScore: opportunity.score,
+            tone: opportunity.tone,
+          }
+        : {}),
     };
     await client.query(
       `INSERT INTO sparky_chat_history
@@ -325,21 +411,19 @@ async function saveProactiveMessageIfDue(
 
 async function markAdaptiveSlotObserved(
   userId: string,
-  deliveryKey: string,
-  stateSignature: string
+  deliveryKey: string
 ): Promise<void> {
   const client = await getClient(userId, userId);
   try {
     await client.query(
       `UPDATE coach_profiles
        SET adaptive_last_sent_slot = $2,
-           adaptive_last_signature = $3,
            updated_at = now()
        WHERE user_id = $1
          AND enabled = TRUE
          AND adaptive_check_ins_enabled = TRUE
          AND adaptive_last_sent_slot IS DISTINCT FROM $2`,
-      [userId, deliveryKey, stateSignature]
+      [userId, deliveryKey]
     );
   } finally {
     client.release();
@@ -350,6 +434,7 @@ export default {
   getCoachProfile,
   upsertCoachProfile,
   listProactiveCoachCandidates,
+  listRecentProactiveMessages,
   getCoachLanguage,
   saveProactiveMessageIfDue,
   markAdaptiveSlotObserved,
