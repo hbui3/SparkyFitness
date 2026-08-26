@@ -13,6 +13,7 @@ import {
   getAggregatedActiveCaloriesByDateDetailed,
   enrichExerciseSessions,
   alignToLocalDayStart,
+  sessionCacheKey,
 } from '../../../src/services/healthconnect/index';
 
 // Helpers — construct test dates in local time so the per-day window math
@@ -35,7 +36,11 @@ import {
 
 import type { PermissionRequest, GrantedPermission } from '../../../src/types/healthRecords';
 import type { SyncDuration } from '../../../src/services/healthconnect/preferences';
-import { createTelemetryRunContext } from '../../../src/services/shared/telemetryBudget';
+import {
+  createTelemetryRunContext,
+  type TelemetryRunContext,
+} from '../../../src/services/shared/telemetryBudget';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 jest.mock('../../../src/services/LogService', () => ({
   addLog: jest.fn(),
@@ -1051,11 +1056,21 @@ describe('getAggregatedActiveCaloriesByDate', () => {
 
   test('does not replace a reported active-calorie aggregate', async () => {
     mockAggregateGroupByPeriod.mockImplementation(
-      ({ recordType }: { recordType: string }) => recordType === 'ActiveCaloriesBurned'
-        ? Promise.resolve([
+      ({ recordType }: { recordType: string }) => {
+        if (recordType === 'ActiveCaloriesBurned') {
+          return Promise.resolve([
             periodBucket(2024, 1, 15, { ACTIVE_CALORIES_TOTAL: { inKilocalories: 525 } }),
-          ])
-        : Promise.resolve([]),
+          ]);
+        }
+        if (recordType === 'TotalCaloriesBurned') {
+          return Promise.resolve([
+            periodBucket(2024, 1, 15, { ENERGY_TOTAL: { inKilocalories: 2400 } }),
+          ]);
+        }
+        return Promise.resolve([
+          periodBucket(2024, 1, 15, { BASAL_CALORIES_TOTAL: { inKilocalories: 1750 } }),
+        ]);
+      },
     );
 
     const result = await getAggregatedActiveCaloriesByDate(
@@ -1065,18 +1080,106 @@ describe('getAggregatedActiveCaloriesByDate', () => {
 
     expect(result[0].value).toBe(525);
     expect(result).toHaveLength(1);
-    expect(mockAggregateGroupByPeriod).toHaveBeenCalledTimes(1);
   });
 
-  test('does not derive missing dates when the active aggregate has any records', async () => {
+  test('does not query basal calories when total has no dates missing from active', async () => {
     mockAggregateGroupByPeriod.mockImplementation(
-      ({ recordType }: { recordType: string }) => recordType === 'ActiveCaloriesBurned'
-        ? Promise.resolve([
+      ({ recordType }: { recordType: string }) => {
+        if (recordType === 'ActiveCaloriesBurned') {
+          return Promise.resolve([
             periodBucket(2024, 1, 15, { ACTIVE_CALORIES_TOTAL: { inKilocalories: 525 } }),
-          ])
-        : Promise.resolve([
+          ]);
+        }
+        if (recordType === 'TotalCaloriesBurned') {
+          return Promise.resolve([
+            periodBucket(2024, 1, 15, { ENERGY_TOTAL: { inKilocalories: 2400 } }),
+          ]);
+        }
+        return Promise.reject(new Error('Basal permission denied'));
+      },
+    );
+
+    const result = await getAggregatedActiveCaloriesByDateDetailed(
+      localMidnight(2024, 1, 15),
+      localEndOfDay(2024, 1, 15),
+    );
+
+    expect(result).toEqual({
+      records: [{ date: '2024-01-15', value: 525, type: 'active_calories' }],
+    });
+    expect(mockAggregateGroupByPeriod.mock.calls.map(
+      (call: unknown[]) => (call[0] as { recordType: string }).recordType,
+    )).not.toContain('BasalMetabolicRate');
+  });
+
+  test('does not surface an optional total-calorie error after the native active read succeeds', async () => {
+    mockAggregateGroupByPeriod.mockImplementation(
+      ({ recordType }: { recordType: string }) => {
+        if (recordType === 'ActiveCaloriesBurned') {
+          return Promise.resolve([
+            periodBucket(2024, 1, 15, { ACTIVE_CALORIES_TOTAL: { inKilocalories: 525 } }),
+          ]);
+        }
+        if (recordType === 'TotalCaloriesBurned') {
+          return Promise.reject(new Error('Total permission denied'));
+        }
+        return Promise.resolve([]);
+      },
+    );
+
+    const result = await getAggregatedActiveCaloriesByDateDetailed(
+      localMidnight(2024, 1, 15),
+      localEndOfDay(2024, 1, 15),
+    );
+
+    expect(result).toEqual({
+      records: [{ date: '2024-01-15', value: 525, type: 'active_calories' }],
+    });
+  });
+
+  test('surfaces a total-calorie error when native active coverage is only partial', async () => {
+    mockAggregateGroupByPeriod.mockImplementation(
+      ({ recordType }: { recordType: string }) => {
+        if (recordType === 'ActiveCaloriesBurned') {
+          return Promise.resolve([
+            periodBucket(2024, 1, 15, { ACTIVE_CALORIES_TOTAL: { inKilocalories: 525 } }),
+          ]);
+        }
+        if (recordType === 'TotalCaloriesBurned') {
+          return Promise.reject(new Error('Total read failed'));
+        }
+        return Promise.resolve([]);
+      },
+    );
+
+    const result = await getAggregatedActiveCaloriesByDateDetailed(
+      localMidnight(2024, 1, 15),
+      localEndOfDay(2024, 1, 16),
+    );
+
+    expect(result.records).toEqual([
+      { date: '2024-01-15', value: 525, type: 'active_calories' },
+    ]);
+    expect(result.error).toContain('Total read failed');
+  });
+
+  test('derives only dates missing from a partial active-calorie aggregate', async () => {
+    mockAggregateGroupByPeriod.mockImplementation(
+      ({ recordType }: { recordType: string }) => {
+        if (recordType === 'ActiveCaloriesBurned') {
+          return Promise.resolve([
+            periodBucket(2024, 1, 15, { ACTIVE_CALORIES_TOTAL: { inKilocalories: 525 } }),
+          ]);
+        }
+        if (recordType === 'TotalCaloriesBurned') {
+          return Promise.resolve([
             periodBucket(2024, 1, 16, { ENERGY_TOTAL: { inKilocalories: 2400 } }),
-          ]),
+          ]);
+        }
+        return Promise.resolve([
+          periodBucket(2024, 1, 16, { BASAL_CALORIES_TOTAL: { inKilocalories: 1750 } }),
+        ]);
+      },
     );
 
     const result = await getAggregatedActiveCaloriesByDate(
@@ -1086,8 +1189,8 @@ describe('getAggregatedActiveCaloriesByDate', () => {
 
     expect(result).toEqual([
       { date: '2024-01-15', value: 525, type: 'active_calories' },
+      { date: '2024-01-16', value: 650, type: 'active_calories' },
     ]);
-    expect(mockAggregateGroupByPeriod).toHaveBeenCalledTimes(1);
   });
 
   test('propagates an active-read error even when fallback rows are derived', async () => {
@@ -1143,7 +1246,7 @@ describe('enrichExerciseSessions', () => {
   });
 
   test('returns empty array for empty input', async () => {
-    const result = await enrichExerciseSessions([]);
+    const result = await enrichExerciseSessions([], createTelemetryRunContext());
     expect(result).toEqual([]);
     expect(mockAggregateRecord).not.toHaveBeenCalled();
   });
@@ -1159,7 +1262,7 @@ describe('enrichExerciseSessions', () => {
       return Promise.resolve({});
     });
 
-    const result = await enrichExerciseSessions([makeSession()]);
+    const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
     expect(result[0]).toMatchObject({
       energy: { inKilocalories: 350 },
@@ -1182,7 +1285,7 @@ describe('enrichExerciseSessions', () => {
       return Promise.resolve({});
     });
 
-    const result = await enrichExerciseSessions([makeSession()]);
+    const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
     expect(result[0]).toMatchObject({
       energy: { inKilocalories: 380 },
@@ -1203,7 +1306,7 @@ describe('enrichExerciseSessions', () => {
       return Promise.resolve({});
     });
 
-    const result = await enrichExerciseSessions([makeSession()]);
+    const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
     expect(result[0]).toMatchObject({
       energy: { inKilocalories: 420 },
@@ -1224,7 +1327,7 @@ describe('enrichExerciseSessions', () => {
       return Promise.resolve({});
     });
 
-    const result = await enrichExerciseSessions([makeSession()]);
+    const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
     expect(result[0]).toMatchObject({
       energy: { inKilocalories: 200 },
@@ -1246,7 +1349,7 @@ describe('enrichExerciseSessions', () => {
     });
 
     const session = makeSession();
-    const result = await enrichExerciseSessions([session]);
+    const result = await enrichExerciseSessions([session], createTelemetryRunContext());
 
     expect(result[0]).toEqual(session);
   });
@@ -1255,7 +1358,7 @@ describe('enrichExerciseSessions', () => {
     mockAggregateRecord.mockResolvedValue({});
 
     const session = makeSession();
-    const result = await enrichExerciseSessions([session]);
+    const result = await enrichExerciseSessions([session], createTelemetryRunContext());
 
     expect(result[0]).toEqual(session);
   });
@@ -1264,7 +1367,7 @@ describe('enrichExerciseSessions', () => {
     mockAggregateRecord.mockRejectedValue(new Error('Permission denied'));
 
     const session = makeSession();
-    const result = await enrichExerciseSessions([session]);
+    const result = await enrichExerciseSessions([session], createTelemetryRunContext());
 
     expect(result[0]).toEqual(session);
   });
@@ -1272,7 +1375,7 @@ describe('enrichExerciseSessions', () => {
   test('skips records without startTime or endTime', async () => {
     const incompleteSession = { metadata: { dataOrigin: 'com.fitbit' } };
 
-    const result = await enrichExerciseSessions([incompleteSession]);
+    const result = await enrichExerciseSessions([incompleteSession], createTelemetryRunContext());
 
     expect(result[0]).toEqual(incompleteSession);
     expect(mockAggregateRecord).not.toHaveBeenCalled();
@@ -1284,23 +1387,143 @@ describe('enrichExerciseSessions', () => {
       endTime: '2024-01-15T10:00:00Z',
     });
 
-    const result = await enrichExerciseSessions([invalidSession]);
+    const result = await enrichExerciseSessions([invalidSession], createTelemetryRunContext());
 
     expect(result[0]).toEqual(invalidSession);
     expect(mockAggregateRecord).not.toHaveBeenCalled();
   });
 
-  test('issues all three aggregates in parallel with the same dataOriginFilter', async () => {
-    mockAggregateRecord.mockResolvedValue({});
+  test('keeps complete calorie and distance aggregates scoped to the session origin', async () => {
+    mockAggregateRecord.mockImplementation(({ recordType }: { recordType: string }) => {
+      if (recordType === 'ActiveCaloriesBurned') {
+        return Promise.resolve({ ACTIVE_CALORIES_TOTAL: { inKilocalories: 300 } });
+      }
+      if (recordType === 'TotalCaloriesBurned') {
+        return Promise.resolve({ ENERGY_TOTAL: { inKilocalories: 350 } });
+      }
+      return Promise.resolve({ DISTANCE: { inMeters: 5000 } });
+    });
 
-    await enrichExerciseSessions([makeSession({ metadata: { dataOrigin: 'com.ohealth' } })]);
+    const result = await enrichExerciseSessions(
+      [makeSession({ metadata: { dataOrigin: 'com.ohealth' } })],
+      createTelemetryRunContext(),
+    );
 
-    const recordTypes = mockAggregateRecord.mock.calls.map((c: unknown[]) => (c[0] as { recordType: string }).recordType);
-    expect(recordTypes).toHaveLength(3);
-    expect(recordTypes).toEqual(expect.arrayContaining(['ActiveCaloriesBurned', 'TotalCaloriesBurned', 'Distance']));
-    for (const call of mockAggregateRecord.mock.calls) {
-      expect(call[0].dataOriginFilter).toEqual(['com.ohealth']);
-    }
+    const requests = mockAggregateRecord.mock.calls.map((call: unknown[]) => call[0] as {
+      recordType: string;
+      dataOriginFilter?: string[];
+    });
+    expect(requests).toHaveLength(3);
+    expect(requests.every(request =>
+      request.dataOriginFilter?.[0] === 'com.ohealth',
+    )).toBe(true);
+    expect(result[0]).toMatchObject({
+      energy: { inKilocalories: 300 },
+      distance: { inMeters: 5000 },
+    });
+  });
+
+  test('uses cross-origin calories when the Hevy-scoped pair is incomplete', async () => {
+    mockAggregateRecord.mockImplementation((request: { recordType: string; dataOriginFilter?: string[] }) => {
+      if (request.recordType === 'ActiveCaloriesBurned') {
+        return Promise.resolve({ ACTIVE_CALORIES_TOTAL: { inKilocalories: 50 } });
+      }
+      if (request.recordType === 'TotalCaloriesBurned') {
+        return Promise.resolve(request.dataOriginFilter
+          ? {}
+          : { ENERGY_TOTAL: { inKilocalories: 307 } });
+      }
+      return Promise.resolve({});
+    });
+
+    const result = await enrichExerciseSessions([
+      makeSession({
+        startTime: '2024-01-15T10:00:00Z',
+        endTime: '2024-01-15T10:40:00Z',
+        metadata: { dataOrigin: 'app.hevy' },
+      }),
+    ], createTelemetryRunContext());
+
+    expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 307 });
+    const calorieRequests = mockAggregateRecord.mock.calls
+      .map((call: unknown[]) => call[0] as { recordType: string; dataOriginFilter?: string[] })
+      .filter(request => request.recordType !== 'Distance');
+    expect(calorieRequests).toEqual([
+      expect.objectContaining({
+        recordType: 'ActiveCaloriesBurned',
+        dataOriginFilter: ['app.hevy'],
+      }),
+      expect.objectContaining({
+        recordType: 'TotalCaloriesBurned',
+        dataOriginFilter: ['app.hevy'],
+      }),
+      expect.objectContaining({ recordType: 'ActiveCaloriesBurned' }),
+      expect.objectContaining({ recordType: 'TotalCaloriesBurned' }),
+    ]);
+    expect(calorieRequests[2]).not.toHaveProperty('dataOriginFilter');
+    expect(calorieRequests[3]).not.toHaveProperty('dataOriginFilter');
+  });
+
+  test('uses cross-origin calories when the scoped pair fails the session ratio check', async () => {
+    mockAggregateRecord.mockImplementation((request: { recordType: string; dataOriginFilter?: string[] }) => {
+      if (request.recordType === 'ActiveCaloriesBurned') {
+        return Promise.resolve({
+          ACTIVE_CALORIES_TOTAL: { inKilocalories: request.dataOriginFilter ? 20 : 45 },
+        });
+      }
+      if (request.recordType === 'TotalCaloriesBurned') {
+        return Promise.resolve({
+          ENERGY_TOTAL: { inKilocalories: request.dataOriginFilter ? 150 : 307 },
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const result = await enrichExerciseSessions([
+      makeSession({
+        startTime: '2024-01-15T10:00:00Z',
+        endTime: '2024-01-15T10:40:00Z',
+        metadata: { dataOrigin: 'app.hevy' },
+      }),
+    ], createTelemetryRunContext());
+
+    expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 307 });
+    const calorieRequests = mockAggregateRecord.mock.calls
+      .map((call: unknown[]) => call[0] as { recordType: string; dataOriginFilter?: string[] })
+      .filter(request => request.recordType !== 'Distance');
+    expect(calorieRequests).toHaveLength(4);
+    expect(calorieRequests.slice(0, 2).every(
+      request => request.dataOriginFilter?.[0] === 'app.hevy',
+    )).toBe(true);
+    expect(calorieRequests.slice(2).every(
+      request => request.dataOriginFilter == null,
+    )).toBe(true);
+  });
+
+  test('rejects scoped active calories above total and retries across origins', async () => {
+    mockAggregateRecord.mockImplementation((request: { recordType: string; dataOriginFilter?: string[] }) => {
+      if (request.recordType === 'ActiveCaloriesBurned') {
+        return Promise.resolve({
+          ACTIVE_CALORIES_TOTAL: { inKilocalories: request.dataOriginFilter ? 400 : 320 },
+        });
+      }
+      if (request.recordType === 'TotalCaloriesBurned') {
+        return Promise.resolve({
+          ENERGY_TOTAL: { inKilocalories: request.dataOriginFilter ? 300 : 350 },
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const result = await enrichExerciseSessions([
+      makeSession({ metadata: { dataOrigin: 'app.hevy' } }),
+    ], createTelemetryRunContext());
+
+    expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 320 });
+    const calorieRequests = mockAggregateRecord.mock.calls
+      .map((call: unknown[]) => call[0] as { recordType: string; dataOriginFilter?: string[] })
+      .filter(request => request.recordType !== 'Distance');
+    expect(calorieRequests).toHaveLength(4);
   });
 
   test('prefers TotalCaloriesBurned when ActiveCaloriesBurned is a tiny passive fragment (issue #1296: 41-min walk)', async () => {
@@ -1317,7 +1540,7 @@ describe('enrichExerciseSessions', () => {
     // 41-minute walk
     const result = await enrichExerciseSessions([
       makeSession({ startTime: '2024-01-15T10:00:00Z', endTime: '2024-01-15T10:41:00Z' }),
-    ]);
+    ], createTelemetryRunContext());
 
     expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 265 });
   });
@@ -1336,7 +1559,7 @@ describe('enrichExerciseSessions', () => {
     // 35-minute indoor bike
     const result = await enrichExerciseSessions([
       makeSession({ startTime: '2024-01-15T10:00:00Z', endTime: '2024-01-15T10:35:00Z' }),
-    ]);
+    ], createTelemetryRunContext());
 
     expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 314 });
   });
@@ -1352,7 +1575,7 @@ describe('enrichExerciseSessions', () => {
       return Promise.resolve({});
     });
 
-    const result = await enrichExerciseSessions([makeSession()]);
+    const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
     expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 337 });
   });
@@ -1368,7 +1591,7 @@ describe('enrichExerciseSessions', () => {
       return Promise.resolve({});
     });
 
-    const result = await enrichExerciseSessions([makeSession()]);
+    const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
     expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 200 });
   });
@@ -1387,7 +1610,7 @@ describe('enrichExerciseSessions', () => {
     // 60-minute session: cap = 120, delta = 80 → passes OR-clause
     const result = await enrichExerciseSessions([
       makeSession({ startTime: '2024-01-15T10:00:00Z', endTime: '2024-01-15T11:00:00Z' }),
-    ]);
+    ], createTelemetryRunContext());
 
     expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 100 });
   });
@@ -1406,7 +1629,7 @@ describe('enrichExerciseSessions', () => {
     // 35-minute session: cap = 70, delta = 280 → fails OR-clause; ratio = 0.067 → fails
     const result = await enrichExerciseSessions([
       makeSession({ startTime: '2024-01-15T10:00:00Z', endTime: '2024-01-15T10:35:00Z' }),
-    ]);
+    ], createTelemetryRunContext());
 
     expect((result[0] as { energy: { inKilocalories: number } }).energy).toEqual({ inKilocalories: 300 });
   });
@@ -1422,7 +1645,7 @@ describe('enrichExerciseSessions', () => {
     // 35-minute session, 51 m aggregate distance (HealthSync indoor bike contamination)
     const result = await enrichExerciseSessions([
       makeSession({ startTime: '2024-01-15T10:00:00Z', endTime: '2024-01-15T10:35:00Z' }),
-    ]);
+    ], createTelemetryRunContext());
 
     expect('distance' in (result[0] as Record<string, unknown>)).toBe(false);
   });
@@ -1438,7 +1661,7 @@ describe('enrichExerciseSessions', () => {
     // 5-minute session, 90 m: short enough that the plausibility floor doesn't apply
     const result = await enrichExerciseSessions([
       makeSession({ startTime: '2024-01-15T10:00:00Z', endTime: '2024-01-15T10:05:00Z' }),
-    ]);
+    ], createTelemetryRunContext());
 
     expect((result[0] as { distance: { inMeters: number } }).distance).toEqual({ inMeters: 90 });
   });
@@ -1471,7 +1694,7 @@ describe('enrichExerciseSessions', () => {
         return Promise.resolve({ records: [] });
       });
 
-      const result = await enrichExerciseSessions([makeSession()]);
+      const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
       const enriched = result[0] as Record<string, unknown>;
       expect(enriched.hr_samples).toEqual([
@@ -1508,7 +1731,7 @@ describe('enrichExerciseSessions', () => {
         return Promise.resolve({ records: [] });
       });
 
-      const result = await enrichExerciseSessions([makeSession()]);
+      const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
       expect(
         (result[0] as { telemetry: { active_calories?: number } }).telemetry
@@ -1524,7 +1747,7 @@ describe('enrichExerciseSessions', () => {
             { startTime: '2024-01-15T10:30:00Z', endTime: '2024-01-15T11:00:00Z' },
           ],
         }),
-      ]);
+      ], createTelemetryRunContext());
 
       expect(result[0]).toMatchObject({
         laps: [
@@ -1538,7 +1761,7 @@ describe('enrichExerciseSessions', () => {
       // readRecords/aggregateRecord default to empty via jest.setup.js — this
       // is the "nothing to enrich" baseline every other case in this describe
       // block is a variation of.
-      const result = await enrichExerciseSessions([makeSession()]);
+      const result = await enrichExerciseSessions([makeSession()], createTelemetryRunContext());
 
       const enriched = result[0] as Record<string, unknown>;
       expect(enriched.gps_points).toBeUndefined();
@@ -1725,5 +1948,412 @@ describe('ensureHistoryReadPermission', () => {
     mockGetGrantedPermissions.mockRejectedValue(new Error('bridge unavailable'));
 
     await expect(ensureHistoryReadPermission()).resolves.toBe(false);
+  });
+});
+
+describe('enrichExerciseSessions bounded fan-out and reuse (#2191)', () => {
+  const {
+    _resetEnrichedSessionCacheForTests,
+    markEnrichedSessions,
+    hasEnrichedSession,
+  } = require('../../../src/services/shared/enrichedSessionCache');
+
+  // Enrichment only stages cache keys on the run context; the sync shell drains
+  // and persists them after the server accepts the upload. This stands in for
+  // that boundary.
+  const enrichAndUpload = async (records: unknown[], ctx: TelemetryRunContext) => {
+    const result = await enrichExerciseSessions(records, ctx);
+    await markEnrichedSessions(ctx.drainCollected());
+    return result;
+  };
+
+  const session = (id: string, startTime: string) => ({
+    startTime,
+    endTime: new Date(Date.parse(startTime) + 60 * 60 * 1000).toISOString(),
+    metadata: { dataOrigin: 'com.fitbit', id, lastModifiedTime: startTime },
+  });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    _resetEnrichedSessionCacheForTests();
+    await AsyncStorage.clear();
+    mockAggregateRecord.mockResolvedValue({});
+    mockReadRecords.mockResolvedValue({ records: [] });
+  });
+
+  const trackPeak = (mock: jest.Mock, result: unknown) => {
+    const state = { inFlight: 0, peak: 0 };
+    mock.mockImplementation(async () => {
+      state.inFlight++;
+      state.peak = Math.max(state.peak, state.inFlight);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      state.inFlight--;
+      return result;
+    });
+    return state;
+  };
+
+  const tenSessions = () =>
+    Array.from({ length: 10 }, (_, i) =>
+      session(`s${i}`, `2024-01-${String(10 + i).padStart(2, '0')}T10:00:00.000Z`),
+    );
+
+  test('a session whose telemetry read hit the quota is not cached as collected', async () => {
+    // A quota or dead-client failure says nothing about whether this session
+    // has telemetry — it is the same read failing for everyone. Caching it
+    // would be permanent: the cache has no expiry, so the session is re-sent
+    // summary-only forever (#2191 follow-up).
+    mockReadRecords.mockRejectedValue(new Error('API call quota exceeded'));
+    const s1 = session('s1', '2024-01-10T10:00:00.000Z');
+
+    await enrichAndUpload([s1], createTelemetryRunContext());
+
+    expect(await hasEnrichedSession(sessionCacheKey(s1))).toBe(false);
+  });
+
+  test('a dead client is treated the same as a quota failure', async () => {
+    mockReadRecords.mockRejectedValue(new Error('client is not initialized'));
+    const s1 = session('s1', '2024-01-10T10:00:00.000Z');
+
+    await enrichAndUpload([s1], createTelemetryRunContext());
+
+    expect(await hasEnrichedSession(sessionCacheKey(s1))).toBe(false);
+  });
+
+  test('a session that genuinely had nothing beyond its summary IS cached', async () => {
+    // The reads that established there is nothing are exactly what must not
+    // repeat every sync — this is the case the cache exists for.
+    mockReadRecords.mockResolvedValue({ records: [] });
+    const s1 = session('s1', '2024-01-10T10:00:00.000Z');
+
+    await enrichAndUpload([s1], createTelemetryRunContext());
+
+    expect(await hasEnrichedSession(sessionCacheKey(s1))).toBe(true);
+  });
+
+  test('a generic native read failure is not cached as empty telemetry', async () => {
+    // Neither proof the series is absent nor a stable authorization result.
+    // The default has to be "retry", because caching it is permanent.
+    mockReadRecords.mockRejectedValue(new Error('Binder transaction failed'));
+    const s1 = session('s1', '2024-01-10T10:00:00.000Z');
+
+    await enrichAndUpload([s1], createTelemetryRunContext());
+
+    expect(await hasEnrichedSession(sessionCacheKey(s1))).toBe(false);
+  });
+
+  test('an unavailable record type is a stable answer and still caches', async () => {
+    // Distinct from the retryable failures above: "this type is unavailable or
+    // unauthorized here" does not change between syncs, so re-reading it every
+    // sync is the cost the cache exists to avoid.
+    mockReadRecords.mockRejectedValue(new Error('SecurityException: not authorized'));
+    const s1 = session('s1', '2024-01-10T10:00:00.000Z');
+
+    await enrichAndUpload([s1], createTelemetryRunContext());
+
+    expect(await hasEnrichedSession(sessionCacheKey(s1))).toBe(true);
+  });
+
+  test('the cheap calorie/distance aggregates run at the wider limit', async () => {
+    const aggregates = trackPeak(mockAggregateRecord, {});
+    trackPeak(mockReadRecords, { records: [] });
+
+    await enrichExerciseSessions(tenSessions(), createTelemetryRunContext());
+
+    // AGGREGATE_CONCURRENCY (6) sessions × 3 scalar aggregates each. The point
+    // is that ten sessions do not become thirty concurrent calls.
+    expect(aggregates.peak).toBeLessThanOrEqual(18);
+  });
+
+  test('telemetry stays capped at two sessions however wide the outer batch runs', async () => {
+    trackPeak(mockAggregateRecord, {});
+    const telemetryReads = trackPeak(mockReadRecords, { records: [] });
+
+    await enrichExerciseSessions(tenSessions(), createTelemetryRunContext());
+
+    // Only readRecords carries telemetry (route plus up to five sample series).
+    // TELEMETRY_CONCURRENCY (2) sessions × 6 parallel reads = 12. Without the
+    // limiter the outer batch of 6 would put ~36 in flight — and the original
+    // unbounded version put all ten sessions' worth in flight at once, which is
+    // what froze the UI in #2191.
+    expect(telemetryReads.peak).toBeLessThanOrEqual(12);
+  });
+
+  test('preserves input order despite batching', async () => {
+    mockAggregateRecord.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 3));
+      return {};
+    });
+
+    const sessions = Array.from({ length: 6 }, (_, i) =>
+      session(`s${i}`, `2024-01-${String(10 + i).padStart(2, '0')}T10:00:00.000Z`),
+    );
+
+    const result = await enrichExerciseSessions(sessions, createTelemetryRunContext());
+
+    expect(result.map(r => (r as { metadata: { id: string } }).metadata.id)).toEqual(
+      ['s0', 's1', 's2', 's3', 's4', 's5'],
+    );
+  });
+
+  test('a session collected once is not re-collected on the next run', async () => {
+    const sessions = [session('s1', '2024-01-15T10:00:00.000Z')];
+
+    await enrichAndUpload(sessions, createTelemetryRunContext());
+    const firstRunReads = mockReadRecords.mock.calls.length;
+    expect(firstRunReads).toBeGreaterThan(0);
+
+    mockReadRecords.mockClear();
+    await enrichAndUpload(sessions, createTelemetryRunContext());
+
+    expect(mockReadRecords).not.toHaveBeenCalled();
+  });
+
+  test('a cached session does not consume a budget slot, so the next one still gets it', async () => {
+    const cached = session('cached', '2024-01-16T10:00:00.000Z');
+    const fresh = session('fresh', '2024-01-15T10:00:00.000Z');
+
+    // Prime the cache with the newer session only.
+    await enrichAndUpload([cached], createTelemetryRunContext());
+    mockReadRecords.mockClear();
+
+    // Budget of exactly 1: without the skip, the newest-first claim would spend
+    // it on the already-collected session and the fresh one would get nothing.
+    await enrichAndUpload(
+      [cached, fresh],
+      createTelemetryRunContext({ budget: 1 }),
+    );
+
+    const windows = mockReadRecords.mock.calls.map(c => c[1].timeRangeFilter.startTime);
+    expect(windows).toContain(fresh.startTime);
+    expect(windows).not.toContain(cached.startTime);
+  });
+
+  test('a re-edited session is collected again rather than frozen', async () => {
+    const original = session('s1', '2024-01-15T10:00:00.000Z');
+    await enrichAndUpload([original], createTelemetryRunContext());
+    mockReadRecords.mockClear();
+
+    const edited = {
+      ...original,
+      metadata: { ...original.metadata, lastModifiedTime: '2024-01-15T12:00:00.000Z' },
+    };
+    await enrichAndUpload([edited], createTelemetryRunContext());
+
+    expect(mockReadRecords).toHaveBeenCalled();
+  });
+});
+
+describe('readHealthRecordsDetailed fallback short-circuits (#2191)', () => {
+  const wideStart = new Date('2024-01-01T00:00:00.000Z');
+  const wideEnd = new Date('2024-01-15T00:00:00.000Z');
+  const addLog = require('../../../src/services/LogService').addLog as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const retryLogs = () =>
+    addLog.mock.calls.filter(([message]: [string]) =>
+      String(message).includes('day window(s)'),
+    );
+
+  test('a dead client is not split into per-day retries', async () => {
+    mockReadRecords.mockRejectedValue(
+      new Error('Health Connect client is not initialized'),
+    );
+
+    const result = await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+
+    // One failed read, not one per day in the window.
+    expect(mockReadRecords).toHaveBeenCalledTimes(1);
+    expect(retryLogs()).toHaveLength(0);
+    expect(result.error).toContain('client is not initialized');
+  });
+
+  test('an ordinary read failure still splits into day windows', async () => {
+    mockReadRecords.mockRejectedValue(new Error('Something transient went wrong'));
+
+    await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+
+    expect(retryLogs()).toHaveLength(1);
+    expect(mockReadRecords.mock.calls.length).toBeGreaterThan(1);
+  });
+});
+
+describe('enrichExerciseSessions failure and cache semantics (#2191)', () => {
+  const {
+    _resetEnrichedSessionCacheForTests,
+    markEnrichedSessions,
+  } = require('../../../src/services/shared/enrichedSessionCache');
+
+  const enrichAndUpload = async (records: unknown[], ctx: TelemetryRunContext) => {
+    const result = await enrichExerciseSessions(records, ctx);
+    await markEnrichedSessions(ctx.drainCollected());
+    return result;
+  };
+
+  const session = (id: string) => ({
+    startTime: '2024-01-15T10:00:00.000Z',
+    endTime: '2024-01-15T11:00:00.000Z',
+    metadata: { dataOrigin: 'com.fitbit', id, lastModifiedTime: '2024-01-15T11:00:00.000Z' },
+  });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    _resetEnrichedSessionCacheForTests();
+    await AsyncStorage.clear();
+    mockAggregateRecord.mockResolvedValue({});
+    mockReadRecords.mockResolvedValue({ records: [] });
+  });
+
+  test('a rejected enrichment still fails the read, so the sync cursor holds', async () => {
+    mockAggregateRecord.mockImplementation(() => {
+      throw new Error('bridge exploded');
+    });
+
+    await expect(
+      enrichExerciseSessions([session('s1')], createTelemetryRunContext()),
+    ).rejects.toThrow('bridge exploded');
+  });
+
+  test('a headless run does not cache, so the next interactive run still collects the route', async () => {
+    const sessions = [session('s1')];
+
+    await enrichAndUpload(
+      sessions,
+      createTelemetryRunContext({ budget: 3, interactive: false }),
+    );
+    mockReadRecords.mockClear();
+
+    // A background run cannot answer the route-consent dialog. Caching it there
+    // would strand the route forever.
+    await enrichAndUpload(sessions, createTelemetryRunContext());
+
+    expect(mockReadRecords).toHaveBeenCalled();
+  });
+});
+
+describe('dead Health Connect client is reconnected, not abandoned (#2191)', () => {
+  const {
+    resetClientUnavailableState,
+    getClientUnavailableCount,
+  } = require('../../../src/services/healthconnect/index');
+  const addLog = require('../../../src/services/LogService').addLog as jest.Mock;
+
+  const wideStart = new Date('2024-01-01T00:00:00.000Z');
+  const wideEnd = new Date('2024-01-15T00:00:00.000Z');
+  const deadClient = () => new Error('Health Connect client is not initialized');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetClientUnavailableState();
+    mockInitialize.mockResolvedValue(true);
+  });
+
+  const retryLogs = () =>
+    addLog.mock.calls.filter(([m]: [string]) => String(m).includes('day window(s)'));
+
+  test('reconnects once and returns the records the retry finds', async () => {
+    mockReadRecords
+      .mockRejectedValueOnce(deadClient())
+      .mockResolvedValueOnce({ records: [{ id: 'recovered' }] });
+
+    const result = await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+    expect(result.records).toEqual([{ id: 'recovered' }]);
+    expect(result.error).toBeUndefined();
+  });
+
+  test('reconnects once per RUN, not once per metric', async () => {
+    mockReadRecords.mockRejectedValue(deadClient());
+
+    await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+    await readHealthRecordsDetailed('Steps', wideStart, wideEnd);
+    await readHealthRecordsDetailed('HeartRate', wideStart, wideEnd);
+
+    // Three metrics, one reconnect. Without the per-run guard, 33 enabled
+    // metrics would mean 33 reconnect attempts.
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+    expect(getClientUnavailableCount()).toBe(3);
+  });
+
+  test('a still-dead client surfaces the error without day-window retries', async () => {
+    mockReadRecords.mockRejectedValue(deadClient());
+
+    const result = await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+
+    expect(retryLogs()).toHaveLength(0);
+    expect(result.error).toContain('client is not initialized');
+  });
+
+  test('a new run gets a fresh reconnect attempt', async () => {
+    mockReadRecords.mockRejectedValue(deadClient());
+    await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+
+    resetClientUnavailableState();
+    await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+
+    expect(mockInitialize).toHaveBeenCalledTimes(2);
+  });
+
+  test('a healthy read never reconnects', async () => {
+    mockReadRecords.mockResolvedValue({ records: [] });
+
+    await readHealthRecordsDetailed('Weight', wideStart, wideEnd);
+
+    expect(mockInitialize).not.toHaveBeenCalled();
+    expect(getClientUnavailableCount()).toBe(0);
+  });
+});
+
+describe('telemetry cache commits only after a successful upload (PR #2218 review)', () => {
+  const {
+    _resetEnrichedSessionCacheForTests,
+    markEnrichedSessions,
+  } = require('../../../src/services/shared/enrichedSessionCache');
+
+  const session = (id: string) => ({
+    startTime: '2024-01-15T10:00:00.000Z',
+    endTime: '2024-01-15T11:00:00.000Z',
+    metadata: { dataOrigin: 'com.fitbit', id, lastModifiedTime: '2024-01-15T11:00:00.000Z' },
+  });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    _resetEnrichedSessionCacheForTests();
+    await AsyncStorage.clear();
+    mockAggregateRecord.mockResolvedValue({});
+    mockReadRecords.mockResolvedValue({ records: [] });
+  });
+
+  test('a failed upload leaves nothing cached, so the retry re-collects telemetry', async () => {
+    const sessions = [session('s1')];
+
+    // Upload failed: the shell never drains this run's context, so nothing is
+    // persisted and the discarded context takes its staging with it.
+    await enrichExerciseSessions(sessions, createTelemetryRunContext());
+    mockReadRecords.mockClear();
+
+    await enrichExerciseSessions(sessions, createTelemetryRunContext());
+
+    // Without this, the retry would send a summary-only record and the route
+    // and samples would be lost until the workout changed or the entry aged out.
+    expect(mockReadRecords).toHaveBeenCalled();
+  });
+
+  test('a successful upload does cache, so the next run skips the reads', async () => {
+    const sessions = [session('s1')];
+
+    const ctx = createTelemetryRunContext();
+    await enrichExerciseSessions(sessions, ctx);
+    await markEnrichedSessions(ctx.drainCollected());
+    mockReadRecords.mockClear();
+
+    await enrichExerciseSessions(sessions, createTelemetryRunContext());
+
+    expect(mockReadRecords).not.toHaveBeenCalled();
   });
 });

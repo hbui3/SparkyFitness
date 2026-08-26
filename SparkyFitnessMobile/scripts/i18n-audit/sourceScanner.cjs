@@ -3,10 +3,27 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const EXCLUDE_DIRS = new Set(['__tests__', '__mocks__', 'node_modules', 'coverage', 'android', 'ios', 'scripts', '.tooling']);
+const CONTROLLED_DYNAMIC_I18N_RULES = new Set([
+  'healthMetrics',
+  'healthCategories',
+  'settings.language',
+]);
+
+function isApprovedControlledDynamicKey(node) {
+  if (!ts.isTemplateExpression(node)) return false;
+  const head = node.head.text;
+  const prefixMatch = head.match(/^([A-Za-z0-9_.-]+)\.$/);
+  if (!prefixMatch || !CONTROLLED_DYNAMIC_I18N_RULES.has(prefixMatch[1])) return false;
+  return node.templateSpans.length === 1;
+}
+
+
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
 
 /** Blocking rule name for a source file that could not be scanned (fail-closed). */
 const SOURCE_SCAN_ERROR_RULE = 'source-scan-error';
+
+const CUSTOM_UI_ATTRIBUTE_NAMES = new Set(['errorMessage', 'successMessage', 'emptyMessage']);
 
 const LOCALIZED_ATTRIBUTE_NAMES = new Set([
   'accessibilityHint',
@@ -33,6 +50,10 @@ function normalizeText(value) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function hasLetter(value) {
+  return /\p{L}/u.test(value);
+}
+
 function literalText(node) {
   if (ts.isStringLiteral(node)) {
     return normalizeText(node.text);
@@ -49,6 +70,49 @@ function literalText(node) {
     return normalizeText(result);
   }
   return null;
+}
+
+/**
+ * Collect only presentation literals from an expression. This is deliberately
+ * bounded: conditions and arbitrary operands are never traversed. The caller
+ * must already have established a recognized user-facing presentation context.
+ */
+function collectLiteralTexts(node) {
+  if (!node) return [];
+
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) ||
+      (typeof ts.isSatisfiesExpression === 'function' && ts.isSatisfiesExpression(node))) {
+    return collectLiteralTexts(node.expression);
+  }
+
+  const direct = literalText(node);
+  if (direct !== null) return [direct];
+
+  if (ts.isConditionalExpression(node)) {
+    return [...collectLiteralTexts(node.whenTrue), ...collectLiteralTexts(node.whenFalse)];
+  }
+
+  if (ts.isBinaryExpression(node) &&
+      (node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+       node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+       node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)) {
+    const values = collectLiteralTexts(node.right);
+    // For && the left operand is always a condition; only the RHS can be
+    // rendered. || and ?? may render a presentation expression on either side.
+    if (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return values;
+
+    // A nested presentation expression may itself be on the left. Do not
+    // recurse into ordinary identifiers, comparisons, or other conditions.
+    const left = node.left;
+    if (ts.isConditionalExpression(left) || ts.isBinaryExpression(left) ||
+        ts.isParenthesizedExpression(left) || ts.isAsExpression(left) || ts.isTypeAssertionExpression(left) ||
+        (typeof ts.isSatisfiesExpression === 'function' && ts.isSatisfiesExpression(left))) {
+      return [...collectLiteralTexts(left), ...values];
+    }
+    return values;
+  }
+
+  return [];
 }
 
 function propertyNameText(name) {
@@ -82,6 +146,7 @@ function isDynamicTranslationKey(node) {
   const arg = node.arguments[0];
   if (!arg) return false;
   if (resolveStaticTranslationKeyArg(arg) !== null) return false;
+  if (isApprovedControlledDynamicKey(arg)) return false;
 
   return true;
 }
@@ -98,23 +163,44 @@ function isDynamicTranslationKey(node) {
  * satisfy the contract — the fallback must be readable by the audit so a
  * missing key can never leak a raw translation key into the UI.
  */
-function hasExplicitFallback(node) {
+function staticLiteralText(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
+  }
+  return null;
+}
+
+function getExplicitFallbacks(node) {
   const args = node.arguments;
-  if (args.length < 2) return false;
+  if (args.length < 2) return {};
 
   const second = args[1];
-  if (ts.isStringLiteral(second) || ts.isNoSubstitutionTemplateLiteral(second)) {
-    return true;
+  const positionalFallback = staticLiteralText(second);
+  if (positionalFallback !== null) return { defaultValue: positionalFallback };
+  if (!ts.isObjectLiteralExpression(second)) return {};
+
+  const fallbacks = {};
+  for (const prop of second.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const name = propertyNameText(prop.name);
+    if (!name || (name !== 'defaultValue' && !/^defaultValue_(?:zero|one|two|few|many|other)$/.test(name))) continue;
+    const value = staticLiteralText(prop.initializer);
+    if (value !== null) fallbacks[name] = value;
   }
-  if (ts.isObjectLiteralExpression(second)) {
-    return second.properties.some((prop) => {
-      if (!ts.isPropertyAssignment(prop) || propertyNameText(prop.name) !== 'defaultValue') {
-        return false;
-      }
-      return literalText(prop.initializer) !== null;
-    });
-  }
-  return false;
+  return fallbacks;
+}
+
+function hasExplicitFallback(node) {
+  return Object.hasOwn(getExplicitFallbacks(node), 'defaultValue');
+}
+
+function hasCountOption(node) {
+  const second = node.arguments[1];
+  if (!second || !ts.isObjectLiteralExpression(second)) return false;
+  return second.properties.some((prop) =>
+    (ts.isPropertyAssignment(prop) && propertyNameText(prop.name) === 'count') ||
+    (ts.isShorthandPropertyAssignment(prop) && prop.name.text === 'count'),
+  );
 }
 
 /**
@@ -157,12 +243,60 @@ function resolveStaticTranslationKeyArg(arg) {
   return null;
 }
 
+function containsCountOneComparison(node) {
+  let found = false;
+  function visit(n) {
+    if (ts.isBinaryExpression(n) &&
+      [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(n.operatorToken.kind)) {
+      const left = n.left.getText();
+      const right = n.right.getText();
+      if ((/^(count|reps|items|sets|[A-Za-z]+Count)$/.test(left) && right === '1') ||
+          (/^(count|reps|items|sets|[A-Za-z]+Count)$/.test(right) && left === '1')) found = true;
+    }
+    ts.forEachChild(n, visit);
+  }
+  visit(node);
+  return found;
+}
+
+function staticTranslationKeyFromExpression(node) {
+  if (!ts.isCallExpression(node)) return null;
+  // Only treat genuine t() calls as translation-key sources. Without this
+  // guard, any call expression (e.g. getLabel('single')) would be mistaken
+  // for a translation call and could trigger false manual-pluralization
+  // findings on benign presentation helpers.
+  if (!isStaticTranslationKey(node)) return null;
+  return resolveStaticTranslationKeyArg(node.arguments[0]);
+}
+
+/** Bounded presentation-only guard against English singular/plural branching. */
+function scanManualPluralization(node, sourceFile, relPath, context) {
+  if (!containsCountOneComparison(node)) return;
+  let finding = null;
+  function visit(n) {
+    if (finding || !ts.isConditionalExpression(n) || !containsCountOneComparison(n.condition)) {
+      ts.forEachChild(n, visit);
+      return;
+    }
+    const leftKey = staticTranslationKeyFromExpression(n.whenTrue);
+    const rightKey = staticTranslationKeyFromExpression(n.whenFalse);
+    const leftText = literalText(n.whenTrue);
+    const rightText = literalText(n.whenFalse);
+    if ((leftKey && rightKey && leftKey !== rightKey) ||
+        (leftText !== null && rightText !== null && leftText !== rightText)) {
+      finding = n.getText(sourceFile);
+    }
+    ts.forEachChild(n, visit);
+  }
+  visit(node);
+  if (finding) recordFinding(relPath, getLinePosition(node, sourceFile), finding, 'manual-pluralization', { context });
+}
+
 function isTextLikeElement(node) {
   if (!ts.isJsxElement(node)) return false;
   const tag = node.openingElement.tagName;
-  if (ts.isIdentifier(tag) && tag.text === 'Text') return true;
-
-  return false;
+  if (!ts.isIdentifier(tag)) return false;
+  return tag.text === 'Text' || tag.text === 'Button';
 }
 
 function isLikelyRoute(value) {
@@ -188,7 +322,16 @@ function isLikelyTechnical(value) {
 function isLikelyFalsePositive(value) {
   const trimmed = value.trim();
 
-  if (!/[A-Za-z]/.test(trimmed)) return true;
+  if (!hasLetter(trimmed)) return true;
+
+  // Template expressions whose only literal residue is punctuation/affordance
+  // glyphs are not user-facing hard-coded language (for example a dynamic
+  // calorie value followed by a dropdown marker). Strip the internal marker
+  // before checking the user-facing residue.
+  if (!hasLetter(trimmed.replace(/\{\{dynamic\}\}/g, ''))) return true;
+
+  // Numeric/unit-only presentation fragments are language-neutral, not UI copy.
+  if (/^[\s()\/·+\-]*?(?:\{\{dynamic\}\}\s*)+(?:g|kg|mg|mcg|kcal|kJ|ml|l)\s*$/.test(trimmed)) return true;
 
   if (isLikelyRoute(trimmed)) return true;
 
@@ -229,6 +372,7 @@ const ALLOWED_SUPPRESSION_RULES = new Set([
   'hardcoded-ui-text',
   'dynamic-i18n-key',
   'missing-fallback',
+  'locale-unsafe-number-format',
 ]);
 
 const SUPPRESSION_REGEX = /^\s*\/\/\s*i18n-audit-ignore-next-line\s+(\S+)(?:\s*--\s*(.+))?$/;
@@ -277,9 +421,48 @@ function parseSuppressions(source, relPath) {
   return records;
 }
 
+const CHART_FORMATTER_NAMES = new Set(['tickFormat', 'labelFormat', 'valueFormat', 'formatX', 'formatY', 'tooltipFormat', 'formatTooltip']);
+
+function recordNumberFinding(relPath, line, expression, context) {
+  const normalized = normalizeText(expression);
+  const idx = suppressionRecords.findIndex((r) => !r.consumed && r.rule === 'locale-unsafe-number-format' && r.targetLine === line);
+  if (idx !== -1) { suppressionRecords[idx].consumed = true; return; }
+  findings.push({ file: relPath, line, kind: 'locale-unsafe-number-format', value: normalized, context: context || {} });
+}
+
+function scanPresentationNumbers(node, sourceFile, relPath, context) {
+  function walk(current, parent) {
+    if (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+      const method = current.expression.name.text;
+      const parentIsSharedFormatter = parent && ts.isCallExpression(parent) &&
+        ts.isIdentifier(parent.expression) && parent.expression.text === 'formatLocalizedNumber';
+      if (!parentIsSharedFormatter && ['toFixed', 'toPrecision', 'toExponential'].includes(method)) {
+        recordNumberFinding(relPath, getLinePosition(current, sourceFile), current.getText(sourceFile), context);
+      }
+      // An explicit locale argument is considered safe; the audit targets the
+      // silent device-locale form only.
+      if (method === 'toLocaleString' && (current.arguments.length === 0 ||
+          (current.arguments.length > 0 && ts.isStringLiteral(current.arguments[0])))) {
+        recordNumberFinding(relPath, getLinePosition(current, sourceFile), current.getText(sourceFile), context);
+      }
+    }
+    if ((ts.isNewExpression(current) || ts.isCallExpression(current)) &&
+        current.expression.getText(sourceFile) === 'Intl.NumberFormat') {
+      const localeArg = current.arguments?.[0];
+      const isImplicitLocale = localeArg === undefined ||
+        (ts.isIdentifier(localeArg) && localeArg.text === 'undefined');
+      if (isImplicitLocale || ts.isStringLiteral(localeArg)) {
+        recordNumberFinding(relPath, getLinePosition(current, sourceFile), current.getText(sourceFile), context);
+      }
+    }
+    ts.forEachChild(current, (child) => walk(child, current));
+  }
+  walk(node, null);
+}
+
 function recordFinding(relPath, line, value, kind, context) {
   const normalized = normalizeText(value);
-  if (!normalized || !/[A-Za-z]/.test(normalized)) return;
+  if (!normalized || !hasLetter(normalized)) return;
 
   if (kind === 'hardcoded-ui-text' || kind === 'dynamic-t-key' || kind === 'missing-fallback-key') {
     const rule = kind === 'hardcoded-ui-text' ? 'hardcoded-ui-text' : kind === 'dynamic-t-key' ? 'dynamic-i18n-key' : 'missing-fallback';
@@ -334,7 +517,9 @@ function visitSourceFile(filePath, rootDir) {
           const key = resolveStaticTranslationKeyArg(node.arguments[0]);
           const line = getLinePosition(node, sourceFile);
           if (key !== null) {
-            recordFinding(relPath, line, key, 'static-t-key', { key });
+            const fallbacks = getExplicitFallbacks(node);
+            const hasCount = hasCountOption(node);
+            recordFinding(relPath, line, key, 'static-t-key', { key, fallbacks, hasCount });
             if (!hasExplicitFallback(node)) {
               recordFinding(relPath, line, key, 'missing-fallback-key', { key });
             }
@@ -361,18 +546,48 @@ function visitSourceFile(filePath, rootDir) {
             recordFinding(relPath, childLine, trimmed, 'hardcoded-ui-text', { element: 'Text', form: 'text' });
           }
         } else if (ts.isJsxExpression(child) && child.expression) {
-          const value = literalText(child.expression);
-          if (value !== null && value !== undefined && !isLikelyFalsePositive(value)) {
-            const childLine = getLinePosition(child, sourceFile);
-            recordFinding(relPath, childLine, value, 'hardcoded-ui-text', { element: 'Text', form: 'expression' });
+          scanPresentationNumbers(child.expression, sourceFile, relPath, { context: 'JSX presentation' });
+          scanManualPluralization(child.expression, sourceFile, relPath, 'JSX presentation');
+          const values = collectLiteralTexts(child.expression);
+          const childLine = getLinePosition(child, sourceFile);
+          for (const value of values) {
+            if (!isLikelyFalsePositive(value)) {
+              recordFinding(relPath, childLine, value, 'hardcoded-ui-text', { element: 'Text', form: 'expression' });
+            }
           }
         }
       }
     }
 
+    // Scan variable initializers and expression statements for Intl.NumberFormat
+    // (toFixed/toLocaleString can be internal, but Intl.NumberFormat is always locale-sensitive)
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      const init = node.initializer;
+      function scanForIntlNumberFormat(n) {
+        if ((ts.isNewExpression(n) || ts.isCallExpression(n)) && n.expression.getText(sourceFile) === 'Intl.NumberFormat') {
+          const localeArg = n.arguments?.[0];
+          const isImplicitLocale = localeArg === undefined ||
+            (ts.isIdentifier(localeArg) && localeArg.text === 'undefined');
+          if (isImplicitLocale || ts.isStringLiteral(localeArg)) {
+            recordNumberFinding(relPath, getLinePosition(n, sourceFile), n.getText(sourceFile), { context: 'variable initializer' });
+          }
+        }
+        ts.forEachChild(n, scanForIntlNumberFormat);
+      }
+      scanForIntlNumberFormat(init);
+    }
+
+    if (ts.isPropertyAssignment(node)) {
+      const propName = propertyNameText(node.name);
+      if (propName && CHART_FORMATTER_NAMES.has(propName)) scanPresentationNumbers(node.initializer, sourceFile, relPath, { context: `chart formatter ${propName}` });
+    }
+
     if (ts.isJsxAttribute(node)) {
       const attrName = node.name.getText(sourceFile);
-      if (LOCALIZED_ATTRIBUTE_NAMES.has(attrName) && node.initializer) {
+      if (CHART_FORMATTER_NAMES.has(attrName) && node.initializer && ts.isJsxExpression(node.initializer) && node.initializer.expression) {
+        scanPresentationNumbers(node.initializer.expression, sourceFile, relPath, { context: `chart formatter ${attrName}` });
+      }
+      if ((LOCALIZED_ATTRIBUTE_NAMES.has(attrName) || CUSTOM_UI_ATTRIBUTE_NAMES.has(attrName)) && node.initializer) {
         const line = getLinePosition(node, sourceFile);
         if (ts.isStringLiteral(node.initializer)) {
           const value = normalizeText(node.initializer.text);
@@ -380,9 +595,12 @@ function visitSourceFile(filePath, rootDir) {
             recordFinding(relPath, line, value, 'hardcoded-ui-text', { attr: attrName });
           }
         } else if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
-          const value = literalText(node.initializer.expression);
-          if (value !== null && value !== undefined && !isLikelyFalsePositive(value)) {
-            recordFinding(relPath, line, value, 'hardcoded-ui-text', { attr: attrName, form: 'expression' });
+          scanPresentationNumbers(node.initializer.expression, sourceFile, relPath, { context: `presentation attribute ${attrName}` });
+          scanManualPluralization(node.initializer.expression, sourceFile, relPath, `presentation attribute ${attrName}`);
+          for (const value of collectLiteralTexts(node.initializer.expression)) {
+            if (!isLikelyFalsePositive(value)) {
+              recordFinding(relPath, line, value, 'hardcoded-ui-text', { attr: attrName, form: 'expression' });
+            }
           }
         }
       }
@@ -399,10 +617,13 @@ function visitSourceFile(filePath, rootDir) {
       }
       const propName = propertyNameText(node.name);
       if (propName && LOCALIZED_ATTRIBUTE_NAMES.has(propName)) {
+        scanPresentationNumbers(node.initializer, sourceFile, relPath, { context: `presentation property ${propName}` });
+        scanManualPluralization(node.initializer, sourceFile, relPath, `presentation property ${propName}`);
         const line = getLinePosition(node, sourceFile);
-        const value = literalText(node.initializer);
-        if (value !== null && value !== undefined && !isLikelyFalsePositive(value)) {
-          recordFinding(relPath, line, value, 'hardcoded-ui-text', { prop: propName });
+        for (const value of collectLiteralTexts(node.initializer)) {
+          if (!isLikelyFalsePositive(value)) {
+            recordFinding(relPath, line, value, 'hardcoded-ui-text', { prop: propName });
+          }
         }
       }
     }
@@ -417,10 +638,15 @@ function visitSourceFile(filePath, rootDir) {
       const titleArg = node.arguments[0];
       const messageArg = node.arguments[1];
       const args = [titleArg, messageArg].filter((a) => a !== undefined);
+      for (const arg of args) {
+        scanPresentationNumbers(arg, sourceFile, relPath, { context: 'Alert.alert' });
+        scanManualPluralization(arg, sourceFile, relPath, 'Alert.alert');
+      }
       for (let i = 0; i < args.length; i++) {
-        const value = literalText(args[i]);
-        if (value !== null && value !== undefined && !isLikelyFalsePositive(value)) {
-          recordFinding(relPath, line, value, 'hardcoded-ui-text', { context: 'Alert.alert', argIndex: i });
+        for (const value of collectLiteralTexts(args[i])) {
+          if (!isLikelyFalsePositive(value)) {
+            recordFinding(relPath, line, value, 'hardcoded-ui-text', { context: 'Alert.alert', argIndex: i });
+          }
         }
       }
       const buttonsArg = node.arguments[2];
@@ -428,9 +654,11 @@ function visitSourceFile(filePath, rootDir) {
         function visitAlertButtons(buttonNode) {
           if (ts.isPropertyAssignment(buttonNode) && propertyNameText(buttonNode.name) === 'text') {
             alertButtonTextProps.add(buttonNode);
-            const value = literalText(buttonNode.initializer);
-            if (value !== null && value !== undefined && !isLikelyFalsePositive(value)) {
-              recordFinding(relPath, getLinePosition(buttonNode, sourceFile), value, 'hardcoded-ui-text', { context: 'Alert.alert:button' });
+            scanPresentationNumbers(buttonNode.initializer, sourceFile, relPath, { context: 'Alert.alert button' });
+            for (const value of collectLiteralTexts(buttonNode.initializer)) {
+              if (!isLikelyFalsePositive(value)) {
+                recordFinding(relPath, getLinePosition(buttonNode, sourceFile), value, 'hardcoded-ui-text', { context: 'Alert.alert:button' });
+              }
             }
           }
           ts.forEachChild(buttonNode, visitAlertButtons);
@@ -453,9 +681,12 @@ function visitSourceFile(filePath, rootDir) {
               const propName = propertyNameText(prop.name);
               if (propName === 'text1' || propName === 'text2') {
                 toastTextProps.add(prop);
-                const value = literalText(prop.initializer);
-                if (value !== null && value !== undefined && !isLikelyFalsePositive(value)) {
-                  recordFinding(relPath, line, value, 'hardcoded-ui-text', { context: 'Toast.show', prop: propName });
+                scanPresentationNumbers(prop.initializer, sourceFile, relPath, { context: `Toast.show ${propName}` });
+                scanManualPluralization(prop.initializer, sourceFile, relPath, `Toast.show ${propName}`);
+                for (const value of collectLiteralTexts(prop.initializer)) {
+                  if (!isLikelyFalsePositive(value)) {
+                    recordFinding(relPath, line, value, 'hardcoded-ui-text', { context: 'Toast.show', prop: propName });
+                  }
                 }
               }
             }
@@ -541,13 +772,18 @@ module.exports = {
   visitSourceFile,
   normalizeText,
   literalText,
+  collectLiteralTexts,
   isLikelyFalsePositive,
   LOCALIZED_ATTRIBUTE_NAMES,
+  CUSTOM_UI_ATTRIBUTE_NAMES,
   EXCLUDE_DIRS,
   SOURCE_EXTENSIONS,
   getAllSuppressionIssues,
   resolveStaticTranslationKeyArg,
   hasExplicitFallback,
+  getExplicitFallbacks,
+  hasCountOption,
+  scanManualPluralization,
   isLikelyRoute,
   isLikelyCss,
   isLikelyTechnical,

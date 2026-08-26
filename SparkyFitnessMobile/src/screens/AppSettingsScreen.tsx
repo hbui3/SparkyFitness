@@ -23,17 +23,11 @@ import type { RootStackScreenProps } from '../types/navigation';
 import {
   getNativeIOSLanguage,
   setAppLanguagePreference,
+  SHIPPED_LOCALES,
   type LanguagePreference,
 } from '../localization';
 
 type AppSettingsScreenProps = RootStackScreenProps<'AppSettings'>;
-
-const themeOptions: { label: string; value: ThemePreference }[] = [
-  { label: 'Light', value: 'Light' },
-  { label: 'Dark', value: 'Dark' },
-  { label: 'AMOLED', value: 'Amoled' },
-  { label: 'System', value: 'System' },
-];
 
 const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
@@ -73,10 +67,20 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => 
     [t],
   );
 
+  const themeOptions: { label: string; value: ThemePreference }[] = [
+    { label: t('settings.theme.light', { defaultValue: 'Light' }), value: 'Light' },
+    { label: t('settings.theme.dark', { defaultValue: 'Dark' }), value: 'Dark' },
+    { label: t('settings.theme.amoled', { defaultValue: 'AMOLED' }), value: 'Amoled' },
+    { label: t('settings.theme.system', { defaultValue: 'System' }), value: 'System' },
+  ];
+
   const languagePickerOptions = [
     { label: t('settings.language.system', 'System'), value: 'system' as LanguagePreference },
-    { label: t('settings.language.english', 'English'), value: 'en' as LanguagePreference },
-    { label: t('settings.language.polish', 'Polski'), value: 'pl' as LanguagePreference },
+    ...Object.entries(SHIPPED_LOCALES).map(([value, metadata]) => ({
+      // i18n-audit-ignore-next-line dynamic-i18n-key -- registry metadata is a bounded static translation-key map
+      label: t(metadata.displayNameKey, metadata.defaultDisplayName),
+      value: value as LanguagePreference,
+    })),
   ];
 
   const openIOSLanguageSettings = useCallback(async () => {
@@ -108,13 +112,13 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => 
         contentInsetAdjustmentBehavior={usesNativeHeader ? 'automatic' : 'never'}
       >
         <SettingsRow
-          title="Theme"
+          title={t('settings.theme.title', { defaultValue: 'Theme' })}
           rightAccessory={
             <BottomSheetPicker
               value={appTheme}
               options={themeOptions}
               onSelect={setThemePreference}
-              title="Theme"
+              title={t('settings.theme.title', { defaultValue: 'Theme' })}
               containerStyle={{ flex: 1, maxWidth: 200 }}
             />
           }
@@ -123,9 +127,15 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => 
         {isIOS ? (
           <SettingsRow
             title={t('settings.language.title', 'Language')}
-            subtitle={`${iosLanguage === 'pl'
-              ? t('settings.language.polish', 'Polski')
-              : t('settings.language.english', 'English')} · ${t('settings.language.managedByIOS', 'Managed by iOS')}`}
+            subtitle={t('settings.language.iosSubtitle', {
+              defaultValue: '{{language}} · {{managedBy}}',
+              // i18n-audit-ignore-next-line dynamic-i18n-key -- registry metadata is a bounded static translation-key map
+              language: t(
+                SHIPPED_LOCALES[iosLanguage ?? 'en'].displayNameKey,
+                SHIPPED_LOCALES[iosLanguage ?? 'en'].defaultDisplayName,
+              ),
+              managedBy: t('settings.language.managedByIOS', { defaultValue: 'Managed by iOS' }),
+            })}
             subtitleNumberOfLines={0}
             onPress={openIOSLanguageSettings}
             accessibilityLabel={t('settings.language.title', 'Language')}
@@ -152,8 +162,8 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => 
 
         {supportsLiquidGlassTabBar && (
           <SettingsRow
-            title="Liquid Glass navigation"
-            subtitle="Use the iOS 26 glass tab bar and screen headers."
+            title={t('settings.liquidGlass.title', { defaultValue: 'Liquid Glass navigation' })}
+            subtitle={t('settings.liquidGlass.subtitle', { defaultValue: 'Use the iOS 26 glass tab bar and screen headers.' })}
             subtitleNumberOfLines={0}
             rightAccessory={
               <Switch
@@ -164,15 +174,15 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => 
           />
         )}
         <SettingsRow
-          title="Notifications"
-          subtitle="Rest timers, fasting goals, and medication reminders."
+          title={t('settings.notifications.title', { defaultValue: 'Notifications' })}
+          subtitle={t('settings.notifications.subtitle', { defaultValue: 'Rest timers, fasting goals, and medication reminders.' })}
           subtitleNumberOfLines={0}
           onPress={() => navigation.navigate('NotificationSettings')}
         />
 
         <SettingsRow
-          title="Haptic Feedback"
-          subtitle="Light vibrations for timers and confirmations."
+          title={t('settings.haptics.title', { defaultValue: 'Haptic Feedback' })}
+          subtitle={t('settings.haptics.subtitle', { defaultValue: 'Light vibrations for timers and confirmations.' })}
           subtitleNumberOfLines={0}
           rightAccessory={
             <Switch
@@ -183,8 +193,8 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation }) => 
         />
 
         <SettingsRow
-          title="Camera shutter"
-          subtitle="Play a sound when capturing photos."
+          title={t('settings.cameraShutter.title', { defaultValue: 'Camera shutter' })}
+          subtitle={t('settings.cameraShutter.subtitle', { defaultValue: 'Play a sound when capturing photos.' })}
           subtitleNumberOfLines={0}
           rightAccessory={
             <Switch

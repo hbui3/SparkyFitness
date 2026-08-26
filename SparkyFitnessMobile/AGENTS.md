@@ -1,6 +1,6 @@
 # AGENTS.md
 
-*Last updated: 2026-08-21*
+*Last updated: 2026-08-24*
 
 SparkyFitness Mobile is a React Native 0.85 + Expo SDK 56 app for syncing Apple Health / Health Connect data with the SparkyFitness backend, tracking nutrition, hydration, fasting, measurements, exercise, saved foods, meal templates, custom exercises, workout presets, iOS / Android widgets, the active workout HUD, and the Sparky AI chat.
 
@@ -25,6 +25,14 @@ This is the package guide for `SparkyFitnessMobile/`. Work from this directory f
 - Global `fetch` is Expo's WinterCG `expo/fetch`, so React Native's `{uri, name, type}` FormData file parts throw "Unsupported FormDataPart implementation". Append an `expo-file-system` `File` (it implements Blob) for multipart uploads; see `pregnancyPhotosApi.ts`.
 - Server-stored distance/weight units are metric. UI conversion belongs in mobile helpers such as `unitConversions.ts`.
 
+## Localization contract
+
+English (`en`) is the canonical source locale and the deterministic fallback. Feature developers must add/update the English catalog, use semantic static keys, provide explicit English fallback/defaultValue text, use count-based i18next pluralization, use app-locale date/number/unit formatters, and avoid user-facing hardcoded text. Custom, user, and server content stays literal.
+
+Feature developers do not need to know or translate Polish or any future language, and do not need to wait for Weblate. Translators/Weblate own Polish and future translations and linguistic QA. Missing translation content is non-blocking and falls back to English; existing translated content remains structurally validated.
+
+The shipped locale registry is `src/localization/localeRegistry.ts`. Adding a catalog to Weblate does not ship it. Shipping requires explicit registry enablement plus native/platform support verification. RN catalogs and native resources are separate surfaces (Expo metadata, Android widget resources, and iOS widget/Live Activity `.lproj` resources).
+
 ## Commands
 
 ```bash
@@ -40,7 +48,7 @@ pnpm run test:coverage -- --watchman=false --runInBand
 npx expo prebuild --clean
 ```
 
-- `pnpm run validate` runs typecheck and Expo lint.
+- `pnpm run validate` runs TypeScript typecheck, Expo lint, and the blocking mobile i18n audit.
 - Use Watchman-disabled Jest commands in agent/sandbox runs; bare Jest often fails on macOS.
 - `collectCoverage` is enabled in Jest config, so expect coverage output from normal test runs.
 - Run `npx expo prebuild --clean` after native dependency changes, permissions, app group or widget target changes, Expo plugin changes, native config edits, or patching native modules.
@@ -65,6 +73,7 @@ npx expo prebuild --clean
 - Declare screen headers with `useScreenHeader(config)` (`src/hooks/useScreenHeader.tsx`), or the thin `<ScreenHeader …/>` wrapper when nothing interleaves with the bar. One declarative descriptor (`title`/`nativeTitle`, `left`/`right` items of kind `back`/`dismiss`/`text`/`icon`/`primary`/`menu`, `busy`/`disabled`, `animateKey` for view↔edit cross-fades) renders both paths: on the native path it mirrors items into `unstable_header{Left,Right}Items` via a layout effect and returns `null`; on the custom path it returns the bar element for the screen to render. A `menu` item is a declarative dropdown (plain actions and/or titled single-select sections, optional accent-dot `showsBadge`): the native path builds a system UIMenu header button, the custom path renders the trigger plus an `AnchoredMenu` under it — one item list drives both, as in `FoodsLibraryScreen`'s ownership filter. Hook screens must not keep hand-rolled header code (no `unstable_header*Items` blocks or custom bars alongside the hook) — the contract test enforces this.
 - Path selection is `useNativeIOSHeadersActive()` (`services/nativeTabBarPreference.ts`): always false on Android; on iOS it is true below iOS 26 (classic native headers) and follows the Liquid Glass toggle on iOS 26+, so turning the toggle off swaps in the same screen-owned fallback headers Android renders.
 - One-accent rule: exactly one primary header action per screen (`kind: 'primary'` or `role: 'primary'`), enforced with a `__DEV__` throw; primary header save buttons fall back to the localized `t('common.save')` / `t('common.saving')` labels when no `label`/`busyLabel` is supplied. Footer-save forms mark their header Save `placement: 'native-only'` so the custom bar does not duplicate the sticky-footer button. `onPress` handlers dispatch through the hook's internal ref map — do not add per-screen handler-ref effects for native header buttons.
+- A **right-slot** `kind: 'primary'` press is wrapped in the shared synchronous duplicate-press guard (`utils/duplicatePress.ts`, same one `FooterSaveBar` uses): presses inside `DUPLICATE_PRESS_WINDOW_MS` collapse to one. `disabled`/`busy` are React state and have not committed when taps queued behind a blocked JS thread replay, so every queued press otherwise ran the handler again (#2191). The guard is deliberately time-based, not a latch on `busy`, because handlers that never report a pending state would leave the button dead. **Left-slot** primaries are exempt — that slot is navigation, and `CycleOnboardingScreen` uses the sugar for a wizard Back where repeated presses are intended. A screen that needs a rapidly repeatable right-slot action must not use `kind: 'primary'`.
 - If a root-stack screen is intentionally presented above `Tabs` instead of inside native-tabs mode, document it in `NATIVE_TABS_ROUTE_EXCLUSIONS` in `__tests__/navigation/nativeHeaderContract.test.ts` with a short reason.
 - Screens intentionally off the hook (e.g. `FoodSearchScreen`'s bespoke anchored-menu bar) must mirror custom actions with `unstable_header{Left,Right}Items` themselves, hide the screen-owned React header behind `useNativeIOSHeadersActive()` with a guard such as `{!usesNativeHeader && <Header />}`, and gate the `useLayoutEffect` that sets native header items on the same flag; otherwise iOS renders both headers.
 - When adding a tab, update `TabParamList`, `NativeTab.Screen`, and `FallbackTab.Screen`; for content tabs also add a tab-local native stack screen using `createIOSNativeHeaderOptions(...)`.
@@ -85,10 +94,10 @@ npx expo prebuild --clean
 - `src/services/api/` - backend clients. `apiClient.ts` handles normal API auth/proxy headers; `healthDataApi.ts`, `aiSettingsApi.ts`, food-photo estimate, and other raw fetch paths must keep auth, proxy, timeout, and session-expiry behavior aligned.
 - `src/services/healthconnect/` - Android Health Connect reads, native aggregation, transformation, enrichment, preferences, and writeback.
 - `src/services/healthkit/` - iOS HealthKit reads, statistics aggregation, transformation, background delivery, preferences, and writeback.
-- `src/services/shared/` - shared health helpers such as preference factories and permission migration.
+- `src/services/shared/` - platform-agnostic health helpers: the `collectHealthData` / `runForegroundSync` engine both orchestrators share, the per-run workout-telemetry budget and its reuse cache, Health Connect error classification, sample downsampling, day aggregation/transformation, preference factories, and permission migration/sets.
 - `src/services/` - platform health orchestration, writeback re-exports, background sync, auto-sync coordination, diagnostics, calculations, logging, storage, theme, haptics, sounds, notifications, food photo intro, meal selection, boolean preferences, card visibility, and workout drafts.
 - `src/stores/` - Zustand stores, including the persisted active workout/rest timer store.
-- `src/utils/` - date helpers, unit conversion, food details, meal nutrition, nutrient display, workout/session helpers, fasting formatting, numeric input, concurrency, sync utilities, photo estimate error mapping, and rate limiting.
+- `src/utils/` - date helpers, unit conversion, food details, meal nutrition, nutrient display, workout/session helpers, fasting formatting, numeric input, concurrency, sync utilities, duplicate-press guarding, photo estimate error mapping, and rate limiting.
 - `src/constants/` - meal, exercise, fasting, and nutrient metadata.
 - JS bridges to native modules live in `src/services/` (`CalorieWidgetBridge.ts`, `ExactAlarmBridge.ts`); there is no `src/native/` directory.
 - `plugins/`, `targets/widget/`, `targets/android-widget/`, `targets/android-exact-alarm/` - Expo plugins and widget/native extension sources.
@@ -120,7 +129,7 @@ npx expo prebuild --clean
 - On iOS, cumulative metrics should use HealthKit statistics queries, not raw sample summation.
 - On Android, cumulative metrics (`Steps`, `Distance`, `ActiveCaloriesBurned`, `TotalCaloriesBurned`, `FloorsClimbed`) use Health Connect `aggregateGroupByPeriod` once per range. Native source-priority dedup should match Health Connect UI; do not reintroduce JS `Math.max` or source allowlist dedup.
 - Android read helpers return `{ records, error }` via `readHealthRecordsDetailed` and `aggregateCumulativeMetricByDayDetailed`; legacy wrappers unwrap only records.
-- Android exercise sessions are enriched with `aggregateRecord` for active/total calories and distance over the session window, scoped to `dataOrigin` and filtered for plausibility.
+- Android exercise sessions are enriched with `aggregateRecord` for active/total calories and distance over the session window. Calories start scoped to `dataOrigin`; incomplete or implausible pairs retry without the origin filter so Health Connect can apply source priority. Distance always stays origin-scoped. Both are filtered for plausibility.
 - iOS HealthKit locked-device failures surface as database-inaccessible warnings. Do not treat these as successful empty reads.
 - `app.config.ts` grants `android.permission.health.READ_HEALTH_DATA_HISTORY` so Android can read data older than 30 days.
 - Health Connect permission migrations belong in `services/shared/healthPermissionMigration.ts`, not UI-only state.
@@ -134,8 +143,6 @@ npx expo prebuild --clean
 - Platform split: `services/writeback.ios.ts` re-exports `healthkit/writeback.ts`; `services/writeback.ts` re-exports `healthconnect/writeback.ts`.
 - `runWriteback()` runs after inbound sync in its own try/catch. Writeback failures must not block inbound sync results.
 - Writeback is opt-in per metric and gated on write permissions. Android production permissions include `WRITE_NUTRITION` and `WRITE_HYDRATION`; other write permissions are dev-only.
-- Read sync and writeback are independent opt-ins with independent prefs; nothing writes the other direction's `preferenceKey`. But the OS authorization sheet is authoritative for every row it shows, so a request carrying only one direction can commit an omitted-but-enabled direction back to off (issue #2160). **Whenever both directions of a record type are enabled, request them together** — `services/shared/healthPermissionSets.ts` builds the counterpart set, and every request path uses it: both `SyncScreen` toggles, "Enable All", and `refreshEnabledMetricPermissions` (which must never issue a read-only request while writeback is on). `buildAuthDataTypes` in `healthkit/index.ts` still keeps `toRead`/`toShare` in separate Sets, and a direction that is switched off is never requested for.
-- `REQUIRED_HEALTH_PERMISSION_VERSION` in `shared/healthPermissionMigration.ts` is 4; bump it when an existing install needs its enabled permissions re-requested.
 - Imported health entries are skipped to avoid echo loops. iOS sets the app bundle id as the own-source guard; Android relies on source metadata.
 - Per-day content-signature hashing skips unchanged days. Each run deletes prior tracked UUIDs then saves fresh records; failed deletes are retried next run.
 - `HealthDataWriteback` on `SyncScreen` owns the remove flow. `BottomSheetPicker` offers all-time purge or date range through `DateRangeSheet`; both call `removeWrittenData(range)` and clear tracking.
@@ -266,6 +273,15 @@ All endpoints require auth headers, and proxy headers are injected before auth h
 - `ChatScreen.tsx` (transport) + `chatApi.ts` - streaming chat via `POST /api/chat/stream`, history load/clear.
 
 When reviewing an API issue, trace screen/hook -> API client -> server route -> service/repository -> shared schema before judging the fix. Deeper endpoint docs live in mobile `docs/` (`food_api.md`, `sync_api.md`, `measurements_api.md`, `external_providers.md`, `healthkit.md`, `bg_sync.md`).
+
+## Localization And Reactive Helpers
+
+- React UI gets `t` from `useTranslation()`; user-facing utility helpers accept an injected `TFunction` and never hide singleton `i18n.t()` fallbacks.
+- Pass `t` through every presentation helper and include it in `useMemo` / `useCallback` dependencies when the derived result contains localized text; this keeps mounted UI correct after a runtime language switch.
+- Translation keys are semantic and statically analyzable. Every static `defaultValue` is the English source fallback and must exactly match the EN catalog entry.
+- A key used with `count` is a plural family: EN requires `_one` and `_other`; PL requires `_one`, `_few`, `_many`, and `_other`. Use grammatically correct forms rather than duplicating suffixes blindly.
+- Run `pnpm run i18n:audit` after localization work. `pnpm run validate` includes typecheck, lint with zero warnings, and this audit.
+- Keep canonical storage/API values and user-generated content literal; localize only application-owned presentation labels.
 
 ## Testing Guidance
 
