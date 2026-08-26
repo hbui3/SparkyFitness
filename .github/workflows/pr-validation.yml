@@ -62,6 +62,11 @@ jobs:
             // Bot-authored / automation-branch PRs are not held to the contributor checklist at
             // all. A human collaborator is exempt from the license box but still ticks the rest.
             const isAutomation = policy.isAutomation(pr);
+            const isTrustedUpstreamSync = Boolean(
+              isAutomation &&
+              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              pr.head?.ref === 'automation/upstream-sync'
+            );
 
             // paginate: the unpaginated call caps at 30 files, which silently mis-detects
             // change areas on large PRs and would restore the wrong checklist items.
