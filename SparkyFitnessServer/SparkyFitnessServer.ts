@@ -596,7 +596,10 @@ const scheduleProactiveCoachMessages = () => {
     processDueProactiveCoachMessages().catch((error) =>
       log('error', '[CRON] Proactive coach task failed:', error)
     );
-  cron.schedule('*/5 * * * *', run);
+  // The per-user service chooses deterministic 3-8 minute observation slots.
+  // A one-minute heartbeat lets those slots stay naturally staggered without
+  // sending anything unless the relevance engine finds a useful moment.
+  cron.schedule('* * * * *', run);
   void run();
 };
 // Session cleanup scheduling

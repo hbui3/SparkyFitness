@@ -1744,10 +1744,10 @@
     },
     "coachProfile": {
       "adaptiveCheckIns": "Adaptive check-ins",
-      "adaptiveCheckInsDescription": "Every two hours from 07:00 to 20:00, Sparky checks today’s live values and only sends the next relevant action.",
+      "adaptiveCheckInsDescription": "Sparky wakes at varied short intervals, checks your live progress, and only writes when a timely coaching moment is worth interrupting you for.",
       "adaptiveStart": "Start",
       "adaptiveEnd": "End",
-      "adaptiveInterval": "Interval (minutes)",
+      "adaptiveInterval": "Minimum time between messages (minutes)",
       "proactiveCategories": {
         "nutrition": "Nutrition",
         "hydration": "Hydration",
@@ -1811,7 +1811,7 @@
       "preferredIngredients": "Preferred ingredients",
       "primaryGoal": "Primary goal",
       "primaryGoalPlaceholder": "Not set during onboarding",
-      "proactiveDescription": "Sparky writes scheduled, context-aware messages into your private chat using your local timezone. A connected Telegram chat receives the same messages immediately.",
+      "proactiveDescription": "Sparky actively watches for useful coaching moments, celebrates real progress, and nudges you when one concrete action can still change the day. A connected Telegram chat receives the same messages immediately.",
       "proactiveTitle": "Proactive coach messages",
       "privacy": "Private to your account and never shared through family access.",
       "proteinTarget": "Protein (g) / day",

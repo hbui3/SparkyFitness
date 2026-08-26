@@ -8,10 +8,12 @@ import coachContextService, {
   type CoachContextSnapshot,
 } from '../services/coachContextService.js';
 import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
+import { composeAdaptiveCoachMessage } from '../services/proactiveCoachMessageService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
     listProactiveCoachCandidates: vi.fn(),
+    listRecentProactiveMessages: vi.fn(),
     saveProactiveMessageIfDue: vi.fn(),
     markAdaptiveSlotObserved: vi.fn(),
   },
@@ -27,18 +29,26 @@ vi.mock('../services/plannedWorkoutScheduleService.js', () => ({
   },
 }));
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
+vi.mock('../services/proactiveCoachMessageService.js', () => ({
+  composeAdaptiveCoachMessage: vi.fn(),
+}));
 
 const candidate: ProactiveCoachCandidate = {
   userId: 'user-1',
   timezone: 'Europe/Berlin',
   language: 'de',
   adaptiveCheckInsEnabled: false,
-  adaptiveLastSentSlot: null,
+  adaptiveLastObservedSlot: null,
   adaptiveStartTime: '07:00',
   adaptiveEndTime: '20:00',
   adaptiveIntervalMinutes: 120,
   proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
   adaptiveLastSignature: null,
+  adaptiveLastMessageAt: null,
+  lastUserMessageAt: null,
+  coachingNotes: null,
+  routines: [],
+  memoryEnabled: true,
   dailyCheckInEnabled: true,
   dailyCheckInTime: '20:00',
   dailyLastSentOn: null,
@@ -148,9 +158,15 @@ describe('proactiveCoachService', () => {
     vi.mocked(
       coachProfileRepository.saveProactiveMessageIfDue
     ).mockResolvedValue(true);
+    vi.mocked(
+      coachProfileRepository.listRecentProactiveMessages
+    ).mockResolvedValue([]);
+    vi.mocked(composeAdaptiveCoachMessage).mockResolvedValue(
+      'Das Training wartet. Lege jetzt deine Startzeit fest.'
+    );
   });
 
-  it('claims local two-hour slots only between 07:00 and 20:00', () => {
+  it('creates stable staggered observation slots every three to eight minutes', () => {
     const adaptiveCandidate = {
       ...candidate,
       adaptiveCheckInsEnabled: true,
@@ -161,20 +177,44 @@ describe('proactiveCoachService', () => {
     expect(
       proactiveCoachService.getDueMessageKinds(
         adaptiveCandidate,
-        new Date('2026-08-23T05:05:00.000Z')
+        new Date('2026-08-23T05:08:00.000Z')
       )
     ).toEqual(['adaptive']);
+    const observedSlot = proactiveCoachService.getAdaptiveDeliverySlot(
+      adaptiveCandidate,
+      new Date('2026-08-23T15:45:00.000Z')
+    );
+    expect(observedSlot).toMatch(/^2026-08-23T17:[0-4]\d$/);
     expect(
       proactiveCoachService.getAdaptiveDeliverySlot(
         adaptiveCandidate,
         new Date('2026-08-23T15:45:00.000Z')
       )
-    ).toBe('2026-08-23T17:00');
+    ).toBe(observedSlot);
+    const firstHourSlots = new Set<string>();
+    for (let minute = 0; minute <= 59; minute += 1) {
+      const slot = proactiveCoachService.getAdaptiveDeliverySlot(
+        adaptiveCandidate,
+        new Date(`2026-08-23T05:${String(minute).padStart(2, '0')}:00.000Z`)
+      );
+      if (slot) firstHourSlots.add(slot);
+    }
+    const slotMinutes = [...firstHourSlots].map((slot) =>
+      Number(slot.slice(-2))
+    );
+    for (let index = 1; index < slotMinutes.length; index += 1) {
+      expect(
+        slotMinutes[index] - slotMinutes[index - 1]
+      ).toBeGreaterThanOrEqual(3);
+      expect(slotMinutes[index] - slotMinutes[index - 1]).toBeLessThanOrEqual(
+        8
+      );
+    }
     expect(
       proactiveCoachService.getDueMessageKinds(
         {
           ...adaptiveCandidate,
-          adaptiveLastSentSlot: '2026-08-23T17:00',
+          adaptiveLastObservedSlot: observedSlot,
         },
         new Date('2026-08-23T15:45:00.000Z')
       )
@@ -185,6 +225,67 @@ describe('proactiveCoachService', () => {
         new Date('2026-08-23T19:01:00.000Z')
       )
     ).toBeNull();
+  });
+
+  it('sends a relevant adaptive message with topic metadata', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        adaptiveCheckInsEnabled: true,
+        dailyCheckInEnabled: false,
+        weeklyReviewEnabled: false,
+      },
+    ]);
+
+    const delivered =
+      await proactiveCoachService.processDueProactiveCoachMessages(
+        new Date('2026-08-23T15:45:00.000Z')
+      );
+
+    expect(delivered).toBe(1);
+    expect(composeAdaptiveCoachMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        opportunity: expect.objectContaining({ topic: 'training' }),
+      })
+    );
+    expect(
+      coachProfileRepository.saveProactiveMessageIfDue
+    ).toHaveBeenCalledWith(
+      'user-1',
+      'adaptive',
+      expect.stringMatching(/^2026-08-23T17:/),
+      'Das Training wartet. Lege jetzt deine Startzeit fest.',
+      expect.any(String),
+      expect.objectContaining({ topic: 'training', score: 88 })
+    );
+  });
+
+  it('records a quiet observation when the situation is not worth another message', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        adaptiveCheckInsEnabled: true,
+        adaptiveLastMessageAt: '2026-08-23T15:30:00.000Z',
+        dailyCheckInEnabled: false,
+        weeklyReviewEnabled: false,
+      },
+    ]);
+
+    const delivered =
+      await proactiveCoachService.processDueProactiveCoachMessages(
+        new Date('2026-08-23T15:45:00.000Z')
+      );
+
+    expect(delivered).toBe(0);
+    expect(composeAdaptiveCoachMessage).not.toHaveBeenCalled();
+    expect(
+      coachProfileRepository.markAdaptiveSlotObserved
+    ).toHaveBeenCalledWith('user-1', expect.stringMatching(/^2026-08-23T17:/));
   });
 
   it('prioritizes a carried-forward planned workout with concrete names', () => {
