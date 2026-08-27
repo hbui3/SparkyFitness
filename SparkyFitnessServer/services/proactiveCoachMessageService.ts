@@ -32,7 +32,6 @@ interface AiServiceForProactiveCoach {
   api_key?: string | null;
   model_name?: string | null;
   custom_url?: string | null;
-  timeout?: number | null;
   is_public?: boolean | null;
   source?: string | null;
 }
@@ -219,7 +218,6 @@ async function aiGeneratedMessage(
     api_key: aiService.api_key ?? undefined,
     model_name: aiService.model_name ?? undefined,
     custom_url: aiService.custom_url ?? undefined,
-    timeout: aiService.timeout ?? undefined,
   };
   const result = await dispatchAiRequest({
     provider,
