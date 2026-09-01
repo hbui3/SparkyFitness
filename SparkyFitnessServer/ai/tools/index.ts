@@ -27,6 +27,7 @@ import { buildFoodTools } from './foodTools.js';
 import { buildGoalTools } from './goalTools.js';
 import { buildHabitTools } from './habitTools.js';
 import { buildMealPlanTools } from './mealPlansTools.js';
+import { buildMealPlanningTools } from './mealPlanningTools.js';
 import { buildMedicationTools } from './medicationTools.js';
 import { buildMemoryTools, COACH_MEMORY_TOOL_NAME } from './memoryTools.js';
 import { buildMealSafetyTools } from './mealSafetyTools.js';
@@ -95,6 +96,7 @@ const CATEGORY_BUILDERS: Record<
     (u, tz) => buildFoodTools(u, tz),
     (u, tz) => buildFavoritesTools(u, tz),
     (u, tz) => buildMealPlanTools(u, tz),
+    (u, tz) => buildMealPlanningTools(u, tz),
     (u, tz) => buildCustomNutrientTools(u, tz),
     (u, tz) => buildWaterContainerTools(u, tz),
     (u, tz) => buildAllergenTools(u, tz),

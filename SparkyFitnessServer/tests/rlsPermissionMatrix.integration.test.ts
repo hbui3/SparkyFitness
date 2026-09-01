@@ -168,7 +168,14 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     coach_action_receipts: 'owner',
     coach_delivery_outbox: 'owner',
     coach_memories: 'owner',
+    coach_meal_plan_entries: 'owner',
+    coach_meal_plan_ingredients: 'owner',
+    coach_meal_plans: 'owner',
+    coach_pantry_events: 'owner',
+    coach_pantry_items: 'owner',
     coach_profiles: 'owner',
+    coach_shopping_list_items: 'owner',
+    coach_shopping_lists: 'owner',
     coach_training_preferences: 'owner',
     coach_telegram_connections: 'owner',
     coach_workout_feedback: 'owner',
@@ -295,11 +302,13 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     const sys = await getSystemClient();
     try {
       const { rows } = await sys.query(
-        'SELECT policyname, qual, with_check FROM pg_policies WHERE schemaname = $1 AND tablename = $2',
+        'SELECT policyname, permissive, cmd, qual, with_check FROM pg_policies WHERE schemaname = $1 AND tablename = $2',
         ['public', table]
       );
       return rows as Array<{
         policyname: string;
+        permissive: 'PERMISSIVE' | 'RESTRICTIVE';
+        cmd: string;
         qual: string | null;
         with_check: string | null;
       }>;
@@ -362,6 +371,15 @@ describe.runIf(RUN)('RLS permission matrix', () => {
       async (table) => {
         const ps = await policies(table);
         expect(ps.length, `${table} has no policy`).toBeGreaterThan(0);
+        const permissivePolicies = ps.filter(
+          (policy) => policy.permissive === 'PERMISSIVE'
+        );
+        expect(
+          permissivePolicies,
+          `${table} must have exactly one permissive owner policy`
+        ).toHaveLength(1);
+        expect(permissivePolicies[0].policyname).toBe('owner_policy');
+        expect(permissivePolicies[0].cmd).toBe('ALL');
         const all = norm(
           ps.map((p) => `${p.qual ?? ''} ${p.with_check ?? ''}`).join(' ')
         );

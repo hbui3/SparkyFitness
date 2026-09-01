@@ -32,6 +32,13 @@ BEGIN
     'coach_memories',
     'coach_workout_feedback',
     'coach_training_preferences',
+    'coach_pantry_items',
+    'coach_pantry_events',
+    'coach_shopping_lists',
+    'coach_shopping_list_items',
+    'coach_meal_plans',
+    'coach_meal_plan_entries',
+    'coach_meal_plan_ingredients',
     'coach_delivery_outbox',
     'coach_action_receipts',
     'telegram_update_inbox',
@@ -573,6 +580,13 @@ SELECT create_owner_policy('coach_telegram_connections');
 SELECT create_owner_policy('coach_memories');
 SELECT create_owner_policy('coach_workout_feedback');
 SELECT create_owner_policy('coach_training_preferences');
+SELECT create_owner_policy('coach_pantry_items');
+SELECT create_owner_policy('coach_pantry_events');
+SELECT create_owner_policy('coach_shopping_lists');
+SELECT create_owner_policy('coach_shopping_list_items');
+SELECT create_owner_policy('coach_meal_plans');
+SELECT create_owner_policy('coach_meal_plan_entries');
+SELECT create_owner_policy('coach_meal_plan_ingredients');
 SELECT create_owner_policy('coach_delivery_outbox');
 SELECT create_owner_policy('coach_action_receipts');
 

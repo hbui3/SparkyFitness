@@ -1579,7 +1579,7 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
   {
     category: 'food',
     keywords:
-      /\b(eat|ate|eating|food|foods|meal|meals|water|drink|drank|drinking|ml|oz|cup|cups|breakfast|lunch|dinner|snack|snacks|calories?|kcal|macro|macros|protein|carbs|fat|banana|apple|chicken|nutrition|nutrients?|coffee|tea|juice|smoothie|recipe|favou?rite\w*|meal\s*plan\w*|meal\s*template\w*|custom\s+nutrient\w*|micronutrient\w*|water\s+container\w*|water\s+bottle\w*|allerg\w*|intoleran\w*|anaphyla\w*|barcode|bar\s?code|UPC|EAN)\b/i,
+      /\b(eat|ate|eating|food|foods|meal|meals|pantry|groceries|grocery|shopping\s+list|water|drink|drank|drinking|ml|oz|cup|cups|breakfast|lunch|dinner|snack|snacks|calories?|kcal|macro|macros|protein|carbs|fat|banana|apple|chicken|nutrition|nutrients?|coffee|tea|juice|smoothie|recipe|favou?rite\w*|meal\s*plan\w*|meal\s*template\w*|custom\s+nutrient\w*|micronutrient\w*|water\s+container\w*|water\s+bottle\w*|allerg\w*|intoleran\w*|anaphyla\w*|barcode|bar\s?code|UPC|EAN|essen|gegessen|mahlzeit(?:en)?|frühstück|mittagessen|abendessen|einkauf(?:en|sliste|splan)?|vorrat|vorräte|lagerbestand|kochen|zubereit\w*|rezept(?:e)?)\b/i,
   },
   {
     category: 'checkin',
@@ -1599,7 +1599,7 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
   {
     category: 'coaching',
     keywords:
-      /\b(advice|advise|tips?|motivat\w*|recommend\w*|suggest\w*|coach(?:ing)?|plan)\b/i,
+      /\b(advice|advise|tips?|motivat\w*|recommend\w*|suggest\w*|coach(?:ing)?|plan|plane|planen|planung)\b/i,
   },
   {
     category: 'vision',
@@ -1732,7 +1732,7 @@ The immediately preceding assistant turn has these application-recorded domains:
 
 Available domains:
 - exercise: tracking workouts, logging sets/reps, running, cardio, strength, steps, exercise stats, and workout plan templates.
-- food: logging meals, lookup foods/nutrition, tracking water intake, favorites, meal plans, custom nutrients, water containers, allergens, and barcode lookup.
+- food: logging meals, lookup foods/nutrition, tracking water intake, favorites, pantry stock, groceries, dated meal plans, custom nutrients, water containers, allergens, and barcode lookup.
 - checkin: logging daily check-ins, weight, height, body fat, other body measurements, progress photos, and sleep-science analytics.
 - goals: viewing or changing goals/targets.
 - reports: viewing progress charts, summaries, TDEE, reports, or the daily dashboard.

@@ -15,6 +15,32 @@ describe('classifyByKeywords', () => {
     expect(result).toEqual(expect.arrayContaining(['food', 'reports']));
   });
 
+  it('routes German meal and shopping planning to food and coaching', () => {
+    const result = classifyByKeywords(
+      'Plane meine Mahlzeiten und eine Einkaufsliste für morgen.'
+    );
+
+    expect(result).toEqual(expect.arrayContaining(['food', 'coaching']));
+  });
+
+  it('routes a German pantry-status question to food tools', () => {
+    expect(classifyByKeywords('Was ist noch in meinem Vorrat?')).toContain(
+      'food'
+    );
+  });
+
+  it('routes the exact German what-to-eat question to food tools', () => {
+    expect(
+      classifyByKeywords('Was soll ich essen und was soll ich einkaufen?')
+    ).toContain('food');
+  });
+
+  it('routes a German preparation request to food tools', () => {
+    expect(classifyByKeywords('Was soll ich heute zubereiten?')).toContain(
+      'food'
+    );
+  });
+
   it('stems weigh/weighing/weighed to checkin', () => {
     expect(classifyByKeywords('I am weighing myself now')).toContain('checkin');
     expect(classifyByKeywords('I weighed in this morning')).toContain(

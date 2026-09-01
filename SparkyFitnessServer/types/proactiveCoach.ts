@@ -20,6 +20,8 @@ export interface ProactiveCoachOpportunity {
   actionDe: string;
   actionEn: string;
   stateSignature: string;
+  messageDe?: string;
+  messageEn?: string;
 }
 
 export interface RecentProactiveCoachMessage {

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-08-21_
+_Last updated: 2026-09-01_
 
 SparkyFitness Server is the backend API package for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessServer/`.
 
@@ -28,7 +28,7 @@ If a task also touches `shared/`, the frontend, or the mobile app, read the rele
 - Stack: Express 5, PostgreSQL via `pg`, Better Auth, Zod, TypeScript 5, Vitest 4, ESLint 10
 - Module system: ESM with `type: "module"` and `moduleResolution: "NodeNext"`
 - The package is now effectively TypeScript-first; almost all source files are `.ts`
-- Main domains: food and meal tracking, exercise logging and adaptive training, health and sleep data, sleep science, fasting, medications, mood, menstrual cycle and pregnancy, reporting, AI chat with private persistent coach profiles, onboarding, identity, admin tooling, and external provider integrations
+- Main domains: food and meal tracking, owner-only pantry/shopping/dated meal planning, exercise logging and adaptive training, health and sleep data, sleep science, fasting, medications, mood, menstrual cycle and pregnancy, reporting, AI chat with private persistent coach profiles, onboarding, identity, admin tooling, and external provider integrations
 
 ## Verified Commands
 
@@ -77,6 +77,7 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `utils/` - startup helpers, CORS, permissions, timezone loading, OIDC helpers, migration helpers
 - `ai/` - AI provider configuration (`config.ts`), the unified provider-dispatch helper (`providerDispatch.ts`), and the in-process chatbot tool registry (`ai/tools/`)
 - Persistent coach: `routes/coachProfileRoutes.ts` exposes owner-only profile, memory, deterministic today-status, and SSE endpoints. `services/coachContextService.ts` derives canonical onboarding/goals plus daily/7-day/30-day, recovery/muscle, and authoritative training-timeline context; `services/trainingFeedbackService.ts` derives bounded volume/rest guidance from owner-only structured workout feedback and active training preferences. `services/proactiveCoachService.ts` orchestrates idempotent adaptive/daily/weekly delivery, `services/proactiveCoachDecisionService.ts` scores timely coaching opportunities with conversation/global/topic cooldowns, and `services/proactiveCoachMessageService.ts` produces varied AI wording with a deterministic local fallback. Adaptive observation slots are deterministically staggered every 3-8 minutes inside the configured local window; `adaptive_interval_minutes` is the minimum time between actual messages, not the observation frequency. Telegram webhooks are persisted by exact update ID in `telegram_update_inbox`, processed through `services/telegramQueueService.ts`, and delivered through `coach_delivery_outbox`; `services/telegramCoachService.ts` keeps text/photo/voice chat, quick water/status actions, undo receipts, history, the same training-feedback and timeline-aware tool configuration aligned with web chat, and the persisted assistant turn-domain/model-purpose metadata used to bind underspecified replies only to the immediately preceding assistant turn. The instance-wide bot credential remains encrypted and system-only. Meal validation remains deterministic in the profile service.
+- Persistent meal planning: `routes/coachMealPlanningRoutes.ts`, `services/coachMealPlanningService.ts`, and `models/coachMealPlanningRepository.ts` expose the authenticated owner's pantry, append-only quantity ledger, derived editable shopping list, partial-purchase confirmation, and one-to-seven-day meal plans. Planned ingredients are computed reservations; only a confirmed `prepared` action decrements physical stock, while `eaten_out`, `skipped`, and replacement release reservations. `constants/swissRetailProductCatalog.ts` contains verified Coop/Migros product references without volatile prices or availability, and `ai/tools/mealPlanningTools.ts` is the shared chat/MCP mutation surface.
 - `security/` - encryption utilities (`encryption.ts`)
 - `validation/` - legacy express-validator rules for a few older routes (new routes use Zod schemas)
 - `constants/` - shared constants and supporting package data
@@ -244,6 +245,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   inspect `services/chatService.ts`, `ai/tools/`, and the matching domain service and repository
 - Automatic coach context or proactive-message issue:
   inspect `services/coachContextService.ts`, `services/proactiveCoachService.ts`, `services/proactiveCoachDecisionService.ts`, `services/proactiveCoachMessageService.ts`, `services/coachProfileService.ts`, and `models/coachProfileRepository.ts`; for planned/completed workout chronology or exact set-type counts also inspect `services/plannedWorkoutScheduleService.ts` and `routes/workoutPlanTemplateRoutes.ts`; for workout feedback/preferences inspect `services/trainingFeedbackService.ts`, `models/coachTrainingFeedbackRepository.ts`, and `ai/tools/trainingFeedbackTools.ts`; for Telegram delivery also inspect `services/telegramCoachService.ts`, `services/telegramApiService.ts`, `models/coachTelegramRepository.ts`, and `routes/telegramRoutes.ts`; for the instance-wide encrypted credential inspect `routes/telegramAdminRoutes.ts`, `services/telegramAdminService.ts`, `services/telegramConfigService.ts`, and `models/telegramConfigRepository.ts`
+- Pantry, shopping-list, retailer-product, dated meal-plan, or restock-reminder issue:
+  inspect `routes/coachMealPlanningRoutes.ts`, `services/coachMealPlanningService.ts`, `models/coachMealPlanningRepository.ts`, `services/coachMealSuggestionService.ts`, `constants/swissRetailProductCatalog.ts`, and `ai/tools/mealPlanningTools.ts`; the route and database policies are owner-only and must use `authenticatedUserId`
 - Fasting or mood issue:
   inspect `routes/fastingRoutes.ts` / `routes/moodRoutes.ts` and `models/fastingRepository.ts` / `models/moodRepository.ts`
 - Medications, cycle, or pregnancy issue:

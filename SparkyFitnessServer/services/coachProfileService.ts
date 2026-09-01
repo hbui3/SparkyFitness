@@ -58,44 +58,52 @@ const SEAFOOD_TERMS = [
   'thunfisch',
 ];
 
-const DAIRY_EGG_HONEY_TERMS = [
-  'butter',
-  'casein',
-  'cheese',
-  'cream',
-  'egg',
-  'eggs',
-  'honey',
-  'milk',
-  'whey',
-  'yogurt',
-  'ei',
-  'eier',
-  'honig',
-  'joghurt',
-  'kase',
-  'kaese',
-  'milch',
-  'sahne',
-];
-
 const DAIRY_ALIASES = [
   'milk',
   'milch',
+  'skyr',
   'butter',
   'casein',
   'cheese',
   'cream',
+  'cottage cheese',
+  'brie',
+  'camembert',
+  'creme fraiche',
   'feta',
+  'frischkäse',
+  'frischkaese',
   'ghee',
+  'greek yoghurt',
+  'greek yogurt',
   'joghurt',
+  'hüttenkäse',
+  'huettenkaese',
+  'kefir',
   'kase',
   'kaese',
+  'labneh',
+  'mascarpone',
   'mozzarella',
+  'paneer',
   'parmesan',
+  'quark',
+  'ricotta',
   'sahne',
+  'sour cream',
   'whey',
+  'yoghurt',
   'yogurt',
+];
+
+const DAIRY_EGG_HONEY_TERMS = [
+  ...DAIRY_ALIASES,
+  'egg',
+  'eggs',
+  'honey',
+  'ei',
+  'eier',
+  'honig',
 ];
 
 const TREE_NUT_ALIASES = [
@@ -138,7 +146,19 @@ const ALLERGEN_ALIASES: Record<string, string[]> = {
   nuts: TREE_NUT_ALIASES,
   soy: ['soy', 'soya', 'soja', 'tofu', 'tempeh'],
   wheat: ['wheat', 'weizen'],
-  gluten: ['gluten', 'wheat', 'weizen', 'barley', 'gerste', 'rye', 'roggen'],
+  gluten: [
+    'gluten',
+    'wheat',
+    'weizen',
+    'barley',
+    'gerste',
+    'rye',
+    'roggen',
+    'oats',
+    'rolled oats',
+    'hafer',
+    'haferflocken',
+  ],
   sesame: ['sesame', 'sesam', 'tahini'],
   shellfish: SHELLFISH_ALIASES,
   crustaceans: SHELLFISH_ALIASES,
@@ -147,6 +167,8 @@ const ALLERGEN_ALIASES: Record<string, string[]> = {
   lupin: ['lupin', 'lupine'],
   sulphites: ['sulfite', 'sulfites', 'sulphite', 'sulphites', 'sulfit'],
 };
+
+const COMPOUND_SUFFIX_TERMS = new Set(['kase', 'kaese', 'cheese', 'quark']);
 
 const DEFAULT_PROFILE: Omit<CoachProfileResponse, 'updatedAt'> = {
   enabled: true,
@@ -194,9 +216,24 @@ function normalizeList(values: string[]): string[] {
 }
 
 function containsTerm(value: string, term: string): boolean {
-  const normalizedValue = ` ${normalizeText(value).replace(/[^a-z0-9]+/g, ' ')} `;
-  const normalizedTerm = ` ${normalizeText(term).replace(/[^a-z0-9]+/g, ' ')} `;
-  return normalizedValue.includes(normalizedTerm);
+  const words = (input: string): string[] =>
+    normalizeText(input)
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+  const valueWords = words(value);
+  const termWords = words(term);
+  if (termWords.length === 0) return false;
+  const exactPhrase = ` ${valueWords.join(' ')} `.includes(
+    ` ${termWords.join(' ')} `
+  );
+  if (exactPhrase) return true;
+  if (termWords.length !== 1 || termWords[0].length < 4) return false;
+  return valueWords.some(
+    (word) =>
+      word.startsWith(termWords[0]) ||
+      (COMPOUND_SUFFIX_TERMS.has(termWords[0]) && word.endsWith(termWords[0]))
+  );
 }
 
 function localTime(value: string | undefined, fallback: string): string {
@@ -446,6 +483,7 @@ async function getPersistentChatContext(
     'When proposing or scheduling a workout, apply the structured training-feedback volume/rest guidance and active preferences above. Do not use an avoided exercise or override a constraint unless the user explicitly asks to override that specific preference. Treat pain/discomfort as a caution signal, not a diagnosis.',
     'Never claim that an existing workout contains warm-up sets, exercises, or set counts unless those exact values appear in the authoritative training timeline or were just returned by an exact workout retrieval tool. A warm-up count of 0 means that no warm-up sets are configured.',
     'For every new meal or recipe suggestion, call sparky_validate_meal_suggestion with the complete ingredient list before presenting it. Revise blocked suggestions. Foods the user says they already consumed may still be logged.',
+    'When the user asks what to eat, cook, meal-prep, or buy, make the answer decision-ready: give exact meals, gram or household quantities per portion, short preparation steps, and one consolidated shopping list. Use the live remaining calorie/protein context and the structured food preferences above. Do not stop at “eat something protein-rich”, “plan a meal”, or “log your food”, and do not make logging the primary next step unless the user is reporting food already eaten. For the next meal, call sparky_suggest_next_meal and present its validated result; for broader goal and trend guidance, call sparky_generate_coaching_plan before answering.',
   ].join('\n');
 }
 

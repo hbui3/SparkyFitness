@@ -16,6 +16,7 @@ import {
   Database,
   Heart,
   Bot,
+  ShoppingBasket,
 } from 'lucide-react';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import FamilyAccessManager from './FamilyAccessManager';
@@ -45,6 +46,7 @@ import { PreferenceSettings } from './PreferenceSettings';
 import { ProfileInformation } from './ProfileInformation';
 import { DataManagementSettings } from './DataManagementSettings';
 import { DataImportSettings } from './DataImportSettings';
+import MealPlanningSettings from './MealPlanningSettings';
 
 export interface PasswordFormState {
   current_password: string;
@@ -58,6 +60,7 @@ const SECTION_TO_TAB_MAP: Record<string, string> = {
   'family-access': 'profile-account',
   'data-management': 'profile-account',
   'allergen-preferences': 'nutrition-diet',
+  'meal-planning': 'nutrition-diet',
   'coach-profile': 'nutrition-diet',
   'custom-nutrients': 'nutrition-diet',
   'nutrient-display': 'nutrition-diet',
@@ -222,6 +225,24 @@ const Settings = () => {
             className="w-full"
             defaultValue={defaultExpanded}
           >
+            <AccordionItem
+              value="meal-planning"
+              className="border rounded-lg mb-4"
+            >
+              <AccordionTrigger
+                className="flex items-center gap-2 p-4 hover:no-underline"
+                description={t(
+                  'settings.mealPlanning.description',
+                  'Plan meals, groceries, and pantry stock in one place'
+                )}
+              >
+                <ShoppingBasket className="h-5 w-5" />
+                {t('settings.mealPlanning.title', 'Meal Planning')}
+              </AccordionTrigger>
+              <AccordionContent className="p-4 pt-0">
+                <MealPlanningSettings />
+              </AccordionContent>
+            </AccordionItem>
             <AccordionItem
               value="coach-profile"
               className="border rounded-lg mb-4"
