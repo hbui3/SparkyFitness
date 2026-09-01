@@ -1,6 +1,6 @@
 {
   "name": "sparkyfitnessserver",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "main": "SparkyFitnessServer.js",
   "type": "module",
   "scripts": {
@@ -88,6 +88,7 @@
     "eslint-plugin-security": "^4.0.0",
     "globals": "^17.1.0",
     "nodemon": "^3.1.11",
+    "prettier": "3.9.6",
     "supertest": "^7.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

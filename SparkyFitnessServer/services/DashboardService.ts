@@ -3,11 +3,12 @@ import reportRepository from '../models/reportRepository.js';
 import measurementRepository from '../models/measurementRepository.js';
 import userRepository from '../models/userRepository.js';
 import preferenceRepository from '../models/preferenceRepository.js';
+import * as genericHealthRepository from '../models/genericHealthRepository.js';
 import { log } from '../config/logging.js';
 import { resolveBackgroundStepCalories } from '@workspace/shared';
 import {
   computeCalorieBalance,
-  resolveDayFraction,
+  resolveDeviceProjectionSnapshot,
 } from './calorieBalanceService.js';
 import workoutDeduplicationService from './workoutDeduplicationService.js';
 /**
@@ -36,6 +37,7 @@ async function getDashboardStats(
       measurements,
       checkInMeasurements,
       latestWeightHeight,
+      healthConnectTotalRows,
     ] = await Promise.all([
       // `adjust` is unconditionally true, matching `dailySummaryService` and
       // `dailySummaryRangeService`. It used to be tied to `includeCheckin`, which made
@@ -69,22 +71,24 @@ async function getDashboardStats(
       includeCheckin
         ? measurementRepository.getLatestWeightHeight(userId)
         : { weightKg: null, heightCm: null },
-    ]);
-
-    // External BMR override — gated on includeCheckin, matching dailySummaryService.
-    const externalBmr =
-      userPreferences?.use_external_bmr && includeCheckin
-        ? await measurementRepository
-            .getExternalBmrForDate(userId, date)
+      includeCheckin
+        ? genericHealthRepository
+            .getHealthConnectTotalCaloriesByDateRange(
+              userId,
+              userId,
+              date,
+              date
+            )
             .catch((error: unknown) => {
               log(
                 'warn',
-                `DashboardService: external BMR fetch failed for user ${userId} on ${date}:`,
+                `Health Connect total-calorie dashboard fetch failed for user ${userId} on ${date}:`,
                 error
               );
-              return null;
+              return [];
             })
-        : null;
+        : [],
+    ]);
     const split = exerciseSplits[0];
     const exercise = {
       activeCalories: Number(split?.active_calories) || 0,
@@ -102,6 +106,19 @@ async function getDashboardStats(
         })
       : 0;
 
+    const healthConnectTotal = healthConnectTotalRows[0];
+    const timezone = userPreferences?.timezone || 'UTC';
+    const deviceProjectionSnapshot = resolveDeviceProjectionSnapshot({
+      date,
+      timezone,
+      deviceTotal: healthConnectTotal
+        ? {
+            totalCalories: healthConnectTotal.total_calories,
+            capturedAt: healthConnectTotal.captured_at,
+          }
+        : null,
+    });
+
     const balance = computeCalorieBalance({
       eatenCalories:
         nutritionData.length > 0
@@ -114,8 +131,7 @@ async function getDashboardStats(
       userProfile,
       userPreferences,
       measurements,
-      externalBmr,
-      dayFraction: resolveDayFraction(date, userPreferences?.timezone || 'UTC'),
+      ...deviceProjectionSnapshot,
     });
 
     return {

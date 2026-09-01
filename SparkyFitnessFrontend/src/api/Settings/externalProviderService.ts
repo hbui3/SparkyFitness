@@ -416,7 +416,7 @@ export const handleManualSyncGoogleHealth = async (
   }
 };
 
-export const fetchBaseProviders = async (): Promise<ExternalDataProvider[]> => {
+const fetchBaseProviders = async (): Promise<ExternalDataProvider[]> => {
   return apiCall('/external-providers', {
     method: 'GET',
     suppress404Toast: true,
@@ -438,7 +438,7 @@ export interface OAuthStatusResponse {
   tokenExpiresAt: string;
 }
 
-export const fetchWithingsStatus = async (
+const fetchWithingsStatus = async (
   providerId: string
 ): Promise<OAuthStatusResponse> => {
   return apiCall('/withings/status', {
@@ -447,15 +447,15 @@ export const fetchWithingsStatus = async (
   });
 };
 
-export const fetchFitbitStatus = async (): Promise<OAuthStatusResponse> => {
+const fetchFitbitStatus = async (): Promise<OAuthStatusResponse> => {
   return apiCall('/integrations/fitbit/status');
 };
 
-export const fetchOuraStatus = async (): Promise<OAuthStatusResponse> => {
+const fetchOuraStatus = async (): Promise<OAuthStatusResponse> => {
   return apiCall('/integrations/oura/status');
 };
 
-export const fetchPolarStatus = async (
+const fetchPolarStatus = async (
   providerId: string
 ): Promise<OAuthStatusResponse> => {
   return apiCall('/integrations/polar/status', {
@@ -469,7 +469,7 @@ export interface HevyStatusResponse {
   lastSyncAt: string;
 }
 
-export const fetchHevyStatus = async (): Promise<HevyStatusResponse> => {
+const fetchHevyStatus = async (): Promise<HevyStatusResponse> => {
   return apiCall('/integrations/hevy/status');
 };
 
@@ -480,7 +480,7 @@ export interface SpeedianceStatusResponse {
   lastSyncAt: string | null;
 }
 
-export const fetchSpeedianceStatus = async (
+const fetchSpeedianceStatus = async (
   providerId: string
 ): Promise<SpeedianceStatusResponse> => {
   return apiCall('/integrations/speediance/status', {
@@ -495,7 +495,7 @@ export interface IGPSportStatusResponse {
   lastSyncAt: string | null;
 }
 
-export const fetchIGPSportStatus = async (
+const fetchIGPSportStatus = async (
   providerId: string
 ): Promise<IGPSportStatusResponse> => {
   return apiCall('/integrations/igpsport/status', {
@@ -503,7 +503,7 @@ export const fetchIGPSportStatus = async (
   });
 };
 
-export const fetchStravaStatus = async (): Promise<OAuthStatusResponse> => {
+const fetchStravaStatus = async (): Promise<OAuthStatusResponse> => {
   return apiCall('/integrations/strava/status');
 };
 

@@ -339,9 +339,11 @@ const Reports = () => {
                   startDate,
                   endDate,
                   measurementData,
+                  energyUnit,
                   defaultWeightUnit,
                   defaultMeasurementUnit,
                   formatDateInUserTimezone,
+                  convertEnergy,
                 })
               }
               onExportCustomMeasurements={(

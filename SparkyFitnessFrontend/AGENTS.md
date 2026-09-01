@@ -33,7 +33,7 @@ pnpm run test:ci
 pnpm run build
 ```
 
-- `pnpm run validate` runs typecheck, lint (`--max-warnings 0`), and Prettier check together.
+- `pnpm run validate` runs typecheck, lint (`--max-warnings 0`), Prettier check, and Knip (`pnpm run knip` for unused files and exports) together.
 - `pnpm test` runs Jest (`ts-jest`, `jsdom`); config is inline in `package.json`, setup in `src/tests/setupTests.ts`.
 - `pnpm run build` runs `validate` first, then `vite build`.
 - CI (`.github/workflows/ci-tests.yml`) runs `pnpm run validate` and `pnpm run test:ci` for this package when its files change; matching those locally means a green PR.
@@ -61,7 +61,7 @@ Features are organized by domain, and the same domain folder name appears in `sr
 - `src/contexts/` - `ActiveUserContext` (family-access acting-user switching), `PreferencesContext`, `ThemeContext`, `WaterContainerContext`, `ChatbotVisibilityContext`, `ChatToolCategoriesContext` (runtime chat tool-category selection, localStorage-backed and sent on every web turn so the server can reuse it for Telegram). The chat UI must also preserve assistant `metadata.custom.assistantExecution` in reloaded and live messages so short follow-ups retain the same immediate-turn domain/model context as Telegram.
 - `src/layouts/` - `MainLayout.tsx` and `AddComp.tsx`.
 - `src/lib/` - `auth-client.ts` (Better Auth React client), `utils.ts` (`cn`), scanner engines, sleep helpers.
-- `src/services/` - pure calculation helpers (BMR, body composition, nutrient calculation, preferences), not HTTP clients.
+- `src/services/` - pure calculation helpers (BMR, body composition, nutrient calculation), not HTTP clients.
 - `src/utils/` - logging, user preferences, date helpers, misc.
 - `src/tests/` - Jest suites mirroring `components`/`contexts`/`hooks`/`services`/`utils`, plus `test-utils.tsx`.
 - `public/locales/<lng>/translation.json` - i18next resources, loaded over HTTP at runtime.
@@ -98,7 +98,7 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - Auth/session issue: `src/lib/auth-client.ts`, `src/hooks/useAuth.tsx`, `src/pages/Auth/`, and the server's `auth.ts` if it crosses packages.
 - Family-access/acting-user issue: `src/contexts/ActiveUserContext.tsx` and the hooks consuming it.
 - Chat (Sparky) issue: `src/pages/Chat/`, `src/components/ai/`, `src/api/Chatbot/`.
-- Theme/preferences issue: `src/contexts/ThemeContext.tsx`, `src/contexts/PreferencesContext.tsx`, `src/services/preferenceService.ts`, `src/utils/userPreferences.ts`.
+- Theme/preferences issue: `src/contexts/ThemeContext.tsx`, `src/contexts/PreferencesContext.tsx`, `src/api/Settings/preferences.ts`, `src/utils/userPreferences.ts`.
 - Persistent AI coach inherited goals, dietary constraints, configurable proactive schedules, owner-controlled memories, or Telegram pairing: `src/pages/Settings/CoachProfileSettings.tsx`, `src/hooks/Settings/useCoachProfile.ts`, and `src/api/Settings/coachProfile.ts`. Cross-channel Telegram/proactive changes refresh active web queries through `src/hooks/useCoachEvents.ts`. Instance-wide encrypted Telegram bot configuration remains in the Admin domain.
 - External-provider setup and manual sync (including Speediance and iGPSPORT regions/credentials): `src/pages/Settings/ProviderSpecificFields.tsx`, `EditProviderForm.tsx`, `ProviderCard.tsx`, `src/api/Integrations/integrations.ts`, and `src/hooks/Integrations/useIntegrations.ts`.
 - Complete Speediance workout building/editing, warm-up blocks, set modes, and calendar reservations: `src/pages/Exercises/SpeedianceWorkoutManager.tsx` plus the matching Exercises API/hook files. Alternating A/B-style cycles use `AddWorkoutPlanDialog.tsx`, `useWorkoutPlanAssignments.tsx`, and `TrainingTimeline.tsx`; preserve `cycle_length_weeks` and assignment `week_index` on every edit. Speediance is intentionally excluded from the generic Online exercise importer because workout-safe variants require dedicated validation.
