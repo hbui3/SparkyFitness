@@ -1,7 +1,10 @@
 import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { CoachMealPlanningDashboardResponse } from '@workspace/shared';
+import type {
+  CoachMealPlanningDailyNutrition,
+  CoachMealPlanningDashboardResponse,
+} from '@workspace/shared';
 import { coachMealPlanningKeys } from '@/api/keys/settings';
 import * as mealPlanningApi from '@/api/Settings/mealPlanning';
 import {
@@ -37,6 +40,22 @@ const emptyDashboard: CoachMealPlanningDashboardResponse = {
   pantry: [],
   shoppingList: null,
   planEntries: [],
+  dailyNutrition: [
+    '2026-09-01',
+    '2026-09-02',
+    '2026-09-03',
+    '2026-09-04',
+    '2026-09-05',
+  ].map((date): CoachMealPlanningDailyNutrition => ({
+    date,
+    targetCaloriesKcal: null,
+    targetProteinG: null,
+    plannedCaloriesKcal: 0,
+    plannedProteinG: 0,
+    calorieDifferenceKcal: null,
+    proteinDifferenceG: null,
+    isEstimateComplete: true,
+  })),
   mealCatalog: [],
   warnings: [],
   lastUpdatedAt: '2026-09-01T08:00:00.000Z',

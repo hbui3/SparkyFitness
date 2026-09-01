@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type CoachMealPlanEntryResponse,
+  type CoachMealPlanningDailyNutrition,
   coachMealPlanEntriesSchema,
   coachMealPlanIngredientsSchema,
   coachMealPlanningDashboardQuerySchema,
   coachMealPlanningDashboardResponseSchema,
+  coachMealPlanningDailyNutritionSchema,
   coachMealPlanActionRequestSchema,
   coachMealPlansSchema,
   coachPantryEventsSchema,
@@ -30,6 +33,30 @@ const MEAL_ENTRY_ID = '00000000-0000-4000-a000-000000000007';
 const INGREDIENT_ID = '00000000-0000-4000-a000-000000000008';
 const OPERATION_ID = '00000000-0000-4000-a000-000000000009';
 const NOW = '2026-09-01T10:00:00.000Z';
+const PLANNING_DATES = [
+  '2026-09-01',
+  '2026-09-02',
+  '2026-09-03',
+  '2026-09-04',
+  '2026-09-05',
+  '2026-09-06',
+  '2026-09-07',
+] as const;
+
+const dailyNutritionSummary = (
+  date: string,
+  overrides: Partial<CoachMealPlanningDailyNutrition> = {}
+): CoachMealPlanningDailyNutrition => ({
+  date,
+  targetCaloriesKcal: 2000,
+  targetProteinG: 150,
+  plannedCaloriesKcal: 0,
+  plannedProteinG: 0,
+  calorieDifferenceKcal: -2000,
+  proteinDifferenceG: -150,
+  isEstimateComplete: true,
+  ...overrides,
+});
 
 const coopProduct = {
   retailer: 'coop' as const,
@@ -317,6 +344,249 @@ describe('coach meal-planning API schemas', () => {
     }
   });
 
+  it('requires daily nutrition differences to match complete estimates', () => {
+    const complete = dailyNutritionSummary('2026-09-01', {
+      plannedCaloriesKcal: 2200,
+      plannedProteinG: 165,
+      calorieDifferenceKcal: 200,
+      proteinDifferenceG: 15,
+    });
+    expect(
+      coachMealPlanningDailyNutritionSchema.safeParse(complete).success
+    ).toBe(true);
+
+    const invalidCases: CoachMealPlanningDailyNutrition[] = [
+      { ...complete, calorieDifferenceKcal: 199 },
+      { ...complete, proteinDifferenceG: null },
+      {
+        ...complete,
+        targetCaloriesKcal: null,
+        calorieDifferenceKcal: 200,
+      },
+      {
+        ...complete,
+        isEstimateComplete: false,
+        calorieDifferenceKcal: 200,
+        proteinDifferenceG: 15,
+      },
+    ];
+    for (const value of invalidCases) {
+      expect(
+        coachMealPlanningDailyNutritionSchema.safeParse(value).success
+      ).toBe(false);
+    }
+
+    expect(
+      coachMealPlanningDailyNutritionSchema.safeParse({
+        ...complete,
+        isEstimateComplete: false,
+        calorieDifferenceKcal: null,
+        proteinDifferenceG: null,
+      }).success
+    ).toBe(true);
+  });
+
+  it('requires one ordered daily nutrition summary per dashboard date', () => {
+    const dashboard = {
+      startDate: '2026-09-01',
+      days: 2,
+      pantry: [],
+      shoppingList: null,
+      planEntries: [],
+      dailyNutrition: [
+        dailyNutritionSummary('2026-09-01'),
+        dailyNutritionSummary('2026-09-02'),
+      ],
+      mealCatalog: [],
+      warnings: [],
+      lastUpdatedAt: NOW,
+    };
+
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse(dashboard).success
+    ).toBe(true);
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse({
+        ...dashboard,
+        dailyNutrition: dashboard.dailyNutrition.slice(0, 1),
+      }).success
+    ).toBe(false);
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse({
+        ...dashboard,
+        dailyNutrition: [
+          dailyNutritionSummary('2026-09-01'),
+          dailyNutritionSummary('2026-09-03'),
+        ],
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects daily nutrition totals that contradict active meal entries', () => {
+    const plannedEntry = {
+      id: MEAL_ENTRY_ID,
+      mealPlanId: MEAL_PLAN_ID,
+      date: '2026-09-01',
+      slot: 'breakfast',
+      status: 'planned',
+      recipe: {
+        recipeKey: 'quark-oats',
+        name: 'Magerquark mit Haferflocken',
+        description: null,
+        prepMinutes: 5,
+        instructions: ['Quark und Haferflocken verrühren.'],
+      },
+      servings: 1,
+      caloriesKcal: 420,
+      proteinG: 42,
+      carbsG: 45,
+      fatG: 6,
+      safetyStatus: 'validated',
+      replacementForId: null,
+      notes: null,
+      ingredients: [
+        {
+          id: INGREDIENT_ID,
+          pantryItemId: PANTRY_ID,
+          ingredientKey: 'magerquark',
+          name: 'Magerquark',
+          quantity: 250,
+          unit: 'g',
+          category: 'chilled',
+          shoppingRequired: false,
+        },
+      ],
+      createdAt: NOW,
+      updatedAt: NOW,
+    } satisfies CoachMealPlanEntryResponse;
+    const preparedEntry: CoachMealPlanEntryResponse = {
+      ...plannedEntry,
+      id: '00000000-0000-4000-a000-000000000010',
+      slot: 'lunch',
+      status: 'prepared',
+      caloriesKcal: 180,
+      proteinG: 18,
+    };
+    const dashboard = {
+      startDate: '2026-09-01',
+      days: 1,
+      pantry: [],
+      shoppingList: null,
+      planEntries: [plannedEntry, preparedEntry],
+      dailyNutrition: [
+        dailyNutritionSummary('2026-09-01', {
+          plannedCaloriesKcal: 600,
+          plannedProteinG: 60,
+          calorieDifferenceKcal: -1400,
+          proteinDifferenceG: -90,
+        }),
+      ],
+      mealCatalog: [],
+      warnings: [],
+      lastUpdatedAt: NOW,
+    };
+
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse(dashboard).success
+    ).toBe(true);
+    const contradictory = coachMealPlanningDashboardResponseSchema.safeParse({
+      ...dashboard,
+      dailyNutrition: [
+        dailyNutritionSummary('2026-09-01', {
+          plannedCaloriesKcal: 601,
+          plannedProteinG: 61,
+          calorieDifferenceKcal: -1399,
+          proteinDifferenceG: -89,
+        }),
+      ],
+    });
+    expect(contradictory.success).toBe(false);
+    if (!contradictory.success) {
+      expect(contradictory.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ['dailyNutrition', 0, 'plannedCaloriesKcal'],
+          }),
+          expect.objectContaining({
+            path: ['dailyNutrition', 0, 'plannedProteinG'],
+          }),
+        ])
+      );
+    }
+  });
+
+  it('binds estimate completeness to eating-out meal entries', () => {
+    const eatenOutEntry = {
+      id: MEAL_ENTRY_ID,
+      mealPlanId: MEAL_PLAN_ID,
+      date: '2026-09-01',
+      slot: 'dinner',
+      status: 'eaten_out',
+      recipe: {
+        recipeKey: 'restaurant-meal',
+        name: 'Restaurant meal',
+        description: null,
+        prepMinutes: 0,
+        instructions: ['Eat outside.'],
+      },
+      servings: 1,
+      caloriesKcal: 0,
+      proteinG: 0,
+      carbsG: 0,
+      fatG: 0,
+      safetyStatus: 'validated',
+      replacementForId: null,
+      notes: null,
+      ingredients: [
+        {
+          id: INGREDIENT_ID,
+          pantryItemId: null,
+          ingredientKey: 'restaurant-meal',
+          name: 'Restaurant meal',
+          quantity: 1,
+          unit: 'piece',
+          category: 'other',
+          shoppingRequired: false,
+        },
+      ],
+      createdAt: NOW,
+      updatedAt: NOW,
+    } satisfies CoachMealPlanEntryResponse;
+    const dashboard = {
+      startDate: '2026-09-01',
+      days: 1,
+      pantry: [],
+      shoppingList: null,
+      planEntries: [eatenOutEntry],
+      dailyNutrition: [
+        dailyNutritionSummary('2026-09-01', {
+          calorieDifferenceKcal: null,
+          proteinDifferenceG: null,
+          isEstimateComplete: false,
+        }),
+      ],
+      mealCatalog: [],
+      warnings: [],
+      lastUpdatedAt: NOW,
+    };
+
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse(dashboard).success
+    ).toBe(true);
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse({
+        ...dashboard,
+        dailyNutrition: [dailyNutritionSummary('2026-09-01')],
+      }).success
+    ).toBe(false);
+    expect(
+      coachMealPlanningDashboardResponseSchema.safeParse({
+        ...dashboard,
+        planEntries: [],
+      }).success
+    ).toBe(false);
+  });
+
   it('rejects an inverted shopping-list coverage range', () => {
     const parsed = coachMealPlanningDashboardResponseSchema.safeParse({
       startDate: '2026-09-01',
@@ -334,6 +604,7 @@ describe('coach meal-planning API schemas', () => {
         updatedAt: NOW,
       },
       planEntries: [],
+      dailyNutrition: PLANNING_DATES.map((date) => dailyNutritionSummary(date)),
       mealCatalog: [],
       warnings: [],
       lastUpdatedAt: NOW,
@@ -437,6 +708,19 @@ describe('coach meal-planning API schemas', () => {
           updatedAt: NOW,
         },
       ],
+      dailyNutrition: PLANNING_DATES.map((date, index) =>
+        dailyNutritionSummary(
+          date,
+          index === 0
+            ? {
+                plannedCaloriesKcal: 420,
+                plannedProteinG: 42,
+                calorieDifferenceKcal: -1580,
+                proteinDifferenceG: -108,
+              }
+            : {}
+        )
+      ),
       mealCatalog: [
         {
           recipe,

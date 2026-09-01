@@ -9,10 +9,14 @@ import {
   TriangleAlert,
   Utensils,
 } from 'lucide-react';
-import { addDays } from '@workspace/shared';
+import {
+  addDays,
+  COACH_MEAL_PLANNING_CALORIE_TOLERANCE_RATIO,
+} from '@workspace/shared';
 import type {
   CoachMealPlanActionRequest,
   CoachMealPlanEntryResponse,
+  CoachMealPlanningDailyNutrition,
   CoachRecipeCatalogItem,
 } from '@workspace/shared';
 import { Badge } from '@/components/ui/badge';
@@ -55,6 +59,7 @@ type MealPlanAction = CoachMealPlanActionRequest['action'];
 
 interface MealPlanViewProps {
   entries: CoachMealPlanEntryResponse[];
+  dailyNutrition: CoachMealPlanningDailyNutrition[];
   catalog: CoachRecipeCatalogItem[];
   startDate: string;
   days: number;
@@ -67,6 +72,192 @@ interface MealPlanViewProps {
 }
 
 const SLOT_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
+
+type NutritionMetric = 'calories' | 'protein';
+
+interface DailyNutritionSummaryProps {
+  summary: CoachMealPlanningDailyNutrition;
+  dateLabel: string;
+}
+
+function nutritionDifferenceLabel(
+  metric: NutritionMetric,
+  difference: number,
+  t: ReturnType<typeof useTranslation>['t'],
+  isWithinTargetRange = false
+): string {
+  const amount = formatPlanningQuantity(Math.abs(difference));
+
+  if (metric === 'calories') {
+    if (difference === 0) {
+      return t(
+        'settings.mealPlanning.plan.calorieTargetMet',
+        'Calorie target met'
+      );
+    }
+    if (isWithinTargetRange) {
+      return difference < 0
+        ? t(
+            'settings.mealPlanning.plan.calorieWithinTargetRangeBelow',
+            'Within calorie target range ({{amount}} kcal below target)',
+            { amount }
+          )
+        : t(
+            'settings.mealPlanning.plan.calorieWithinTargetRangeAbove',
+            'Within calorie target range ({{amount}} kcal above target)',
+            { amount }
+          );
+    }
+    if (difference < 0) {
+      return t(
+        'settings.mealPlanning.plan.calorieBelowTarget',
+        '{{amount}} kcal below target',
+        { amount }
+      );
+    }
+    if (difference > 0) {
+      return t(
+        'settings.mealPlanning.plan.calorieAboveTarget',
+        '{{amount}} kcal above target',
+        { amount }
+      );
+    }
+  }
+
+  if (difference < 0) {
+    return t(
+      'settings.mealPlanning.plan.proteinBelowTarget',
+      '{{amount}} g protein below target',
+      { amount }
+    );
+  }
+  if (difference > 0) {
+    return t(
+      'settings.mealPlanning.plan.proteinAboveTarget',
+      '{{amount}} g protein above target',
+      { amount }
+    );
+  }
+  return t('settings.mealPlanning.plan.proteinTargetMet', 'Protein target met');
+}
+
+function DailyNutritionSummary({
+  summary,
+  dateLabel,
+}: DailyNutritionSummaryProps) {
+  const { t } = useTranslation();
+  const calorieWithinTargetRange =
+    summary.calorieDifferenceKcal !== null &&
+    (summary.calorieDifferenceKcal === 0 ||
+      (summary.targetCaloriesKcal !== null &&
+        summary.targetCaloriesKcal > 0 &&
+        Math.abs(summary.calorieDifferenceKcal) / summary.targetCaloriesKcal <=
+          COACH_MEAL_PLANNING_CALORIE_TOLERANCE_RATIO));
+  const differenceClass = (isWithinTargetRange: boolean): string =>
+    isWithinTargetRange
+      ? 'text-emerald-700 dark:text-emerald-300'
+      : 'text-amber-700 dark:text-amber-300';
+
+  return (
+    <section
+      className="rounded-md border bg-muted/20 p-3"
+      aria-label={t(
+        'settings.mealPlanning.plan.dailyNutritionFor',
+        'Daily nutrition for {{date}}',
+        { date: dateLabel }
+      )}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t('settings.mealPlanning.plan.calories', 'Calories')}
+          </p>
+          <p className="text-sm font-semibold">
+            {summary.targetCaloriesKcal === null
+              ? t(
+                  'settings.mealPlanning.plan.caloriesWithoutTarget',
+                  '{{planned}} kcal planned · target not set',
+                  {
+                    planned: formatPlanningQuantity(
+                      summary.plannedCaloriesKcal
+                    ),
+                  }
+                )
+              : t(
+                  'settings.mealPlanning.plan.calorieProgress',
+                  '{{planned}} / {{target}} kcal planned / target',
+                  {
+                    planned: formatPlanningQuantity(
+                      summary.plannedCaloriesKcal
+                    ),
+                    target: formatPlanningQuantity(summary.targetCaloriesKcal),
+                  }
+                )}
+          </p>
+          {summary.isEstimateComplete &&
+            summary.calorieDifferenceKcal !== null && (
+              <p
+                className={`text-xs font-medium ${differenceClass(calorieWithinTargetRange)}`}
+              >
+                {nutritionDifferenceLabel(
+                  'calories',
+                  summary.calorieDifferenceKcal,
+                  t,
+                  calorieWithinTargetRange
+                )}
+              </p>
+            )}
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t('settings.mealPlanning.plan.protein', 'Protein')}
+          </p>
+          <p className="text-sm font-semibold">
+            {summary.targetProteinG === null
+              ? t(
+                  'settings.mealPlanning.plan.proteinWithoutTarget',
+                  '{{planned}} g protein planned · target not set',
+                  {
+                    planned: formatPlanningQuantity(summary.plannedProteinG),
+                  }
+                )
+              : t(
+                  'settings.mealPlanning.plan.proteinProgress',
+                  '{{planned}} / {{target}} g protein planned / target',
+                  {
+                    planned: formatPlanningQuantity(summary.plannedProteinG),
+                    target: formatPlanningQuantity(summary.targetProteinG),
+                  }
+                )}
+          </p>
+          {summary.isEstimateComplete &&
+            summary.proteinDifferenceG !== null && (
+              <p
+                className={`text-xs font-medium ${differenceClass(summary.proteinDifferenceG === 0)}`}
+              >
+                {nutritionDifferenceLabel(
+                  'protein',
+                  summary.proteinDifferenceG,
+                  t
+                )}
+              </p>
+            )}
+        </div>
+      </div>
+      {!summary.isEstimateComplete && (
+        <p className="mt-3 flex items-start gap-2 border-t pt-3 text-xs font-medium text-amber-700 dark:text-amber-300">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {t(
+              'settings.mealPlanning.plan.incompleteNutritionEstimate',
+              'Incomplete total: eating-out nutrition is not included.'
+            )}
+          </span>
+        </p>
+      )}
+    </section>
+  );
+}
 
 function entryStatusClass(
   status: CoachMealPlanEntryResponse['status']
@@ -86,6 +277,7 @@ function entryStatusClass(
 
 export default function MealPlanView({
   entries,
+  dailyNutrition,
   catalog,
   startDate,
   days,
@@ -105,6 +297,10 @@ export default function MealPlanView({
   const dates = useMemo(
     () => Array.from({ length: days }, (_, index) => addDays(startDate, index)),
     [days, startDate]
+  );
+  const dailyNutritionByDate = useMemo(
+    () => new Map(dailyNutrition.map((summary) => [summary.date, summary])),
+    [dailyNutrition]
   );
   const replacementOptions = useMemo(() => {
     if (!replacementEntry) return [];
@@ -199,6 +395,7 @@ export default function MealPlanView({
 
       <div className="grid gap-4 xl:grid-cols-2">
         {dates.map((date) => {
+          const dayNutrition = dailyNutritionByDate.get(date);
           const dayEntries = entries
             .filter((entry) => entry.date === date)
             .sort(
@@ -207,7 +404,7 @@ export default function MealPlanView({
             );
           return (
             <Card key={date}>
-              <CardHeader className="pb-3">
+              <CardHeader className="space-y-3 pb-3">
                 <CardTitle className="flex items-center justify-between text-base">
                   <span className="capitalize">
                     {formatPlanningDay(date, locale)}
@@ -216,6 +413,12 @@ export default function MealPlanView({
                     {date}
                   </span>
                 </CardTitle>
+                {dayNutrition && (
+                  <DailyNutritionSummary
+                    summary={dayNutrition}
+                    dateLabel={formatPlanningDay(date, locale)}
+                  />
+                )}
               </CardHeader>
               <CardContent className="space-y-3">
                 {dayEntries.length === 0 ? (

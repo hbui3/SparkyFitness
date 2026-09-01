@@ -74,6 +74,18 @@ describe('coach meal-planning routes', () => {
       pantry: [],
       shoppingList: null,
       planEntries: [],
+      dailyNutrition: ['2026-09-01', '2026-09-02', '2026-09-03'].map(
+        (date) => ({
+          date,
+          targetCaloriesKcal: null,
+          targetProteinG: null,
+          plannedCaloriesKcal: 0,
+          plannedProteinG: 0,
+          calorieDifferenceKcal: null,
+          proteinDifferenceG: null,
+          isEstimateComplete: true,
+        })
+      ),
       mealCatalog: [],
       warnings: [],
       lastUpdatedAt: '2026-09-01T12:00:00.000Z',

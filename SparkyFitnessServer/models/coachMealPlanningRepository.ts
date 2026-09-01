@@ -870,7 +870,8 @@ async function syncShoppingList(
 }
 
 export async function listPantryItems(
-  userId: string
+  userId: string,
+  excludedPlannedEntryIds: readonly string[] = []
 ): Promise<PantryProjectionRow[]> {
   const ownerToday = todayInZone(await loadUserTimezone(userId));
   return withClient(userId, async (client) => {
@@ -898,11 +899,12 @@ export async function listPantryItems(
            JOIN coach_pantry_items pantry
              ON pantry.id = ingredient.pantry_item_id
             AND pantry.user_id = ingredient.user_id
-          WHERE ingredient.user_id = $1
-            AND ingredient.shopping_required = TRUE
-            AND entry.status = 'planned'
-            AND entry.plan_date >= $2::date
-          GROUP BY ingredient.pantry_item_id
+           WHERE ingredient.user_id = $1
+             AND ingredient.shopping_required = TRUE
+             AND entry.status = 'planned'
+             AND entry.plan_date >= $2::date
+             AND NOT (entry.id = ANY($3::uuid[]))
+           GROUP BY ingredient.pantry_item_id
        )
        SELECT pantry.id, pantry.ingredient_key, pantry.name, pantry.category,
               pantry.quantity::float8 AS quantity,
@@ -954,7 +956,7 @@ export async function listPantryItems(
                OR COALESCE(reservation.reserved_quantity, 0) > 0
                OR COALESCE(reservation.after_expiry_quantity, 0) > 0)
         ORDER BY pantry.category, pantry.name`,
-      [userId, ownerToday]
+      [userId, ownerToday, excludedPlannedEntryIds]
     );
     return rows;
   });
@@ -1753,11 +1755,16 @@ export async function generatePlan(
       const { rows: occupied } = await client.query<{ id: string }>(
         `SELECT id FROM coach_meal_plan_entries
           WHERE user_id = $1 AND plan_date = $2::date
-            AND slot = $3 AND status = 'planned'
+            AND slot = $3 AND status <> 'replaced'
           LIMIT 1`,
         [userId, entry.planDate, entry.mealSlot]
       );
-      if (occupied[0] && !input.replaceExisting) continue;
+      if (occupied[0]) {
+        throw new CoachMealPlanningConflictError(
+          'A meal-plan slot changed while the plan was being generated. Please retry.',
+          { planDate: entry.planDate, mealSlot: entry.mealSlot }
+        );
+      }
       entryIds.push(await insertPlanEntry(client, userId, planId, entry));
     }
     await syncShoppingList(client, userId, ownerToday);

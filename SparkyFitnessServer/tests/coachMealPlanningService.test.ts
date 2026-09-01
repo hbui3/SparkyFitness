@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RetailProductRef } from '@workspace/shared';
+import { addDays, type RetailProductRef } from '@workspace/shared';
 import type {
   MealPlanEntryRow,
   PantryProjectionRow,
+  PlanGenerationInput,
   ShoppingListItemRow,
   ShoppingListRow,
 } from '../models/coachMealPlanningRepository.js';
@@ -41,8 +42,8 @@ const mealCatalogMocks = vi.hoisted(() => ({
   getCoachMealSuggestions: vi.fn(),
 }));
 
-const coachProfileMocks = vi.hoisted(() => ({
-  getCoachProfile: vi.fn(),
+const goalServiceMocks = vi.hoisted(() => ({
+  getUserGoalsForRange: vi.fn(),
 }));
 
 const coachProfileRepositoryMocks = vi.hoisted(() => ({
@@ -70,8 +71,8 @@ vi.mock('../services/coachMealSuggestionService.js', () => ({
   getCoachMealSuggestions: mealCatalogMocks.getCoachMealSuggestions,
 }));
 
-vi.mock('../services/coachProfileService.js', () => ({
-  default: coachProfileMocks,
+vi.mock('../services/goalService.js', () => ({
+  default: goalServiceMocks,
 }));
 
 vi.mock('../models/coachProfileRepository.js', () => ({
@@ -99,6 +100,47 @@ const PLAN_ID = '44444444-4444-4444-8444-444444444444';
 const LIST_ID = '55555555-5555-4555-8555-555555555555';
 const OPERATION_ID = '66666666-6666-4666-8666-666666666666';
 const NOW = new Date('2026-09-01T12:00:00.000Z');
+
+interface TestDailyGoal {
+  calories: number;
+  protein: number;
+  breakfast_percentage: number;
+  lunch_percentage: number;
+  dinner_percentage: number;
+  snacks_percentage: number;
+}
+
+function testDailyGoal(overrides: Partial<TestDailyGoal> = {}): TestDailyGoal {
+  return {
+    calories: 1800,
+    protein: 120,
+    breakfast_percentage: 100 / 3,
+    lunch_percentage: 100 / 3,
+    dinner_percentage: 100 / 3,
+    snacks_percentage: 0,
+    ...overrides,
+  };
+}
+
+function testGoalRange(
+  startDate = '2026-09-01',
+  days = 7,
+  overrides: Readonly<Record<string, Partial<TestDailyGoal>>> = {}
+): Record<string, TestDailyGoal> {
+  return Object.fromEntries(
+    Array.from({ length: days }, (_, dayIndex) => {
+      const date = addDays(startDate, dayIndex);
+      return [date, testDailyGoal(overrides[date])];
+    })
+  );
+}
+
+function capturedGeneration(callIndex = 0): PlanGenerationInput {
+  const generation = repositoryMocks.generatePlan.mock.calls[callIndex]?.[1] as
+    PlanGenerationInput | undefined;
+  if (!generation) throw new Error('Expected a captured plan generation call.');
+  return generation;
+}
 
 const coopRice: RetailProductRef = {
   retailer: 'coop',
@@ -277,6 +319,18 @@ const mainMeal: CoachMealSuggestion = {
   shoppingServings: 2,
 };
 
+const snackMeal: CoachMealSuggestion = {
+  ...breakfastMeal,
+  id: 'quark-snack',
+  nameDe: 'Magerquark-Snack',
+  nameEn: 'Quark snack',
+  calories: 480,
+  proteinG: 45,
+  carbsG: 48,
+  fatG: 9,
+  mealSlots: ['snack'],
+};
+
 describe('coach meal-planning service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -288,12 +342,19 @@ describe('coach meal-planning service', () => {
     repositoryMocks.getOpenShoppingList.mockResolvedValue(null);
     repositoryMocks.listOccupiedPlanSlots.mockResolvedValue([]);
     repositoryMocks.getPlanGenerationResult.mockResolvedValue(null);
+    repositoryMocks.generatePlan.mockImplementation(
+      async (_userId: string, generation: PlanGenerationInput) => ({
+        planId: PLAN_ID,
+        created: true,
+        entryIds: generation.entries.map(
+          (_, index) => `generated-entry-${index + 1}`
+        ),
+        warnings: generation.warnings,
+      })
+    );
     mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([]);
     mealCatalogMocks.getCoachMealSuggestions.mockResolvedValue([]);
-    coachProfileMocks.getCoachProfile.mockResolvedValue({
-      calorieTarget: null,
-      proteinTargetG: null,
-    });
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue(testGoalRange());
     coachProfileRepositoryMocks.getCoachLanguage.mockResolvedValue('de-CH');
   });
 
@@ -348,7 +409,85 @@ describe('coach meal-planning service', () => {
         fatG: 18,
       })
     );
+    expect(dashboard.dailyNutrition[0]).toEqual({
+      date: '2026-09-01',
+      targetCaloriesKcal: 1800,
+      targetProteinG: 120,
+      plannedCaloriesKcal: 620,
+      plannedProteinG: 36,
+      calorieDifferenceKcal: -1180,
+      proteinDifferenceG: -84,
+      isEstimateComplete: true,
+    });
+    expect(dashboard.dailyNutrition).toHaveLength(3);
+    expect(goalServiceMocks.getUserGoalsForRange).toHaveBeenCalledWith(
+      USER_ID,
+      '2026-09-01',
+      '2026-09-03',
+      true
+    );
     expect(dashboard.warnings[0]).toContain('1 Artikel');
+    expect(dashboard.warnings[1]).toContain('vom Tagesziel ab');
+  });
+
+  it('marks dashboard nutrition incomplete for eating out and excludes terminal non-estimates', async () => {
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777771',
+        meal_slot: 'breakfast',
+        status: 'planned',
+        estimated_calories: 700,
+        estimated_protein_g: 50,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777772',
+        meal_slot: 'lunch',
+        status: 'prepared',
+        estimated_calories: 500,
+        estimated_protein_g: 40,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777773',
+        meal_slot: 'dinner',
+        status: 'eaten_out',
+        estimated_calories: 900,
+        estimated_protein_g: 45,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777774',
+        meal_slot: 'snack',
+        status: 'skipped',
+        estimated_calories: 300,
+        estimated_protein_g: 20,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777775',
+        meal_slot: 'snack',
+        status: 'replaced',
+        estimated_calories: 400,
+        estimated_protein_g: 25,
+      }),
+    ]);
+
+    const dashboard = await coachMealPlanningService.getDashboard(
+      USER_ID,
+      '2026-09-01',
+      1
+    );
+
+    expect(dashboard.dailyNutrition).toEqual([
+      {
+        date: '2026-09-01',
+        targetCaloriesKcal: 1800,
+        targetProteinG: 120,
+        plannedCaloriesKcal: 1200,
+        plannedProteinG: 90,
+        calorieDifferenceKcal: null,
+        proteinDifferenceG: null,
+        isEstimateComplete: false,
+      },
+    ]);
+    expect(dashboard.warnings).toEqual([]);
   });
 
   it('localizes dashboard warnings from the owner language and defaults non-German languages to English', async () => {
@@ -530,8 +669,12 @@ describe('coach meal-planning service', () => {
         shortage_quantity: 0,
       }),
     ]);
-    repositoryMocks.listOccupiedPlanSlots.mockResolvedValue([
-      { plan_date: '2026-09-01', meal_slot: 'lunch' },
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        meal_slot: 'lunch',
+        estimated_calories: 600,
+        estimated_protein_g: 40,
+      }),
     ]);
     mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
       breakfastMeal,
@@ -556,41 +699,362 @@ describe('coach meal-planning service', () => {
       addedEntries: 2,
       warnings: [],
     });
-    expect(repositoryMocks.listOccupiedPlanSlots).toHaveBeenCalledWith(
+    expect(repositoryMocks.listMealPlanEntries).toHaveBeenCalledWith(
       USER_ID,
       '2026-09-01',
       '2026-09-01'
     );
-    const generation = repositoryMocks.generatePlan.mock.calls[0]?.[1];
+    const generation = capturedGeneration();
     expect(generation).toEqual(
       expect.objectContaining({
         operationId: OPERATION_ID,
         startDate: '2026-09-01',
         endDate: '2026-09-01',
         replaceExisting: false,
-        algorithmVersion: 'goal-aware-pantry-plan-v2',
+        algorithmVersion: 'goal-aware-pantry-plan-v3',
       })
     );
     expect(generation?.entries).toEqual([
       expect.objectContaining({
         mealSlot: 'breakfast',
         recipeKey: 'quark-oats',
-        estimatedCalories: 510,
+        estimatedCalories: 600,
       }),
       expect.objectContaining({
         mealSlot: 'dinner',
         recipeKey: 'tofu-rice-bowl',
-        estimatedProteinG: 36,
+        estimatedProteinG: 34.839,
         ingredients: expect.arrayContaining([
           expect.objectContaining({
             ingredientKey: 'reis',
-            quantity: 80,
+            quantity: 77.419,
             shoppingRequired: true,
           }),
         ]),
       }),
     ]);
     expect(eventMocks.publish).toHaveBeenCalledWith(USER_ID, 'coach');
+  });
+
+  it('matches a 3639 kcal goal with a 25/50/25/0 distribution', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 3639,
+        protein: 222,
+        breakfast_percentage: 25,
+        lunch_percentage: 50,
+        dinner_percentage: 25,
+        snacks_percentage: 0,
+      }),
+    });
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
+      breakfastMeal,
+      mainMeal,
+      snackMeal,
+    ]);
+
+    const result = await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 1,
+      replaceExisting: true,
+    });
+
+    const generation = capturedGeneration();
+    const entries = generation?.entries ?? [];
+    expect(entries.map((entry) => entry.mealSlot)).toEqual([
+      'breakfast',
+      'lunch',
+      'dinner',
+    ]);
+    expect(entries.map((entry) => entry.estimatedCalories)).toEqual([
+      909.75, 1819.5, 909.75,
+    ]);
+    expect(
+      entries.reduce((sum, entry) => sum + entry.estimatedCalories, 0)
+    ).toBe(3639);
+    expect(result.warnings).toEqual([]);
+    expect(goalServiceMocks.getUserGoalsForRange).toHaveBeenCalledWith(
+      USER_ID,
+      '2026-09-01',
+      '2026-09-01',
+      true
+    );
+  });
+
+  it('scales low-calorie slots below the fixed recipe sizes and includes a positive snack allocation', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 900,
+        protein: 80,
+        breakfast_percentage: 25,
+        lunch_percentage: 25,
+        dinner_percentage: 25,
+        snacks_percentage: 25,
+      }),
+    });
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
+      breakfastMeal,
+      mainMeal,
+      snackMeal,
+    ]);
+
+    await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 1,
+      replaceExisting: true,
+    });
+
+    const entries = capturedGeneration().entries;
+    expect(entries.map((entry) => entry.mealSlot)).toEqual([
+      'breakfast',
+      'lunch',
+      'dinner',
+      'snack',
+    ]);
+    expect(entries.every((entry) => entry.estimatedCalories === 225)).toBe(
+      true
+    );
+    expect(entries.every((entry) => entry.servings < 1)).toBe(true);
+    expect(
+      entries.reduce((sum, entry) => sum + entry.estimatedCalories, 0)
+    ).toBe(900);
+  });
+
+  it('uses each adjusted date goal and its own meal percentages in a multi-day plan', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 1800,
+        breakfast_percentage: 25,
+        lunch_percentage: 50,
+        dinner_percentage: 25,
+        snacks_percentage: 0,
+      }),
+      '2026-09-02': testDailyGoal({
+        calories: 2400,
+        breakfast_percentage: 20,
+        lunch_percentage: 30,
+        dinner_percentage: 40,
+        snacks_percentage: 10,
+      }),
+    });
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
+      breakfastMeal,
+      mainMeal,
+      snackMeal,
+    ]);
+
+    await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 2,
+      replaceExisting: true,
+    });
+
+    const entries = capturedGeneration().entries;
+    const firstDay = entries.filter((entry) => entry.planDate === '2026-09-01');
+    const secondDay = entries.filter(
+      (entry) => entry.planDate === '2026-09-02'
+    );
+    expect(firstDay.map((entry) => entry.estimatedCalories)).toEqual([
+      450, 900, 450,
+    ]);
+    expect(secondDay.map((entry) => entry.estimatedCalories)).toEqual([
+      480, 720, 960, 240,
+    ]);
+    expect(
+      firstDay.reduce((sum, entry) => sum + entry.estimatedCalories, 0)
+    ).toBe(1800);
+    expect(
+      secondDay.reduce((sum, entry) => sum + entry.estimatedCalories, 0)
+    ).toBe(2400);
+  });
+
+  it('counts an existing planned meal before distributing the remaining daily calories', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 2000,
+        protein: 150,
+        breakfast_percentage: 25,
+        lunch_percentage: 50,
+        dinner_percentage: 25,
+        snacks_percentage: 0,
+      }),
+    });
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        meal_slot: 'breakfast',
+        estimated_calories: 700,
+        estimated_protein_g: 50,
+      }),
+    ]);
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
+      breakfastMeal,
+      mainMeal,
+    ]);
+
+    await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 1,
+      replaceExisting: false,
+    });
+
+    const entries = capturedGeneration().entries;
+    expect(entries.map((entry) => entry.mealSlot)).toEqual(['lunch', 'dinner']);
+    expect(entries.map((entry) => entry.estimatedCalories)).toEqual([
+      866.667, 433.333,
+    ]);
+    expect(
+      700 + entries.reduce((sum, entry) => sum + entry.estimatedCalories, 0)
+    ).toBe(2000);
+  });
+
+  it('scales servings, all nutrition values, and every ingredient with one calorie factor', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 1240,
+        protein: 72,
+        breakfast_percentage: 0,
+        lunch_percentage: 100,
+        dinner_percentage: 0,
+        snacks_percentage: 0,
+      }),
+    });
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([mainMeal]);
+
+    await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 1,
+      replaceExisting: true,
+    });
+
+    const entry = capturedGeneration().entries[0];
+    expect(entry).toEqual(
+      expect.objectContaining({
+        servings: 2,
+        estimatedCalories: 1240,
+        estimatedProteinG: 72,
+        estimatedCarbsG: 144,
+        estimatedFatG: 36,
+      })
+    );
+    expect(entry?.ingredients).toEqual([
+      expect.objectContaining({ ingredientKey: 'reis', quantity: 160 }),
+      expect.objectContaining({ ingredientKey: 'naturtofu', quantity: 400 }),
+    ]);
+  });
+
+  it('preserves terminal slots during regeneration and does not redistribute an eaten-out share', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 2000,
+        protein: 160,
+        breakfast_percentage: 25,
+        lunch_percentage: 50,
+        dinner_percentage: 0,
+        snacks_percentage: 25,
+      }),
+    });
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777771',
+        meal_slot: 'breakfast',
+        status: 'prepared',
+        estimated_calories: 500,
+        estimated_protein_g: 40,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777772',
+        meal_slot: 'lunch',
+        status: 'eaten_out',
+        estimated_calories: 900,
+        estimated_protein_g: 50,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777773',
+        meal_slot: 'dinner',
+        status: 'skipped',
+        estimated_calories: 0,
+        estimated_protein_g: 0,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777774',
+        meal_slot: 'snack',
+        status: 'planned',
+        estimated_calories: 300,
+        estimated_protein_g: 20,
+      }),
+    ]);
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
+      breakfastMeal,
+      mainMeal,
+      snackMeal,
+    ]);
+
+    const result = await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 1,
+      replaceExisting: true,
+    });
+
+    const generation = capturedGeneration();
+    expect(repositoryMocks.listPantryItems).toHaveBeenCalledWith(USER_ID, [
+      '77777777-7777-4777-8777-777777777774',
+    ]);
+    expect(generation?.entries).toEqual([
+      expect.objectContaining({ mealSlot: 'snack', estimatedCalories: 500 }),
+    ]);
+    expect(
+      generation?.entries.some((entry) =>
+        ['breakfast', 'lunch', 'dinner'].includes(entry.mealSlot)
+      )
+    ).toBe(false);
+    expect(result.warnings).toEqual([
+      expect.stringContaining('nicht vollständig geprüft'),
+    ]);
+  });
+
+  it('adds a localized warning when a complete day remains more than five percent off target', async () => {
+    goalServiceMocks.getUserGoalsForRange.mockResolvedValue({
+      '2026-09-01': testDailyGoal({
+        calories: 1000,
+        protein: 100,
+        breakfast_percentage: 25,
+        lunch_percentage: 50,
+        dinner_percentage: 25,
+        snacks_percentage: 0,
+      }),
+    });
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        meal_slot: 'breakfast',
+        status: 'prepared',
+        estimated_calories: 1200,
+        estimated_protein_g: 80,
+      }),
+    ]);
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
+      breakfastMeal,
+      mainMeal,
+    ]);
+
+    const result = await coachMealPlanningService.generateMealPlan(USER_ID, {
+      operationId: OPERATION_ID,
+      startDate: '2026-09-01',
+      days: 1,
+      replaceExisting: false,
+    });
+
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('1200 statt 1000 kcal'),
+        expect.stringContaining('20 %'),
+      ])
+    );
   });
 
   it('localizes no-safe-recipe generation warnings in English and German', async () => {
@@ -665,14 +1129,20 @@ describe('coach meal-planning service', () => {
         shortage_quantity: 0,
       }),
     ]);
-    repositoryMocks.listOccupiedPlanSlots.mockResolvedValue([
-      { plan_date: '2026-09-01', meal_slot: 'breakfast' },
-      { plan_date: '2026-09-01', meal_slot: 'dinner' },
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777771',
+        meal_slot: 'breakfast',
+        estimated_calories: 600,
+        estimated_protein_g: 40,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777772',
+        meal_slot: 'dinner',
+        estimated_calories: 600,
+        estimated_protein_g: 40,
+      }),
     ]);
-    coachProfileMocks.getCoachProfile.mockResolvedValue({
-      calorieTarget: 1800,
-      proteinTargetG: 120,
-    });
     mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
       pantryFirstMeal,
       goalAlignedMeal,
@@ -701,7 +1171,7 @@ describe('coach meal-planning service', () => {
       `meal-plan:${OPERATION_ID}`,
       2
     );
-    expect(repositoryMocks.generatePlan.mock.calls[0]?.[1].entries).toEqual([
+    expect(capturedGeneration().entries).toEqual([
       expect.objectContaining({ recipeKey: goalAlignedMeal.id }),
     ]);
   });
@@ -728,11 +1198,11 @@ describe('coach meal-planning service', () => {
     });
 
     expect(repositoryMocks.listPantryItems).not.toHaveBeenCalled();
-    expect(repositoryMocks.listOccupiedPlanSlots).not.toHaveBeenCalled();
+    expect(repositoryMocks.listMealPlanEntries).not.toHaveBeenCalled();
     expect(repositoryMocks.generatePlan).not.toHaveBeenCalled();
     expect(mealCatalogMocks.getCoachMealCatalog).not.toHaveBeenCalled();
     expect(mealCatalogMocks.getCoachMealSuggestions).not.toHaveBeenCalled();
-    expect(coachProfileMocks.getCoachProfile).not.toHaveBeenCalled();
+    expect(goalServiceMocks.getUserGoalsForRange).not.toHaveBeenCalled();
     expect(eventMocks.publish).not.toHaveBeenCalled();
     expect(repositoryMocks.getPlanGenerationResult).toHaveBeenCalledWith(
       USER_ID,
@@ -746,10 +1216,25 @@ describe('coach meal-planning service', () => {
   });
 
   it('persists an empty generation receipt so its operation id remains bound', async () => {
-    repositoryMocks.listOccupiedPlanSlots.mockResolvedValue([
-      { plan_date: '2026-09-01', meal_slot: 'breakfast' },
-      { plan_date: '2026-09-01', meal_slot: 'lunch' },
-      { plan_date: '2026-09-01', meal_slot: 'dinner' },
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777771',
+        meal_slot: 'breakfast',
+        estimated_calories: 600,
+        estimated_protein_g: 40,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777772',
+        meal_slot: 'lunch',
+        estimated_calories: 600,
+        estimated_protein_g: 40,
+      }),
+      planEntryRow({
+        id: '77777777-7777-4777-8777-777777777773',
+        meal_slot: 'dinner',
+        estimated_calories: 600,
+        estimated_protein_g: 40,
+      }),
     ]);
     mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([
       breakfastMeal,
@@ -814,7 +1299,9 @@ describe('coach meal-planning service', () => {
   });
 
   it('delegates a safe replacement with the original date and slot', async () => {
-    repositoryMocks.getMealPlanEntry.mockResolvedValue(planEntryRow());
+    repositoryMocks.getMealPlanEntry.mockResolvedValue(
+      planEntryRow({ estimated_calories: 930 })
+    );
     mealCatalogMocks.getCoachMealSuggestionById.mockResolvedValue(mainMeal);
     repositoryMocks.replacePlanEntry.mockResolvedValue({
       entryId: ITEM_ID,
@@ -839,6 +1326,18 @@ describe('coach meal-planning service', () => {
         planDate: '2026-09-01',
         mealSlot: 'dinner',
         recipeKey: mainMeal.id,
+        servings: 1.5,
+        estimatedCalories: 930,
+        estimatedProteinG: 54,
+        estimatedCarbsG: 108,
+        estimatedFatG: 27,
+        ingredients: [
+          expect.objectContaining({ ingredientKey: 'reis', quantity: 120 }),
+          expect.objectContaining({
+            ingredientKey: 'naturtofu',
+            quantity: 300,
+          }),
+        ],
       })
     );
   });
