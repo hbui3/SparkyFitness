@@ -89,6 +89,7 @@ import {
   ENABLE_TOOLS_TOOL_NAME,
   ASK_USER_TOOL_NAME,
   type ChatToolProfile,
+  type ToolBuildContext,
 } from '../ai/tools/index.js';
 import { CATEGORY_SUMMARIES } from '../ai/tools/metaTools.js';
 import { isToolErrorText } from '../ai/tools/errors.js';
@@ -97,6 +98,10 @@ import coachEventService, {
 } from './coachEventService.js';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
+import {
+  createFoodPhotoEstimateSink,
+  FOOD_PHOTO_ESTIMATE_PART_TYPE,
+} from '../ai/tools/foodPhotoEstimateSink.js';
 import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -532,7 +537,9 @@ async function prepareChatContext(
   categoriesAreManual = false,
   serviceSystemPrompt?: string | null,
   allowAskUser = true,
-  allowedToolCategories?: readonly string[]
+  allowedToolCategories?: readonly string[],
+  latestImageDataUrl?: string | null,
+  serviceConfigId?: string | null
 ) {
   const { chatTz, customCategoriesList } =
     await chatContextInputsCache.getOrLoad(authenticatedUserId, async () => {
@@ -603,6 +610,16 @@ async function prepareChatContext(
   let activeToolNames: string[] | undefined;
   let prepareStep: ReturnType<typeof buildEscalationPrepareStep> | undefined;
 
+  // Catches the structured estimate if this turn analyses a food photo, so the
+  // numbers can be persisted and logged verbatim instead of the model retyping
+  // them one food at a time. Per-turn: two users' turns share this process.
+  const foodPhotoEstimateSink = createFoodPhotoEstimateSink();
+  const toolBuildContext: ToolBuildContext = {
+    foodPhotoEstimateSink,
+    latestImageDataUrl,
+    serviceConfigId,
+  };
+
   if (categoriesAreManual) {
     tools = buildChatbotTools(
       authenticatedUserId,
@@ -612,12 +629,17 @@ async function prepareChatContext(
       [...selectedCategories],
       // Quick-reply chips: full profile only (the small local models 'core'
       // exists for pick tools unreliably from a wider surface).
-      allowAskUser && toolProfile === 'full'
+      allowAskUser && toolProfile === 'full',
+      toolBuildContext
     );
     activeToolNames = undefined; // every composed tool is sent
     prepareStep = undefined; // no mid-request widening
   } else {
-    const surface = buildChatToolSurface(authenticatedUserId, chatTz);
+    const surface = buildChatToolSurface(
+      authenticatedUserId,
+      chatTz,
+      toolBuildContext
+    );
     tools = surface.tools;
     activeToolNames = [
       ...new Set(
@@ -685,6 +707,10 @@ async function prepareChatContext(
     prepareStep,
     toolProfile,
     selectedCategories: [...selectedCategories],
+    // Returned so onFinish can persist whatever the vision tool captured this
+    // turn. The tools close over it, but they are built here and the message
+    // is saved in processChatMessageStream.
+    foodPhotoEstimateSink,
   };
 }
 
@@ -1270,8 +1296,7 @@ const ASK_USER_PART_TYPE = `tool-${ASK_USER_TOOL_NAME}`;
 // the call into text keeps the transcript valid AND keeps the context intact.
 function askUserPartToText(part: ChatMessagePart): string | null {
   const input = part.input as
-    | { question?: unknown; options?: unknown }
-    | undefined;
+    { question?: unknown; options?: unknown } | undefined;
   const question = typeof input?.question === 'string' ? input.question : '';
   const options = Array.isArray(input?.options)
     ? input.options.filter((o): o is string => typeof o === 'string')
@@ -1427,6 +1452,39 @@ function toCoreMessages(messages: ChatMessage[]): LlmMessage[] {
   });
 }
 
+/**
+ * Extracts the latest image data URL or base64 payload from the most recent
+ * user turn in the conversation history, if any.
+ */
+function extractLatestImageDataUrl(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (msg.role !== 'user') continue;
+    const partsSource = Array.isArray(msg.parts)
+      ? msg.parts
+      : Array.isArray(msg.content)
+        ? (msg.content as ChatMessagePart[])
+        : null;
+    if (!partsSource) continue;
+    for (const part of partsSource) {
+      if (
+        part.type === 'image' ||
+        part.type === 'image_url' ||
+        (part.type === 'file' &&
+          (part.mimeType?.startsWith('image/') ||
+            part.mediaType?.startsWith('image/') ||
+            part.url?.startsWith('data:image/')))
+      ) {
+        const url = part.image_url?.url || part.image || part.url;
+        if (typeof url === 'string' && url.trim().length > 0) {
+          return url.trim();
+        }
+      }
+    }
+  }
+  return null;
+}
+
 // Applies the context-window controls in order: drop trailing empty assistant
 // messages some clients send, strip historical images, trim to the profile's
 // token budget, and ensure the window starts with a user message (some models
@@ -1516,17 +1574,17 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
   {
     category: 'exercise',
     keywords:
-      /\b(run|ran|running|walk|walked|walking|jog|jogged|jogging|lift|lifted|lifting|workout|workouts|exercise|exercises|reps|sets|cardio|strength|gym|heart rate|bpm|vo2\s*max|vo2max|treadmill|squats?|bench press|swim|swam|swimming|bike|biking|cycling|cycled|yoga|hike[ds]?|hiking|steps|push-?ups?|pull-?ups?|training|trained|worked out)\b/i,
+      /\b(run|ran|running|walk|walked|walking|jog|jogged|jogging|lift|lifted|lifting|workout|workouts|exercise|exercises|reps|sets|cardio|strength|gym|heart rate|bpm|vo2\s*max|vo2max|treadmill|squats?|bench press|swim|swam|swimming|bike|biking|cycling|cycled|yoga|hike[ds]?|hiking|steps|push-?ups?|pull-?ups?|training|trained|worked out|personal\s+record\w*|best\s+effort\w*|matched\s+course\w*|pace\s+record\w*|workout\s+plan\w*|workout\s+template\w*|training\s+plan\w*|training\s+program\w*)\b/i,
   },
   {
     category: 'food',
     keywords:
-      /\b(eat|ate|eating|food|foods|meal|meals|water|drink|drank|drinking|ml|oz|cup|cups|breakfast|lunch|dinner|snack|snacks|calories?|kcal|macro|macros|protein|carbs|fat|banana|apple|chicken|nutrition|nutrients?|coffee|tea|juice|smoothie|recipe)\b/i,
+      /\b(eat|ate|eating|food|foods|meal|meals|water|drink|drank|drinking|ml|oz|cup|cups|breakfast|lunch|dinner|snack|snacks|calories?|kcal|macro|macros|protein|carbs|fat|banana|apple|chicken|nutrition|nutrients?|coffee|tea|juice|smoothie|recipe|favou?rite\w*|meal\s*plan\w*|meal\s*template\w*|custom\s+nutrient\w*|micronutrient\w*|water\s+container\w*|water\s+bottle\w*|allerg\w*|intoleran\w*|anaphyla\w*|barcode|bar\s?code|UPC|EAN)\b/i,
   },
   {
     category: 'checkin',
     keywords:
-      /\b(weigh(?:t|ts|ed|ing|s)?|height|waist|hips|neck|body fat|fat%|percentage|checkin|check-in|scale|bmi|mood|sleep|slept|nap|fasting|fasted|measurements?|measured)\b/i,
+      /\b(weigh(?:t|ts|ed|ing|s)?|height|waist|hips|neck|body fat|fat%|percentage|checkin|check-in|scale|bmi|mood|sleep|slept|nap|fasting|fasted|measurements?|measured|progress\s+photo\w*|body\s+photo\w*|transformation\s+photo\w*|sleep\s+debt|sleep\s+need|chronotype|energy\s+curve|circadian|MCTQ|social\s+jetlag)\b/i,
   },
   {
     category: 'goals',
@@ -1536,7 +1594,7 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
   {
     category: 'reports',
     keywords:
-      /\b(report|reports|summar(?:y|ies|ize|ise|ized|ised|izing)|progress|tdee|chart|charts|analytics|recap|overview|trends?|graphs?|stats?|statistics|analy(?:ze|sis|tics)|averages?|compare|comparison|how (?:am|did|was|have) i)\b/i,
+      /\b(report|reports|summar(?:y|ies|ize|ise|ized|ised|izing)|progress|tdee|chart|charts|analytics|recap|overview|trends?|graphs?|stats?|statistics|analy(?:ze|sis|tics)|averages?|compare|comparison|how (?:am|did|was|have) i|dashboard|daily\s+summary|calorie\s+balance|calories\s+remaining|net\s+calories)\b/i,
   },
   {
     category: 'coaching',
@@ -1550,7 +1608,7 @@ const KEYWORD_RULES: { category: ChatToolCategorySlug; keywords: RegExp }[] = [
   {
     category: 'profile',
     keywords:
-      /\b(profile|habit|habits|preference|preferences|settings|timezone|unit|units)\b/i,
+      /\b(profile|habit|habits|preference|preferences|settings|timezone|unit|units|integration\w*|connected\s+(app|service|device|provider)\w*|external\s+provider\w*|wearable\w*|garmin|withings|fitbit|oura|polar|strava|hevy|synced\s+data|delete\s+synced|imported\s+data)\b/i,
   },
   {
     category: 'medications',
@@ -1583,15 +1641,22 @@ function extractMessageText(msg: ChatMessage): string {
 // True when a message carries an image part. Deterministic signal (unlike
 // text keywords or the LLM fallback, an attached image is unambiguous), so
 // it's applied directly rather than routed through classification.
-function hasImageParts(msg: ChatMessage): boolean {
+export function hasImageParts(msg: ChatMessage): boolean {
   const partsSource = Array.isArray(msg.parts)
     ? msg.parts
     : Array.isArray(msg.content)
       ? (msg.content as ChatMessagePart[])
       : null;
   return (
-    partsSource?.some((p) => p.type === 'image' || p.type === 'image_url') ??
-    false
+    partsSource?.some(
+      (p) =>
+        p.type === 'image' ||
+        p.type === 'image_url' ||
+        (p.type === 'file' &&
+          (p.mimeType?.startsWith('image/') ||
+            p.mediaType?.startsWith('image/') ||
+            p.url?.startsWith('data:image/')))
+    ) ?? false
   );
 }
 
@@ -1625,12 +1690,14 @@ async function classifyUserIntent(
   const text = extractMessageText(lastUserMessage);
 
   // 1. Deterministic + keyword signals (instant, 0ms). An attached image
-  // always implies vision (+ food, the dominant meal-photo case) regardless
-  // of accompanying text.
+  // on the current turn or recent turns in the active conversation always implies
+  // vision (+ food), ensuring follow-up logging turns have vision tools like
+  // sparky_log_food_photo loaded.
   const matchedCategories = new Set<ChatToolCategorySlug>(
     classifyByKeywords(text)
   );
-  if (hasImageParts(lastUserMessage)) {
+  const hasRecentImage = messages.slice(-4).some((m) => hasImageParts(m));
+  if (hasRecentImage || hasImageParts(lastUserMessage)) {
     matchedCategories.add('vision');
     matchedCategories.add('food');
   }
@@ -1664,14 +1731,15 @@ The immediately preceding assistant turn has these application-recorded domains:
 - Never use any older conversation topic to classify the latest reply.
 
 Available domains:
-- exercise: tracking workouts, logging sets/reps, running, cardio, strength, steps.
-- food: logging meals, lookup foods/nutrition, tracking water intake.
-- checkin: logging daily check-ins, weight, height, body fat, or other body measurements.
+- exercise: tracking workouts, logging sets/reps, running, cardio, strength, steps, exercise stats, and workout plan templates.
+- food: logging meals, lookup foods/nutrition, tracking water intake, favorites, meal plans, custom nutrients, water containers, allergens, and barcode lookup.
+- checkin: logging daily check-ins, weight, height, body fat, other body measurements, progress photos, and sleep-science analytics.
 - goals: viewing or changing goals/targets.
-- reports: viewing progress charts, summaries, TDEE, or reports.
+- reports: viewing progress charts, summaries, TDEE, reports, or the daily dashboard.
 - coaching: general coaching advice, guidance, tips, or motivation.
-- profile: changing settings, preferences, timezone, habits, or profile details.
-- medications: viewing or logging medicines, medication schedules, doses, or adherence.
+- vision: analyzing food photos or scanning nutrition labels.
+- profile: changing settings, preferences, timezone, habits, profile details, connected integrations, or synced-data.
+- medications: viewing or logging medicines, medication schedules, doses, adherence, or GLP-1 tracking.
 
 Your response must contain ONLY the matched domain names as a comma-separated list (e.g., "exercise, food" or "checkin" or "none"). Do not include any other text.`;
 
@@ -1702,17 +1770,8 @@ Your response must contain ONLY the matched domain names as a comma-separated li
       .map((t) => t.trim().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, ''));
 
     const categoriesList: ChatToolCategorySlug[] = [];
-    const validCategories: ChatToolCategorySlug[] = [
-      'exercise',
-      'food',
-      'checkin',
-      'goals',
-      'reports',
-      'coaching',
-      'profile',
-      'vision',
-      'medications',
-    ];
+    const validCategories: readonly ChatToolCategorySlug[] =
+      CHAT_TOOL_CATEGORY_SLUGS;
     for (const cat of validCategories) {
       if (parts.includes(cat)) {
         categoriesList.push(cat);
@@ -1860,6 +1919,7 @@ async function processChatMessage(
       toolCategories
     );
 
+    const latestImageDataUrl = extractLatestImageDataUrl(messages);
     const {
       systemPromptContent,
       tools,
@@ -1876,7 +1936,9 @@ async function processChatMessage(
       aiService.system_prompt,
       interactionOptions?.allowAskUser !== false &&
         !latestUserAnsweredQuickReply(messages),
-      toolCategories
+      toolCategories,
+      latestImageDataUrl,
+      aiService.id
     );
     const chatToolMetadata = buildChatToolConfigurationMetadata(
       serviceConfigId,
@@ -2092,8 +2154,7 @@ const FOOD_OPTIONS_TEMPERATURE = 0.7;
 // dispatch failure passes its category through unchanged for the route's
 // HTTP-status map.
 export type FoodOptionsErrorCategory =
-  | DispatchErrorCategory
-  | 'no_ai_configured';
+  DispatchErrorCategory | 'no_ai_configured';
 
 export type FoodOptionsResult =
   | { success: true; content: string }
@@ -2178,8 +2239,7 @@ const NO_PRESET_SERVICE_TYPES = new Set([
 ]);
 
 export type TestConnectionResult =
-  | { ok: true }
-  | { ok: false; category: DispatchErrorCategory; detail: string };
+  { ok: true } | { ok: false; category: DispatchErrorCategory; detail: string };
 
 function statusError(message: string, statusCode: number): Error {
   const err = new Error(message) as Error & { statusCode?: number };
@@ -2904,6 +2964,7 @@ async function processChatMessageStream(
       `Streaming chat message with service: ${aiService.service_type}, model: ${modelName}`
     );
 
+    const latestImageDataUrl = extractLatestImageDataUrl(messages);
     const {
       systemPromptContent,
       tools,
@@ -2911,6 +2972,7 @@ async function processChatMessageStream(
       prepareStep,
       toolProfile,
       selectedCategories,
+      foodPhotoEstimateSink,
     } = await prepareChatContext(
       authenticatedUserId,
       aiService.service_type,
@@ -2919,7 +2981,9 @@ async function processChatMessageStream(
       categoriesAreManual,
       aiService.system_prompt,
       !latestUserAnsweredQuickReply(messages),
-      toolCategories
+      toolCategories,
+      latestImageDataUrl,
+      aiService.id
     );
     const chatToolMetadata = buildChatToolConfigurationMetadata(
       serviceConfigId,
@@ -3062,6 +3126,12 @@ async function processChatMessageStream(
             log('error', 'Failed to save user chat history:', err)
           );
 
+        // A photo estimate analysed this turn is persisted with the message.
+        // Asking the user how to save it always ends the turn, so their answer
+        // arrives in a fresh one — and chat history strips images, so without
+        // this the numbers would be gone and the photo unrepeatable.
+        const capturedEstimate = foodPhotoEstimateSink.get();
+
         // A turn that ends on a quick-reply call carries the question in the
         // tool call, so it must be persisted too — otherwise the chips (and the
         // question they answer) vanish on reload, and the reloaded transcript
@@ -3070,7 +3140,7 @@ async function processChatMessageStream(
           (call) => call.toolName === ASK_USER_TOOL_NAME
         );
 
-        if (!verifiedText && !askCall) {
+        if (!verifiedText && !askCall && !capturedEstimate) {
           log(
             'warn',
             `Skipping empty assistant chat history for user ${userId} (finishReason: ${finishReason})`
@@ -3081,6 +3151,12 @@ async function processChatMessageStream(
         const assistantParts: Record<string, unknown>[] = [];
         if (verifiedText) {
           assistantParts.push({ type: 'text', text: verifiedText });
+        }
+        if (capturedEstimate) {
+          assistantParts.push({
+            type: FOOD_PHOTO_ESTIMATE_PART_TYPE,
+            data: capturedEstimate,
+          });
         }
         if (askCall) {
           assistantParts.push({

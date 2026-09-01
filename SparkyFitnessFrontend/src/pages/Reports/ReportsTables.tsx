@@ -94,14 +94,11 @@ const BODY_MEASUREMENT_SOURCE_KEYS = [
   'muscle_mass_kg',
   'bone_mass_kg',
   'body_water_percentage',
+  'bmr',
 ] as const;
 
 export type TableFilterValue =
-  | 'all'
-  | 'food'
-  | 'exercise'
-  | 'measurements'
-  | `category:${string}`;
+  'all' | 'food' | 'exercise' | 'measurements' | `category:${string}`;
 
 interface ReportsTablesProps {
   tabularData: DailyFoodEntry[];
@@ -194,6 +191,7 @@ const ReportsTables = ({
       muscle_mass_kg: t('reportsTables.muscleMass', 'Muscle Mass'),
       bone_mass_kg: t('reportsTables.boneMass', 'Bone Mass'),
       body_water_percentage: t('reportsTables.bodyWater', 'Body Water %'),
+      bmr: t('reportsTables.bmr', 'BMR'),
     };
     const details = BODY_MEASUREMENT_SOURCE_KEYS.flatMap((key) => {
       const provenance = measurement.source_provenance?.[key];
@@ -433,15 +431,16 @@ const ReportsTables = ({
     .filter(
       (measurement) =>
         measurement.weight !== undefined ||
+        measurement.height !== undefined ||
         measurement.neck !== undefined ||
         measurement.waist !== undefined ||
         measurement.hips !== undefined ||
-        measurement.steps !== undefined ||
-        measurement.height !== undefined ||
         measurement.body_fat_percentage !== undefined ||
+        measurement.steps !== undefined ||
         measurement.muscle_mass_kg !== undefined ||
         measurement.bone_mass_kg !== undefined ||
-        measurement.body_water_percentage !== undefined
+        measurement.body_water_percentage !== undefined ||
+        measurement.bmr !== undefined
     )
     .sort(
       (a, b) =>
@@ -909,7 +908,11 @@ const ReportsTables = ({
                       {t('reportsTables.boneMass', 'Bone Mass')} ({weightUnit})
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.bodyWater', 'Body Water %')}
+                      {t('reportsTables.bodyWaterPercentage', 'Body Water %')}
+                    </TableHead>
+                    <TableHead>
+                      {t('reportsTables.bmr', 'BMR')} (
+                      {getEnergyUnitString(energyUnit)})
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -948,7 +951,7 @@ const ReportsTables = ({
                         </TableCell>
                         <TableCell>
                           {measurement.body_fat_percentage != null
-                            ? measurement.body_fat_percentage.toFixed(1)
+                            ? `${measurement.body_fat_percentage.toFixed(1)}%`
                             : '-'}
                         </TableCell>
                         <TableCell>
@@ -959,7 +962,18 @@ const ReportsTables = ({
                         </TableCell>
                         <TableCell>
                           {measurement.body_water_percentage != null
-                            ? measurement.body_water_percentage.toFixed(1)
+                            ? `${measurement.body_water_percentage.toFixed(1)}%`
+                            : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {measurement.bmr != null
+                            ? `${Math.round(
+                                convertEnergy(
+                                  Number(measurement.bmr),
+                                  'kcal',
+                                  energyUnit
+                                )
+                              )}`
                             : '-'}
                         </TableCell>
                       </TableRow>

@@ -5,8 +5,19 @@ import workoutPlanTemplateService from '../../services/workoutPlanTemplateServic
 import plannedWorkoutScheduleService from '../../services/plannedWorkoutScheduleService.js';
 import workoutPresetRepository from '../../models/workoutPresetRepository.js';
 import { log } from '../../config/logging.js';
-import { formatJsonResult } from './formatting.js';
-import { toolError } from './errors.js';
+import {
+  formatConfirmation,
+  formatJsonResult,
+  formatList,
+} from './formatting.js';
+import { ERRORS, formatZodError, toolError } from './errors.js';
+import {
+  manageWorkoutPlansSchema,
+  manageWorkoutPlansInput,
+  WORKOUT_PLAN_ACTIONS,
+  type ManageWorkoutPlansInput,
+} from './schemas/workoutPlans.js';
+import { normalizeActionArgs } from './dates.js';
 
 const calendarDaySchema = z
   .string()
@@ -20,7 +31,9 @@ const workoutPlanAssignmentSchema = z
   })
   .strict();
 
-const listWorkoutPlansSchema = z.object({ action: z.literal('list') }).strict();
+const listNativeWorkoutPlansSchema = z
+  .object({ action: z.literal('list') })
+  .strict();
 
 const upsertWorkoutPlanSchema = z
   .object({
@@ -61,11 +74,38 @@ const setWorkoutPlanActiveSchema = z
   })
   .strict();
 
-const manageWorkoutPlanSchema = z.discriminatedUnion('action', [
-  listWorkoutPlansSchema,
+const manageNativeWorkoutPlanSchema = z.discriminatedUnion('action', [
+  listNativeWorkoutPlansSchema,
   upsertWorkoutPlanSchema,
   setWorkoutPlanActiveSchema,
 ]);
+
+const manageCombinedWorkoutPlanSchema = z.union([
+  manageWorkoutPlansSchema,
+  manageNativeWorkoutPlanSchema,
+]);
+
+const NATIVE_WORKOUT_PLAN_ACTIONS = ['list', 'upsert', 'set_active'] as const;
+const VALID_ACTIONS = [
+  ...WORKOUT_PLAN_ACTIONS,
+  ...NATIVE_WORKOUT_PLAN_ACTIONS,
+] as const;
+
+// Keep the published schema flat while exposing both upstream template
+// inspection/deletion and the fork's owner-requested plan-writing operations.
+const manageCombinedWorkoutPlansInput = manageWorkoutPlansInput.extend({
+  action: z.enum(VALID_ACTIONS).optional(),
+  planName: z.string().trim().min(1).max(255).optional(),
+  description: z.string().trim().max(2_000).optional(),
+  startDate: calendarDaySchema.optional(),
+  endDate: calendarDaySchema.optional(),
+  isActive: z.boolean().optional(),
+  cycleLengthWeeks: z.number().int().min(1).max(8).optional(),
+  assignments: z.array(workoutPlanAssignmentSchema).max(14).optional(),
+  currentClientDate: calendarDaySchema.optional(),
+});
+
+type NativeWorkoutPlanInput = z.infer<typeof manageNativeWorkoutPlanSchema>;
 
 interface WorkoutPresetLookup {
   id: number;
@@ -92,6 +132,21 @@ interface WorkoutPlanRecord {
   is_active: boolean;
   cycle_length_weeks: number;
   assignments: WorkoutPlanAssignmentRecord[];
+}
+
+interface WorkoutPlanAssignmentRow {
+  day_of_week: number;
+  workout_preset_name?: string | null;
+  exercise_name?: string | null;
+  sets?: unknown[] | null;
+}
+
+interface WorkoutPlanTemplateRow {
+  id: number | string;
+  plan_name: string;
+  description?: string | null;
+  is_active?: boolean;
+  assignments?: WorkoutPlanAssignmentRow[];
 }
 
 class WorkoutPresetNotFoundError extends Error {
@@ -199,89 +254,189 @@ function workoutPlanToolError(error: unknown): string {
   return toolError('WORKOUT_PLAN_ERROR', message);
 }
 
+const DAY_NAMES = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
+function formatAssignment(assignment: WorkoutPlanAssignmentRow): string {
+  const day =
+    DAY_NAMES[assignment.day_of_week] ?? `Day ${assignment.day_of_week}`;
+  const item =
+    assignment.workout_preset_name ??
+    assignment.exercise_name ??
+    'Unknown item';
+  const setCount = assignment.sets?.length ?? 0;
+  const sets =
+    setCount > 0 ? ` — ${setCount} set${setCount === 1 ? '' : 's'}` : '';
+  return `${day}: ${item}${sets}`;
+}
+
+async function executeTemplateAction(
+  userId: string,
+  args: ManageWorkoutPlansInput
+): Promise<string> {
+  try {
+    switch (args.action) {
+      case 'list_workout_plans': {
+        const rows =
+          (await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(
+            userId
+          )) as unknown as WorkoutPlanTemplateRow[];
+        return formatList(rows, 'Workout Plans', (row) => {
+          const count = row.assignments?.length ?? 0;
+          const state = row.is_active ? 'active' : 'inactive';
+          return `**${row.plan_name}** (${state}, ${count} assignment${count === 1 ? '' : 's'})\n  ID: ${row.id}`;
+        });
+      }
+      case 'get_workout_plan': {
+        const plan =
+          (await workoutPlanTemplateService.getWorkoutPlanTemplateById(
+            userId,
+            args.plan_id
+          )) as unknown as WorkoutPlanTemplateRow;
+        return formatList(
+          plan.assignments ?? [],
+          `Workout Plan: ${plan.plan_name}`,
+          formatAssignment
+        );
+      }
+      case 'delete_workout_plan':
+        await workoutPlanTemplateService.deleteWorkoutPlanTemplate(
+          userId,
+          args.plan_id
+        );
+        return formatConfirmation('Workout plan deleted.');
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.toLowerCase().includes('not found')) {
+      return ERRORS.NOT_FOUND(
+        'Workout plan',
+        'plan_id' in args ? String(args.plan_id) : ''
+      );
+    }
+    log('error', '[Workout Plan Tool] Error:', error);
+    return ERRORS.DB_ERROR(error);
+  }
+}
+
+async function executeNativeAction(
+  userId: string,
+  timezone: string,
+  args: NativeWorkoutPlanInput
+): Promise<string> {
+  try {
+    const plans = await listPlans(userId);
+    if (args.action === 'list') {
+      const timeline = await plannedWorkoutScheduleService.getTrainingTimeline(
+        userId,
+        todayInZone(timezone)
+      );
+      return formatJsonResult({ plans, timeline });
+    }
+
+    const currentClientDate = args.currentClientDate ?? todayInZone(timezone);
+    const existing = plans.find((plan) => plan.plan_name === args.planName);
+
+    if (args.action === 'set_active') {
+      if (!existing) {
+        return toolError(
+          'WORKOUT_PLAN_NOT_FOUND',
+          `Workout plan "${args.planName}" was not found.`
+        );
+      }
+      const updated: unknown =
+        await workoutPlanTemplateService.updateWorkoutPlanTemplate(
+          userId,
+          existing.id,
+          {
+            plan_name: existing.plan_name,
+            description: existing.description,
+            start_date: existing.start_date,
+            end_date: existing.end_date,
+            is_active: args.isActive,
+            cycle_length_weeks: existing.cycle_length_weeks,
+            assignments: existing.assignments,
+            currentClientDate,
+          }
+        );
+      return formatJsonResult({ plan: updated, operation: 'updated' });
+    }
+
+    const assignments = await resolveAssignments(userId, args.assignments);
+    const planData = {
+      plan_name: args.planName,
+      description: args.description ?? null,
+      start_date: args.startDate,
+      end_date: args.endDate ?? null,
+      is_active: args.isActive,
+      cycle_length_weeks: args.cycleLengthWeeks ?? 1,
+      assignments,
+      currentClientDate,
+    };
+
+    if (existing) {
+      const updated: unknown =
+        await workoutPlanTemplateService.updateWorkoutPlanTemplate(
+          userId,
+          existing.id,
+          planData
+        );
+      return formatJsonResult({ plan: updated, operation: 'updated' });
+    }
+
+    const created: unknown =
+      await workoutPlanTemplateService.createWorkoutPlanTemplate(
+        userId,
+        planData
+      );
+    return formatJsonResult({ plan: created, operation: 'created' });
+  } catch (error) {
+    return workoutPlanToolError(error);
+  }
+}
+
 export function buildWorkoutPlanTools(userId: string, timezone: string) {
   return {
     sparky_manage_workout_plans: tool({
-      description:
-        'List, create, update, or activate native SparkyFitness workout plans that are visible under Training > Workout Plans. A plan assigns complete existing workout presets to fixed weekdays (0=Sunday through 6=Saturday) and, when active, materializes future diary sessions through the existing workout-plan architecture. The list result includes the canonical completed/missed/upcoming training timeline and exact exercise, total-set, warm-up-set, and working-set counts; treat those values as authoritative and never infer them. Use list before describing or changing a plan. Call upsert or set_active only after the user explicitly asked to create, change, or activate the presented schedule. Every workoutPresetName passed to upsert must already exist in the list returned by sparky_manage_exercise action=get_workout_presets. Never use this tool to introduce a new Speediance workout: for a new or changed Speediance A/B or multi-week program, call sparky_manage_speediance_workouts action=create_plan instead; that single manager operation creates or updates all workouts and canonical presets before replacing the schedule. Prefer a stable multi-week plan over inventing a new workout each day and adapt it deliberately from saved training feedback.',
-      inputSchema: manageWorkoutPlanSchema,
-      execute: async (args) => {
-        try {
-          const plans = await listPlans(userId);
-          if (args.action === 'list') {
-            const timeline =
-              await plannedWorkoutScheduleService.getTrainingTimeline(
-                userId,
-                todayInZone(timezone)
-              );
-            return formatJsonResult({ plans, timeline });
-          }
+      description: `List and inspect native SparkyFitness workout plans, delete a plan, or—after an explicit user request—create, update, and activate a plan made from existing workout presets.
 
-          const currentClientDate =
-            args.currentClientDate ?? todayInZone(timezone);
-          const existing = plans.find(
-            (plan) => plan.plan_name === args.planName
-          );
+This tool takes a FLAT object with an "action" field. Do NOT nest fields under the action name.
 
-          if (args.action === 'set_active') {
-            if (!existing) {
-              return toolError(
-                'WORKOUT_PLAN_NOT_FOUND',
-                `Workout plan "${args.planName}" was not found.`
-              );
-            }
-            const updated: unknown =
-              await workoutPlanTemplateService.updateWorkoutPlanTemplate(
-                userId,
-                existing.id,
-                {
-                  plan_name: existing.plan_name,
-                  description: existing.description,
-                  start_date: existing.start_date,
-                  end_date: existing.end_date,
-                  is_active: args.isActive,
-                  cycle_length_weeks: existing.cycle_length_weeks,
-                  assignments: existing.assignments,
-                  currentClientDate,
-                }
-              );
-            return formatJsonResult({ plan: updated, operation: 'updated' });
-          }
+Actions:
+- action: 'list_workout_plans' — list saved plan templates with IDs
+- action: 'get_workout_plan' (fields: plan_id) — inspect one plan's assignments
+- action: 'delete_workout_plan' (fields: plan_id) — permanently delete a plan
+- action: 'list' — return native plans plus the canonical completed/missed/upcoming training timeline and exact exercise/set counts
+- action: 'upsert' (fields: planName, startDate, assignments, optional description/endDate/isActive/cycleLengthWeeks/currentClientDate) — create or replace the same-named native plan
+- action: 'set_active' (fields: planName, isActive, optional currentClientDate) — activate or deactivate a native plan
 
-          const assignments = await resolveAssignments(
-            userId,
-            args.assignments
-          );
-          const planData = {
-            plan_name: args.planName,
-            description: args.description ?? null,
-            start_date: args.startDate,
-            end_date: args.endDate ?? null,
-            is_active: args.isActive,
-            cycle_length_weeks: args.cycleLengthWeeks ?? 1,
-            assignments,
-            currentClientDate,
-          };
+Call a write action only after the user explicitly asked for it. Each workoutPresetName must already exist in sparky_manage_exercise action=get_workout_presets. Never introduce a new Speediance workout here; use sparky_manage_speediance_workouts action=create_plan so remote workouts and canonical presets are synchronized before the schedule is written. Prefer stable multi-week plans adapted from saved training feedback.`,
+      inputSchema: manageCombinedWorkoutPlansInput,
+      execute: async (rawArgs) => {
+        const normalized = normalizeActionArgs(
+          rawArgs,
+          timezone,
+          [...VALID_ACTIONS],
+          () => 'list_workout_plans'
+        );
+        const parsed = manageCombinedWorkoutPlanSchema.safeParse(normalized);
+        if (!parsed.success) return formatZodError(parsed.error);
 
-          if (existing) {
-            const updated: unknown =
-              await workoutPlanTemplateService.updateWorkoutPlanTemplate(
-                userId,
-                existing.id,
-                planData
-              );
-            return formatJsonResult({ plan: updated, operation: 'updated' });
-          }
-
-          const created: unknown =
-            await workoutPlanTemplateService.createWorkoutPlanTemplate(
-              userId,
-              planData
-            );
-          return formatJsonResult({ plan: created, operation: 'created' });
-        } catch (error) {
-          return workoutPlanToolError(error);
+        if (
+          parsed.data.action === 'list_workout_plans' ||
+          parsed.data.action === 'get_workout_plan' ||
+          parsed.data.action === 'delete_workout_plan'
+        ) {
+          return executeTemplateAction(userId, parsed.data);
         }
+        return executeNativeAction(userId, timezone, parsed.data);
       },
     }),
   };

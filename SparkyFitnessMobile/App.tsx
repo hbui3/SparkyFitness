@@ -32,6 +32,8 @@ import {
   SafeOnboarding,
   SafeFoodsLibrary,
   SafeMealsLibrary,
+  SafeMealPlans,
+  SafeMealPlanForm,
   SafeExercisesLibrary,
   SafeWorkoutPresetsLibrary,
   SafeFoodDetail,
@@ -78,6 +80,10 @@ import {
   SafeWhatsNew,
   SafeDailyNutritionDetails,
   SafeNutrientTrends,
+  SafeFamilyMembers,
+  SafeFamilyDiary,
+  SafeFamilyMealDetail,
+  SafeFamilyCopyReview,
   SafeCycleSettings,
   SafeCycleOnboarding,
   SafeCycleHub,
@@ -337,6 +343,35 @@ function AppContent() {
             )}
           </Stack.Screen>
           <Stack.Screen
+            name="FamilyMembers"
+            component={SafeFamilyMembers}
+            options={createStackScreenOptions(t('familyDiary.title', { defaultValue: 'Family Diaries' }), {
+              headerBackButtonDisplayMode: 'minimal',
+            })}
+          />
+          <Stack.Screen
+            name="FamilyDiary"
+            component={SafeFamilyDiary}
+            options={({ route }) => createStackScreenOptions(
+              route.params.familyUser.displayName.trim() || t('familyDiary.unnamedMember', { defaultValue: 'Family member' }),
+              { headerBackButtonDisplayMode: 'minimal' },
+            )}
+          />
+          <Stack.Screen
+            name="FamilyMealDetail"
+            component={SafeFamilyMealDetail}
+            options={({ route }) => createStackScreenOptions(route.params.mealTypeName, {
+              headerBackButtonDisplayMode: 'minimal',
+            })}
+          />
+          <Stack.Screen
+            name="FamilyCopyReview"
+            component={SafeFamilyCopyReview}
+            options={createStackScreenOptions(t('familyDiary.copyReview', { defaultValue: 'Review copy' }), {
+              headerBackButtonDisplayMode: 'minimal',
+            })}
+          />
+          <Stack.Screen
             name="FoodsLibrary"
             component={SafeFoodsLibrary}
             options={createStackScreenOptions(t('screens.foods', { defaultValue: 'Foods' }), { headerBackTitle: t('navigation.library', { defaultValue: 'Library' }) })}
@@ -345,6 +380,16 @@ function AppContent() {
             name="MealsLibrary"
             component={SafeMealsLibrary}
             options={createStackScreenOptions(t('screens.meals', { defaultValue: 'Meals' }), { headerBackTitle: t('navigation.library', { defaultValue: 'Library' }) })}
+          />
+          <Stack.Screen
+            name="MealPlans"
+            component={SafeMealPlans}
+            options={createStackScreenOptions(t('mealPlans.title', { defaultValue: 'Meal plans' }), { headerBackTitle: t('navigation.library', { defaultValue: 'Library' }) })}
+          />
+          <Stack.Screen
+            name="MealPlanForm"
+            component={SafeMealPlanForm}
+            options={createStackScreenOptions(t('mealPlans.title', { defaultValue: 'Meal plans' }), { headerBackTitle: t('common.back', { defaultValue: 'Back' }) })}
           />
           <Stack.Screen
             name="ExercisesLibrary"

@@ -51,7 +51,7 @@ function muscleCandidates(svgClassName: string): string[] {
   ).map((muscle) => muscle.toLowerCase());
 }
 
-export function MuscleBodyMap(props: MuscleBodyMapProps) {
+function MuscleBodyMap(props: MuscleBodyMapProps) {
   const { t } = useTranslation();
   const svgContainerRef = useRef<HTMLDivElement>(null);
   const { data: svgContent } = useBodyMapSvgQuery();

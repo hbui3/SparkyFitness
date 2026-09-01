@@ -271,42 +271,6 @@ export const getSpO2Status = (
   }
 };
 
-export const getSpO2StatusInfo = (
-  value: number
-): { status: string; color: string; description: string } => {
-  if (value < 70) {
-    return {
-      status: 'Critical',
-      color: '#ef4444',
-      description: 'Dangerously low oxygen levels. Seek medical attention.',
-    };
-  } else if (value < 80) {
-    return {
-      status: 'Low',
-      color: '#f97316',
-      description: 'Below normal oxygen levels. Monitor closely.',
-    };
-  } else if (value < 90) {
-    return {
-      status: 'Moderate',
-      color: '#eab308',
-      description: 'Slightly below optimal levels.',
-    };
-  } else if (value < 95) {
-    return {
-      status: 'Normal',
-      color: '#22c55e',
-      description: 'Healthy oxygen saturation levels.',
-    };
-  } else {
-    return {
-      status: 'Excellent',
-      color: '#22c55e',
-      description: 'Optimal oxygen saturation.',
-    };
-  }
-};
-
 // Get color for a specific SpO2 value (for bar chart)
 
 export const getSpO2Color = (value: number): string => {
@@ -421,8 +385,7 @@ export const exportFoodDiary = async ({
       return entries.reduce(
         (total, entry) => {
           const customSource = entry.custom_nutrients as
-            | Record<string, number>
-            | undefined;
+            Record<string, number> | undefined;
 
           const customNutrientTotals = customNutrients.reduce(
             (acc: Record<string, number>, nutrient) => {
@@ -528,8 +491,7 @@ export const exportFoodDiary = async ({
           const iron = Number(entry.iron || 0);
 
           const customSource = entry.custom_nutrients as
-            | Record<string, number>
-            | undefined;
+            Record<string, number> | undefined;
 
           csvRows.push([
             formatDateInUserTimezone(entry.entry_date, 'MMM dd, yyyy'), // Format date for display
@@ -768,17 +730,25 @@ export const exportBodyMeasurements = async ({
   startDate,
   endDate,
   measurementData,
+  energyUnit,
   defaultWeightUnit,
   defaultMeasurementUnit,
   formatDateInUserTimezone,
+  convertEnergy,
 }: {
   loggingLevel: LoggingLevel;
   startDate: string | null;
   endDate: string | null;
   measurementData: CheckInMeasurementsResponse[];
+  energyUnit: EnergyUnit;
   defaultWeightUnit: WeightUnit;
   defaultMeasurementUnit: MeasurementUnit;
   formatDateInUserTimezone: (date: string | Date, formatStr?: string) => string;
+  convertEnergy: (
+    value: number,
+    fromUnit: EnergyUnit,
+    toUnit: EnergyUnit
+  ) => number;
 }) => {
   info(loggingLevel, 'Reports: Attempting to export body measurements.');
   try {
@@ -843,6 +813,9 @@ export const exportBodyMeasurements = async ({
         { unit: defaultWeightUnit }
       ),
       i18n.t('reports.bodyMeasurementsExportHeaders.bodyWater', 'Body Water %'),
+      i18n.t('reports.bodyMeasurementsExportHeaders.bmr', 'BMR ({{unit}})', {
+        unit: getEnergyUnitString(energyUnit),
+      }),
     ];
 
     const sourceFields = [
@@ -871,6 +844,7 @@ export const exportBodyMeasurements = async ({
         key: 'body_water_percentage',
         label: i18n.t('reportsTables.bodyWater', 'Body Water %'),
       },
+      { key: 'bmr', label: i18n.t('reportsTables.bmr', 'BMR') },
     ] as const;
 
     const csvRows = measurements
@@ -885,7 +859,8 @@ export const exportBodyMeasurements = async ({
           measurement.body_fat_percentage ||
           measurement.muscle_mass_kg ||
           measurement.bone_mass_kg ||
-          measurement.body_water_percentage
+          measurement.body_water_percentage ||
+          measurement.bmr != null
       )
       .map((measurement) => [
         formatDateInUserTimezone(measurement.entry_date, 'MMM dd, yyyy'), // Format date for display
@@ -913,6 +888,11 @@ export const exportBodyMeasurements = async ({
           : '',
         measurement.body_water_percentage != null
           ? measurement.body_water_percentage.toFixed(1)
+          : '',
+        measurement.bmr != null
+          ? Math.round(
+              convertEnergy(Number(measurement.bmr), 'kcal', energyUnit)
+            ).toString()
           : '',
       ]);
 

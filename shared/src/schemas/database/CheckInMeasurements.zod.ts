@@ -36,6 +36,7 @@ export const checkInMeasurementsSchema = z.object({
   bone_mass_kg: z.number().nullable(),
   body_water_percentage: z.number().nullable(),
   source_provenance: measurementSourceProvenanceSchema,
+  bmr: z.number().nullable(),
 });
 
 export const checkInMeasurementsInitializerSchema = z.object({
@@ -57,6 +58,7 @@ export const checkInMeasurementsInitializerSchema = z.object({
   bone_mass_kg: z.number().optional().nullable(),
   body_water_percentage: z.number().optional().nullable(),
   source_provenance: measurementSourceProvenanceSchema.optional(),
+  bmr: z.number().optional().nullable(),
 });
 
 export const checkInMeasurementsMutatorSchema =

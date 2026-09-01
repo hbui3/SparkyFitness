@@ -139,15 +139,49 @@ describe('exportFoodDiary', () => {
       startDate: '2026-08-03',
       endDate: '2026-08-03',
       measurementData: [measurement],
+      energyUnit: 'kcal',
       defaultWeightUnit: 'kg',
       defaultMeasurementUnit: 'cm',
       formatDateInUserTimezone: () => '2026-08-03',
+      convertEnergy: (value) => value,
     });
 
     expect(createdBlobs).toHaveLength(1);
     const csvContent = await createdBlobs[0]!.text();
     expect(csvContent).toContain('"Source"');
     expect(csvContent).toContain('"Weight: Withings; Steps: Apple Health"');
+  });
+
+  it('exports a BMR-only row with converted energy and provenance', async () => {
+    const measurement = {
+      entry_date: '2026-08-04',
+      bmr: 1800,
+      source_provenance: {
+        bmr: { source: 'HealthConnect' },
+      },
+    } as unknown as CheckInMeasurementsResponse;
+
+    await exportBodyMeasurements({
+      loggingLevel: 'INFO',
+      startDate: '2026-08-04',
+      endDate: '2026-08-04',
+      measurementData: [measurement],
+      energyUnit: 'kJ',
+      defaultWeightUnit: 'kg',
+      defaultMeasurementUnit: 'cm',
+      formatDateInUserTimezone: () => '2026-08-04',
+      convertEnergy: (value, fromUnit, toUnit) => {
+        expect(fromUnit).toBe('kcal');
+        expect(toUnit).toBe('kJ');
+        return value * 4.184;
+      },
+    });
+
+    expect(createdBlobs).toHaveLength(1);
+    const csvContent = await createdBlobs[0]!.text();
+    expect(csvContent).toContain('"BMR ({{unit}})"');
+    expect(csvContent).toContain('"BMR: Health Connect"');
+    expect(csvContent).toContain('"7531"');
   });
 
   it('correctly accumulates custom nutrient totals across multiple entries', async () => {

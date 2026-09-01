@@ -8,7 +8,6 @@ import type {
   CoachTelegramDisconnectResponse,
   CoachTelegramLinkResponse,
   UpdateCoachProfileRequest,
-  ValidateMealSuggestionResponse,
 } from '@workspace/shared';
 
 export const getCoachProfile = (): Promise<CoachProfileResponse> =>
@@ -55,11 +54,3 @@ export const updateCoachMemory = (
 
 export const deleteCoachMemory = (id: string): Promise<void> =>
   apiCall(`/coach-profile/memories/${id}`, { method: 'DELETE' });
-
-export const validateMealSuggestion = (
-  ingredients: string[]
-): Promise<ValidateMealSuggestionResponse> =>
-  apiCall('/coach-profile/validate-meal', {
-    method: 'POST',
-    body: JSON.stringify({ ingredients }),
-  });

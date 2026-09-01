@@ -9,7 +9,7 @@
   "devDependencies": {
     "husky": "^9.0.0",
     "lint-staged": "^16.4.0",
-    "prettier": "^3.8.1"
+    "prettier": "3.9.6"
   },
   "lint-staged": {
     "SparkyFitnessFrontend/**/*.{ts,tsx}": [
@@ -17,6 +17,9 @@
     ],
     "SparkyFitnessServer/**/*.{js,ts}": [
       "npx prettier --write"
+    ],
+    "SparkyFitnessMobile/**/*.{ts,tsx,js,jsx,mjs,cjs}": [
+      "npx prettier --write --ignore-path SparkyFitnessMobile/.prettierignore"
     ]
   },
   "pnpm": {

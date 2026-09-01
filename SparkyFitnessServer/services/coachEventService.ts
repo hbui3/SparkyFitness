@@ -1,12 +1,7 @@
 import { EventEmitter } from 'node:events';
 
 export type CoachEventDomain =
-  | 'chat'
-  | 'nutrition'
-  | 'water'
-  | 'exercise'
-  | 'checkin'
-  | 'coach';
+  'chat' | 'nutrition' | 'water' | 'exercise' | 'checkin' | 'coach';
 
 export interface CoachDataEvent {
   id: string;
