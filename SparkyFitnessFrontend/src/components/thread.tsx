@@ -28,6 +28,7 @@ import type { AssistantRuntime } from '@assistant-ui/react';
 import { getThreadMessageTokenUsage } from '@assistant-ui/react-ai-sdk';
 import { useChatbotVisibility } from '@/contexts/ChatbotVisibilityContext';
 import { ChatToolCategoriesSelector } from '@/components/ai/ChatToolCategoriesSelector';
+import { MealPlanningQuickAction } from '@/components/ai/MealPlanningQuickAction';
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -91,6 +92,7 @@ const ThreadInner: FC = () => {
           <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer bg-background sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pb-4 md:pb-6">
             <ThreadScrollToBottom />
             <SessionTokenUsage />
+            <MealPlanningQuickAction />
             <Composer />
           </ThreadPrimitive.ViewportFooter>
         </div>

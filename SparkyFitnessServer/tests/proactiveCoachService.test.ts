@@ -9,6 +9,11 @@ import coachContextService, {
 } from '../services/coachContextService.js';
 import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
 import { composeAdaptiveCoachMessage } from '../services/proactiveCoachMessageService.js';
+import {
+  getCoachMealSuggestion,
+  type CoachMealSuggestion,
+} from '../services/coachMealSuggestionService.js';
+import { getRestockReminder } from '../services/coachMealPlanningService.js';
 
 vi.mock('../models/coachProfileRepository.js', () => ({
   default: {
@@ -32,6 +37,49 @@ vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 vi.mock('../services/proactiveCoachMessageService.js', () => ({
   composeAdaptiveCoachMessage: vi.fn(),
 }));
+vi.mock('../services/coachMealSuggestionService.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../services/coachMealSuggestionService.js')
+    >();
+  return {
+    ...actual,
+    getCoachMealSuggestion: vi.fn(),
+  };
+});
+vi.mock('../services/coachMealPlanningService.js', () => ({
+  getRestockReminder: vi.fn(),
+}));
+
+const mealSuggestion: CoachMealSuggestion = {
+  id: 'chicken-rice-bowl',
+  nameDe: 'Hähnchen-Reis-Gemüse-Bowl',
+  nameEn: 'Chicken, rice, and vegetable bowl',
+  calories: 670,
+  proteinG: 56,
+  carbsG: 74,
+  fatG: 17,
+  mealSlots: ['lunch', 'dinner'],
+  ingredients: [
+    {
+      nameDe: 'Hähnchenbrust',
+      nameEn: 'chicken breast',
+      amount: 180,
+      unit: 'g',
+      category: 'chilled',
+    },
+    {
+      nameDe: 'Reis, trocken',
+      nameEn: 'dry rice',
+      amount: 80,
+      unit: 'g',
+      category: 'pantry',
+    },
+  ],
+  preparationDe: 'Reis kochen und das Hähnchen anbraten.',
+  preparationEn: 'Cook the rice and pan-fry the chicken.',
+  shoppingServings: 2,
+};
 
 const candidate: ProactiveCoachCandidate = {
   userId: 'user-1',
@@ -44,7 +92,7 @@ const candidate: ProactiveCoachCandidate = {
   adaptiveIntervalMinutes: 120,
   proactiveCategories: ['nutrition', 'hydration', 'training', 'recovery'],
   adaptiveLastSignature: null,
-  adaptiveLastMessageAt: null,
+  adaptiveCooldownLastMessageAt: null,
   lastUserMessageAt: null,
   coachingNotes: null,
   routines: [],
@@ -52,6 +100,7 @@ const candidate: ProactiveCoachCandidate = {
   dailyCheckInEnabled: true,
   dailyCheckInTime: '20:00',
   dailyLastSentOn: null,
+  restockLastSentOn: null,
   weeklyReviewEnabled: true,
   weeklyReviewDay: 0,
   weeklyReviewTime: '18:00',
@@ -164,6 +213,8 @@ describe('proactiveCoachService', () => {
     vi.mocked(composeAdaptiveCoachMessage).mockResolvedValue(
       'Das Training wartet. Lege jetzt deine Startzeit fest.'
     );
+    vi.mocked(getCoachMealSuggestion).mockResolvedValue(null);
+    vi.mocked(getRestockReminder).mockResolvedValue(null);
   });
 
   it('creates stable staggered observation slots every three to eight minutes', () => {
@@ -263,16 +314,75 @@ describe('proactiveCoachService', () => {
     );
   });
 
-  it('records a quiet observation when the situation is not worth another message', async () => {
+  it('honors a persisted restock timestamp in the adaptive global cooldown', async () => {
     vi.mocked(
       coachProfileRepository.listProactiveCoachCandidates
     ).mockResolvedValue([
       {
         ...candidate,
         adaptiveCheckInsEnabled: true,
-        adaptiveLastMessageAt: '2026-08-23T15:30:00.000Z',
+        adaptiveCooldownLastMessageAt: '2026-08-23T15:30:00.000Z',
         dailyCheckInEnabled: false,
+        restockLastSentOn: '2026-08-23',
         weeklyReviewEnabled: false,
+      },
+    ]);
+
+    const delivered =
+      await proactiveCoachService.processDueProactiveCoachMessages(
+        new Date('2026-08-23T15:45:00.000Z')
+      );
+
+    expect(delivered).toBe(0);
+    expect(composeAdaptiveCoachMessage).not.toHaveBeenCalled();
+    expect(
+      coachProfileRepository.markAdaptiveSlotObserved
+    ).toHaveBeenCalledWith('user-1', expect.stringMatching(/^2026-08-23T17:/));
+  });
+
+  it('honors a recent restock message in the adaptive nutrition topic cooldown', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        adaptiveCheckInsEnabled: true,
+        adaptiveCooldownLastMessageAt: '2026-08-23T13:00:00.000Z',
+        dailyCheckInEnabled: false,
+        restockLastSentOn: '2026-08-23',
+        weeklyReviewEnabled: false,
+        proactiveCategories: ['nutrition'],
+      },
+    ]);
+    vi.mocked(coachContextService.getCoachContextSnapshot).mockResolvedValue({
+      ...snapshot,
+      today: {
+        ...snapshot.today,
+        caloriesConsumed: 0,
+        netCalories: 0,
+        caloriesRemaining: 3000,
+        proteinConsumedG: 0,
+        proteinRemainingG: 160,
+      },
+      week: {
+        ...snapshot.week,
+        nutritionLoggedDays: 0,
+        workoutCount: 0,
+      },
+      weight30Days: {
+        ...snapshot.weight30Days,
+        entries: 0,
+        changeKg: null,
+      },
+    });
+    vi.mocked(
+      coachProfileRepository.listRecentProactiveMessages
+    ).mockResolvedValue([
+      {
+        content: 'Reis und Brokkoli fehlen noch.',
+        topic: 'nutrition',
+        stateSignature: 'reis-brokkoli',
+        createdAt: '2026-08-23T13:00:00.000Z',
       },
     ]);
 
@@ -347,6 +457,174 @@ describe('proactiveCoachService', () => {
     expect(message).toContain('50 g Protein');
   });
 
+  it('passes a safe concrete meal into an adaptive nutrition message', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        adaptiveCheckInsEnabled: true,
+        dailyCheckInEnabled: false,
+        weeklyReviewEnabled: false,
+        proactiveCategories: ['nutrition'],
+      },
+    ]);
+    vi.mocked(coachContextService.getCoachContextSnapshot).mockResolvedValue({
+      ...snapshot,
+      today: {
+        ...snapshot.today,
+        caloriesConsumed: 0,
+        netCalories: 0,
+        caloriesRemaining: 3000,
+        proteinConsumedG: 0,
+        proteinRemainingG: 160,
+      },
+    });
+    vi.mocked(getCoachMealSuggestion).mockResolvedValue(mealSuggestion);
+
+    await proactiveCoachService.processDueProactiveCoachMessages(
+      new Date('2026-08-23T15:45:00.000Z')
+    );
+
+    expect(getCoachMealSuggestion).toHaveBeenCalledWith(
+      'user-1',
+      expect.any(Object),
+      expect.stringMatching(/^2026-08-23T17:/)
+    );
+    expect(composeAdaptiveCoachMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opportunity: expect.objectContaining({ topic: 'nutrition' }),
+        mealSuggestion,
+      })
+    );
+  });
+
+  it('sends a standalone evening restock reminder after a morning daily check-in', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        adaptiveCheckInsEnabled: false,
+        dailyCheckInEnabled: true,
+        dailyCheckInTime: '08:00',
+        dailyLastSentOn: '2026-08-23',
+        weeklyReviewEnabled: false,
+        proactiveCategories: ['nutrition'],
+      },
+    ]);
+    vi.mocked(getRestockReminder).mockResolvedValue({
+      itemCount: 2,
+      listId: '11111111-1111-4111-8111-111111111111',
+      signature: 'reis-brokkoli',
+      textDe: 'Reis und Brokkoli fehlen noch.',
+      textEn: 'Rice and broccoli are still missing.',
+    });
+
+    const delivered =
+      await proactiveCoachService.processDueProactiveCoachMessages(
+        new Date('2026-08-23T15:45:00.000Z')
+      );
+
+    expect(delivered).toBe(1);
+    expect(
+      coachProfileRepository.saveProactiveMessageIfDue
+    ).toHaveBeenCalledWith(
+      'user-1',
+      'restock',
+      '2026-08-23',
+      'Reis und Brokkoli fehlen noch.',
+      'reis-brokkoli',
+      { topic: 'nutrition', score: 96, tone: 'push' }
+    );
+    expect(coachContextService.getCoachContextSnapshot).not.toHaveBeenCalled();
+    expect(composeAdaptiveCoachMessage).not.toHaveBeenCalled();
+    expect(getCoachMealSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate one restock reminder through adaptive and daily paths', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        adaptiveCheckInsEnabled: true,
+        dailyCheckInEnabled: true,
+        dailyCheckInTime: '17:00',
+        weeklyReviewEnabled: false,
+        proactiveCategories: ['nutrition'],
+      },
+    ]);
+    vi.mocked(getRestockReminder).mockResolvedValue({
+      itemCount: 2,
+      listId: '11111111-1111-4111-8111-111111111111',
+      signature: 'reis-brokkoli',
+      textDe: 'Reis und Brokkoli fehlen noch.',
+      textEn: 'Rice and broccoli are still missing.',
+    });
+
+    const delivered =
+      await proactiveCoachService.processDueProactiveCoachMessages(
+        new Date('2026-08-23T15:45:00.000Z')
+      );
+
+    expect(delivered).toBe(2);
+    expect(composeAdaptiveCoachMessage).not.toHaveBeenCalled();
+    const savedContents = vi
+      .mocked(coachProfileRepository.saveProactiveMessageIfDue)
+      .mock.calls.map((call) => call[3]);
+    expect(
+      savedContents.filter((content) =>
+        content.includes('Reis und Brokkoli fehlen noch.')
+      )
+    ).toEqual(['Reis und Brokkoli fehlen noch.']);
+    expect(
+      coachProfileRepository.markAdaptiveSlotObserved
+    ).toHaveBeenCalledOnce();
+  });
+
+  it('renders meal prep and shopping details in scheduled coach messages', () => {
+    const daily = proactiveCoachService.renderDailyCoachMessage(
+      snapshot,
+      'de',
+      mealSuggestion
+    );
+    const weekly = proactiveCoachService.renderWeeklyCoachMessage(
+      snapshot,
+      'de',
+      mealSuggestion
+    );
+
+    expect(daily).toContain('Hähnchen-Reis-Gemüse-Bowl');
+    expect(daily).toContain('Einkauf für 2 Portionen');
+    expect(weekly).toContain('Konkreter Meal-Prep-Start');
+    expect(weekly).toContain('Zubereitung:');
+    expect(weekly).toContain('Plane **Hähnchen-Reis-Gemüse-Bowl**');
+    expect(weekly).not.toContain('Iss als Nächstes');
+  });
+
+  it('does not turn a protein gap into another full meal after calories are exhausted', () => {
+    const overTarget = {
+      ...snapshot,
+      today: {
+        ...snapshot.today,
+        caloriesConsumed: 3100,
+        netCalories: 3100,
+        caloriesRemaining: -100,
+        proteinConsumedG: 130,
+        proteinRemainingG: 30,
+      },
+    };
+
+    const message = proactiveCoachService.renderDailyCoachMessage(
+      overTarget,
+      'de'
+    );
+
+    expect(message).toContain('Kalorienziel ist heute bereits überschritten');
+    expect(message).not.toContain('proteinreiche Mahlzeit');
+  });
+
   it('respects local time and weekday schedules', () => {
     expect(
       proactiveCoachService.getDueMessageKinds(
@@ -366,6 +644,51 @@ describe('proactiveCoachService', () => {
         new Date('2026-08-23T18:15:00.000Z')
       )
     ).toEqual(['weekly']);
+  });
+
+  it('uses local evening time and the restock delivery marker independently', () => {
+    const morningDailyAlreadySent = {
+      ...candidate,
+      adaptiveCheckInsEnabled: false,
+      dailyCheckInTime: '08:00',
+      dailyLastSentOn: '2026-08-23',
+      weeklyReviewEnabled: false,
+    };
+
+    expect(
+      proactiveCoachService.isEveningRestockCheckDue(
+        morningDailyAlreadySent,
+        new Date('2026-08-23T14:59:00.000Z')
+      )
+    ).toBe(false);
+    expect(
+      proactiveCoachService.isEveningRestockCheckDue(
+        morningDailyAlreadySent,
+        new Date('2026-08-23T15:00:00.000Z')
+      )
+    ).toBe(true);
+    expect(
+      proactiveCoachService.isEveningRestockCheckDue(
+        { ...morningDailyAlreadySent, restockLastSentOn: '2026-08-23' },
+        new Date('2026-08-23T15:00:00.000Z')
+      )
+    ).toBe(false);
+    expect(
+      proactiveCoachService.isEveningRestockCheckDue(
+        {
+          ...morningDailyAlreadySent,
+          dailyCheckInEnabled: false,
+          adaptiveCheckInsEnabled: false,
+        },
+        new Date('2026-08-23T15:00:00.000Z')
+      )
+    ).toBe(false);
+    expect(
+      proactiveCoachService.isEveningRestockCheckDue(
+        { ...morningDailyAlreadySent, proactiveCategories: ['training'] },
+        new Date('2026-08-23T15:00:00.000Z')
+      )
+    ).toBe(false);
   });
 
   it('writes idempotent daily and weekly assistant messages', async () => {
@@ -391,6 +714,38 @@ describe('proactiveCoachService', () => {
       'weekly',
       '2026-08-23',
       expect.stringContaining('Wochenrückblick'),
+      undefined
+    );
+    expect(getCoachMealSuggestion).toHaveBeenCalledTimes(1);
+    expect(getCoachMealSuggestion).toHaveBeenCalledWith(
+      'user-1',
+      { caloriesRemaining: 3000, proteinRemainingG: 160 },
+      '2026-08-23:weekly'
+    );
+  });
+
+  it('does not add meal planning when nutrition coaching is disabled', async () => {
+    vi.mocked(
+      coachProfileRepository.listProactiveCoachCandidates
+    ).mockResolvedValue([
+      {
+        ...candidate,
+        proactiveCategories: ['hydration', 'training', 'recovery'],
+      },
+    ]);
+
+    await proactiveCoachService.processDueProactiveCoachMessages(
+      new Date('2026-08-23T18:15:00.000Z')
+    );
+
+    expect(getCoachMealSuggestion).not.toHaveBeenCalled();
+    expect(
+      coachProfileRepository.saveProactiveMessageIfDue
+    ).toHaveBeenCalledWith(
+      'user-1',
+      'weekly',
+      '2026-08-23',
+      expect.not.stringContaining('vollständige Zutatenliste'),
       undefined
     );
   });

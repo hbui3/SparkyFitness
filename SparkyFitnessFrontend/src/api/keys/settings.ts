@@ -40,3 +40,9 @@ export const preferencesKeys = {
   coachTelegram: () => [...preferencesKeys.all, 'coach-telegram'] as const,
   coachMemories: () => [...preferencesKeys.all, 'coach-memories'] as const,
 };
+
+export const coachMealPlanningKeys = {
+  all: ['coach-meal-planning'] as const,
+  dashboard: (startDate: string, days: number) =>
+    [...coachMealPlanningKeys.all, 'dashboard', { startDate, days }] as const,
+};

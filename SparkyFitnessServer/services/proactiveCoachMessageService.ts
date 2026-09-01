@@ -14,6 +14,11 @@ import coachContextService, {
   type CoachContextSnapshot,
 } from './coachContextService.js';
 import coachMemoryService from './coachMemoryService.js';
+import {
+  COACH_MEAL_INGREDIENT_QUESTIONS,
+  renderCoachMealSuggestion,
+  type CoachMealSuggestion,
+} from './coachMealSuggestionService.js';
 
 interface ProactiveCoachMessageInput {
   userId: string;
@@ -25,6 +30,7 @@ interface ProactiveCoachMessageInput {
   coachingNotes: string | null;
   routines: readonly string[];
   memoryEnabled: boolean;
+  mealSuggestion?: CoachMealSuggestion | null;
 }
 
 interface AiServiceForProactiveCoach {
@@ -75,6 +81,43 @@ function isTooSimilar(
 
 function fallbackMessage(input: ProactiveCoachMessageInput): string {
   const de = input.language.toLowerCase().startsWith('de');
+  const explicitMessage = de
+    ? input.opportunity.messageDe
+    : input.opportunity.messageEn;
+  if (explicitMessage) return explicitMessage;
+  if (input.opportunity.topic === 'nutrition' && input.mealSuggestion) {
+    const details = renderCoachMealSuggestion(
+      input.mealSuggestion,
+      input.language
+    ).join('\n');
+    const openings = de
+      ? [
+          'Ich nehme dir die nächste Essensentscheidung ab:',
+          'Mach es heute konkret – die nächste Mahlzeit steht:',
+          'Kein Grübeln über die nächste Mahlzeit:',
+          'Hier ist dein konkreter nächster Schritt:',
+        ]
+      : [
+          'I am taking the next food decision off your plate:',
+          'Make it concrete today—the next meal is decided:',
+          'No debating the next meal:',
+          'Here is your concrete next step:',
+        ];
+    const startIndex = seededIndex(
+      `${input.deliveryKey}:${input.mealSuggestion.id}`,
+      openings.length
+    );
+    for (let offset = 0; offset < openings.length; offset += 1) {
+      const message = `${openings[(startIndex + offset) % openings.length]}\n${details}`;
+      if (!isTooSimilar(message, input.recentMessages)) return message;
+    }
+    return `${openings[startIndex]}\n${details}`;
+  }
+  if (input.opportunity.topic === 'nutrition') {
+    return de
+      ? `Ich kann gerade keine Mahlzeit vorschlagen, die sicher alle hinterlegten Ausschlüsse erfüllt. ${COACH_MEAL_INGREDIENT_QUESTIONS.de}`
+      : `I cannot currently suggest a meal that safely satisfies every saved exclusion. ${COACH_MEAL_INGREDIENT_QUESTIONS.en}`;
+  }
   const summary = de
     ? input.opportunity.summaryDe
     : input.opportunity.summaryEn;
@@ -239,6 +282,9 @@ async function aiGeneratedMessage(
 export async function composeAdaptiveCoachMessage(
   input: ProactiveCoachMessageInput
 ): Promise<string> {
+  if (input.opportunity.topic === 'nutrition') {
+    return fallbackMessage(input);
+  }
   try {
     return (await aiGeneratedMessage(input)) ?? fallbackMessage(input);
   } catch (error) {

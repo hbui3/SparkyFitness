@@ -183,6 +183,109 @@ describe('coachProfileService', () => {
     ]);
   });
 
+  it('recognizes dairy and gluten aliases used by concrete coach meals', async () => {
+    vi.mocked(coachProfileRepository.getCoachProfile).mockResolvedValue({
+      ...storedProfile,
+      dietary_pattern: 'omnivore',
+      excluded_ingredients: [],
+    } as never);
+    vi.mocked(
+      AllergenPreferenceService.getAllergenPreferences
+    ).mockResolvedValue([
+      { allergen_name: 'milk' },
+      { allergen_name: 'gluten' },
+    ] as never);
+
+    const result = await coachProfileService.validateMealSuggestion('user-1', [
+      'Skyr natur / plain skyr',
+      'Haferflocken / rolled oats',
+    ]);
+
+    expect(result.allowed).toBe(false);
+    expect(result.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ingredient: expect.stringContaining('Skyr'),
+        }),
+        expect.objectContaining({
+          ingredient: expect.stringContaining('Haferflocken'),
+        }),
+      ])
+    );
+  });
+
+  it('blocks common dairy products for vegan profiles without a milk allergen', async () => {
+    vi.mocked(coachProfileRepository.getCoachProfile).mockResolvedValue({
+      ...storedProfile,
+      dietary_pattern: 'vegan',
+      excluded_ingredients: [],
+    } as never);
+    vi.mocked(
+      AllergenPreferenceService.getAllergenPreferences
+    ).mockResolvedValue([]);
+
+    const result = await coachProfileService.validateMealSuggestion('user-1', [
+      'Skyr natur / plain skyr',
+      'Magerquark',
+      'Ricotta',
+    ]);
+
+    expect(result.allowed).toBe(false);
+    expect(result.violations).toHaveLength(3);
+    expect(
+      result.violations.every(
+        (violation) => violation.type === 'dietary_pattern'
+      )
+    ).toBe(true);
+  });
+
+  it('recognizes common dairy spellings and German cheese compounds for a milk allergen', async () => {
+    vi.mocked(coachProfileRepository.getCoachProfile).mockResolvedValue({
+      ...storedProfile,
+      dietary_pattern: 'omnivore',
+      excluded_ingredients: [],
+    } as never);
+    vi.mocked(
+      AllergenPreferenceService.getAllergenPreferences
+    ).mockResolvedValue([{ allergen_name: 'milk' }] as never);
+
+    const result = await coachProfileService.validateMealSuggestion('user-1', [
+      'Quark',
+      'Frischkäse',
+      'Greek yoghurt',
+      'Ricotta',
+      'Ziegenkäse',
+    ]);
+
+    expect(result.allowed).toBe(false);
+    expect(result.violations).toHaveLength(5);
+    expect(
+      result.violations.every((violation) => violation.type === 'allergen')
+    ).toBe(true);
+  });
+
+  it('matches a natural German exclusion against a compound ingredient name', async () => {
+    vi.mocked(coachProfileRepository.getCoachProfile).mockResolvedValue({
+      ...storedProfile,
+      dietary_pattern: 'omnivore',
+      excluded_ingredients: ['hähnchen'],
+    } as never);
+    vi.mocked(
+      AllergenPreferenceService.getAllergenPreferences
+    ).mockResolvedValue([]);
+
+    const result = await coachProfileService.validateMealSuggestion('user-1', [
+      'Hähnchenbrust',
+    ]);
+
+    expect(result.violations).toEqual([
+      expect.objectContaining({
+        type: 'excluded_ingredient',
+        matchedTerm: 'hähnchen',
+      }),
+    ]);
+  });
+
   it('builds compact application-controlled context for every chat turn', async () => {
     const context =
       await coachProfileService.getPersistentChatContext('user-1');
@@ -198,6 +301,7 @@ describe('coachProfileService', () => {
     expect(context).toContain('Automatic long-term memory is disabled.');
     expect(context).toContain('Tracked allergens');
     expect(context).toContain('sparky_validate_meal_suggestion');
+    expect(context).toContain('sparky_suggest_next_meal');
   });
 
   it('injects active memories and automatic capture rules into every chat turn', async () => {

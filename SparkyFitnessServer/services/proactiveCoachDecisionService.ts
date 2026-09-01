@@ -7,6 +7,7 @@ import type {
   ProactiveCoachTopic,
   RecentProactiveCoachMessage,
 } from '../types/proactiveCoach.js';
+import { MIN_COACH_MEAL_CALORIES } from './coachMealSuggestionService.js';
 
 const MINIMUM_RELEVANCE_SCORE = 70;
 const ACTIVE_CONVERSATION_COOLDOWN_MINUTES = 20;
@@ -52,6 +53,8 @@ interface OpportunityDraft {
   actionDe: string;
   actionEn: string;
   signatureFacts: Record<string, unknown>;
+  messageDe?: string;
+  messageEn?: string;
 }
 
 function minutesSince(value: string | null, now: Date): number | null {
@@ -95,6 +98,8 @@ function completeOpportunity(
     actionDe: draft.actionDe,
     actionEn: draft.actionEn,
     stateSignature: opportunitySignature(draft, date),
+    ...(draft.messageDe ? { messageDe: draft.messageDe } : {}),
+    ...(draft.messageEn ? { messageEn: draft.messageEn } : {}),
   };
 }
 
@@ -236,26 +241,40 @@ function buildOpportunities(
 
   if (categories.includes('nutrition')) {
     const proteinRatio = ratio(today.proteinConsumedG, today.proteinTargetG);
-    if (today.caloriesConsumed === 0 && localMinutes >= 11 * 60) {
+    const hasMealCalorieBudget =
+      today.caloriesRemaining === null ||
+      today.caloriesRemaining >= MIN_COACH_MEAL_CALORIES;
+    if (
+      hasMealCalorieBudget &&
+      today.caloriesConsumed === 0 &&
+      localMinutes >= 9 * 60
+    ) {
+      const phase =
+        localMinutes >= 14 * 60
+          ? 'late'
+          : localMinutes >= 11 * 60
+            ? 'midday'
+            : 'morning';
       opportunities.push({
         topic: 'nutrition',
-        score: localMinutes >= 14 * 60 ? 86 : 78,
+        score: phase === 'late' ? 86 : phase === 'midday' ? 78 : 72,
         tone: 'push',
         summaryDe:
-          'Für heute ist noch keine Mahlzeit erfasst, dadurch fehlt dir die Kontrolle über den Rest des Tages.',
+          'Für heute ist noch keine Mahlzeit erfasst; ohne konkrete Essensentscheidung wird später leicht improvisiert.',
         summaryEn:
-          'No meal is logged today, so you currently have no useful control over the rest of the day.',
+          'No meal is logged today; without a concrete food decision it is easy to improvise later.',
         actionDe:
-          'Wenn du schon gegessen hast, trage es jetzt ein; sonst entscheide dich bewusst für deine erste proteinreiche Mahlzeit.',
+          'Lege jetzt eine passende Mahlzeit mit genauen Mengen fest und kaufe direkt für zwei Portionen ein.',
         actionEn:
-          'If you already ate, log it now; otherwise deliberately choose your first protein-rich meal.',
+          'Set one suitable meal with exact quantities now and shop for two servings at once.',
         signatureFacts: {
           caloriesConsumed: 0,
-          phase: localMinutes >= 14 * 60 ? 'late' : 'midday',
+          phase,
         },
       });
     } else if (
       proteinRatio !== null &&
+      hasMealCalorieBudget &&
       localMinutes >= 13 * 60 &&
       proteinRatio < Math.max(0.25, dayProgress - 0.2) &&
       (today.proteinRemainingG ?? 0) >= 25
@@ -266,8 +285,8 @@ function buildOpportunities(
         tone: 'push',
         summaryDe: `Beim Protein bist du erst bei ${today.proteinConsumedG} von ${today.proteinTargetG} g.`,
         summaryEn: `Protein is only at ${today.proteinConsumedG} of ${today.proteinTargetG} g.`,
-        actionDe: `Baue die nächste Mahlzeit um etwa ${Math.min(45, today.proteinRemainingG ?? 0)} g Protein herum auf, bevor der ganze Rest am Abend übrig bleibt.`,
-        actionEn: `Build the next meal around roughly ${Math.min(45, today.proteinRemainingG ?? 0)} g protein before the whole gap is left for tonight.`,
+        actionDe: `Lege jetzt eine konkrete Mahlzeit mit etwa ${Math.min(45, today.proteinRemainingG ?? 0)} g Protein, genauen Mengen und den fehlenden Einkaufszutaten fest.`,
+        actionEn: `Set one concrete meal now with roughly ${Math.min(45, today.proteinRemainingG ?? 0)} g protein, exact quantities, and the missing shopping items.`,
         signatureFacts: {
           proteinConsumedG: today.proteinConsumedG,
           proteinRemainingG: today.proteinRemainingG,

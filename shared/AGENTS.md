@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-08-21_
+_Last updated: 2026-09-01_
 
 `@workspace/shared` is a source-first TypeScript workspace library package for schemas, constants, and timezone/day helpers consumed by SparkyFitnessServer, SparkyFitnessFrontend, and SparkyFitnessMobile.
 
@@ -14,6 +14,8 @@ _Last updated: 2026-08-21_
 
 - `src/schemas/database/` - one Zod file per table (`Foods.zod.ts`, `Exercises.zod.ts`, ~60 files). Agent shortcut: to learn a table shape, read the matching file here instead of the SQL dump.
 - `src/schemas/api/` - API request/response contracts (`*api.zod.ts`), including the range-queryable canonical training timeline, exact set-type counts, and per-day planned-versus-completed progress in `TrainingTimeline.api.zod.ts`.
+- `src/schemas/api/CoachMealPlanning.api.zod.ts` - strict camelCase pantry, shopping-list, meal-plan, recipe-catalog, and dashboard contracts for the owner-only persistent coach.
+- `src/schemas/database/CoachPantry*.zod.ts`, `CoachShopping*.zod.ts`, and `CoachMealPlan*.zod.ts` - one-table-per-file row contracts for owner-only meal-planning persistence and its append-only pantry ledger.
 - `src/constants/` - shared constants and enums (exercises, nutrients, meal types, fasting protocols, medication schedules, cycle phases, etc.).
 - `src/utils/` - timezone helpers (`todayInZone`, `instantToDay`, `dayToUtcRange`, `compareDays`, `addDays`, `isDayString`), cross-client workout overlap detection, cycle/menstruation helpers, and unit/calculation utilities.
 - `src/ai/`, `src/cycle/`, `src/medications/`, `src/mood/` - domain-specific helpers.

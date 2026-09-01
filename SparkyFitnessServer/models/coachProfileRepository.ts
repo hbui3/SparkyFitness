@@ -10,7 +10,16 @@ import {
   type RecentProactiveCoachMessage,
 } from '../types/proactiveCoach.js';
 
-export type ProactiveCoachMessageKind = 'adaptive' | 'daily' | 'weekly';
+export type ScheduledProactiveCoachMessageKind =
+  'adaptive' | 'daily' | 'weekly';
+export type ProactiveCoachMessageKind =
+  ScheduledProactiveCoachMessageKind | 'restock';
+
+// Daily and weekly messages keep their independent scheduled cadence.
+const ADAPTIVE_COOLDOWN_MESSAGE_KINDS: ProactiveCoachMessageKind[] = [
+  'adaptive',
+  'restock',
+];
 
 export interface ProactiveCoachCandidate {
   userId: string;
@@ -23,7 +32,7 @@ export interface ProactiveCoachCandidate {
   adaptiveIntervalMinutes: number;
   proactiveCategories: ProactiveCoachCategory[];
   adaptiveLastSignature: string | null;
-  adaptiveLastMessageAt: string | null;
+  adaptiveCooldownLastMessageAt: string | null;
   lastUserMessageAt: string | null;
   coachingNotes: string | null;
   routines: string[];
@@ -31,6 +40,7 @@ export interface ProactiveCoachCandidate {
   dailyCheckInEnabled: boolean;
   dailyCheckInTime: string;
   dailyLastSentOn: string | null;
+  restockLastSentOn: string | null;
   weeklyReviewEnabled: boolean;
   weeklyReviewDay: number;
   weeklyReviewTime: string;
@@ -188,8 +198,8 @@ async function listProactiveCoachCandidates(): Promise<
            WHERE history.user_id = cp.user_id
              AND history.message_type = 'assistant'
              AND history.metadata->>'source' = 'proactive_coach'
-             AND history.metadata->>'kind' = 'adaptive'
-         ) AS adaptive_last_message_at,
+             AND history.metadata->>'kind' = ANY($1::text[])
+         ) AS adaptive_cooldown_last_message_at,
          (
            SELECT MAX(history.created_at)
            FROM sparky_chat_history history
@@ -199,6 +209,16 @@ async function listProactiveCoachCandidates(): Promise<
          cp.daily_check_in_enabled,
          cp.daily_check_in_time,
          TO_CHAR(cp.daily_last_sent_on, 'YYYY-MM-DD') AS daily_last_sent_on,
+         (
+           SELECT history.metadata->>'localDate'
+           FROM sparky_chat_history history
+           WHERE history.user_id = cp.user_id
+             AND history.message_type = 'assistant'
+             AND history.metadata->>'source' = 'proactive_coach'
+             AND history.metadata->>'kind' = 'restock'
+           ORDER BY history.created_at DESC
+           LIMIT 1
+         ) AS restock_last_sent_on,
          cp.weekly_review_enabled,
          cp.weekly_review_day,
          cp.weekly_review_time,
@@ -210,7 +230,8 @@ async function listProactiveCoachCandidates(): Promise<
            cp.adaptive_check_ins_enabled = TRUE
            OR cp.daily_check_in_enabled = TRUE
            OR cp.weekly_review_enabled = TRUE
-         )`
+         )`,
+      [ADAPTIVE_COOLDOWN_MESSAGE_KINDS]
     );
     return rows.map((row: Record<string, unknown>) => ({
       userId: String(row.user_id),
@@ -231,7 +252,9 @@ async function listProactiveCoachCandidates(): Promise<
         typeof row.adaptive_last_signature === 'string'
           ? row.adaptive_last_signature
           : null,
-      adaptiveLastMessageAt: timestampString(row.adaptive_last_message_at),
+      adaptiveCooldownLastMessageAt: timestampString(
+        row.adaptive_cooldown_last_message_at
+      ),
       lastUserMessageAt: timestampString(row.last_user_message_at),
       coachingNotes:
         typeof row.coaching_notes === 'string' ? row.coaching_notes : null,
@@ -246,6 +269,10 @@ async function listProactiveCoachCandidates(): Promise<
       dailyLastSentOn:
         typeof row.daily_last_sent_on === 'string'
           ? row.daily_last_sent_on
+          : null,
+      restockLastSentOn:
+        typeof row.restock_last_sent_on === 'string'
+          ? row.restock_last_sent_on
           : null,
       weeklyReviewEnabled: row.weekly_review_enabled === true,
       weeklyReviewDay: Number(row.weekly_review_day),
@@ -283,10 +310,14 @@ async function listRecentProactiveMessages(
        WHERE user_id = $1
          AND message_type = 'assistant'
          AND metadata->>'source' = 'proactive_coach'
-         AND metadata->>'kind' = 'adaptive'
+         AND metadata->>'kind' = ANY($3::text[])
        ORDER BY created_at DESC
        LIMIT $2`,
-      [userId, Math.max(1, Math.min(20, Math.round(limit)))]
+      [
+        userId,
+        Math.max(1, Math.min(20, Math.round(limit))),
+        ADAPTIVE_COOLDOWN_MESSAGE_KINDS,
+      ]
     );
     return rows.map((row: Record<string, unknown>) => ({
       content: String(row.content ?? ''),
@@ -324,38 +355,75 @@ async function saveProactiveMessageIfDue(
   opportunity?: Pick<ProactiveCoachOpportunity, 'topic' | 'score' | 'tone'>
 ): Promise<boolean> {
   const client = await getClient(userId, userId);
-  const markerColumn =
-    kind === 'adaptive'
-      ? 'adaptive_last_sent_slot'
-      : kind === 'daily'
-        ? 'daily_last_sent_on'
-        : 'weekly_last_sent_on';
-  const enabledColumn =
-    kind === 'adaptive'
-      ? 'adaptive_check_ins_enabled'
-      : kind === 'daily'
-        ? 'daily_check_in_enabled'
-        : 'weekly_review_enabled';
-  const markerValue = kind === 'adaptive' ? '$2' : '$2::date';
   try {
     await client.query('BEGIN');
-    const claimed = await client.query(
-      `UPDATE coach_profiles
-       SET ${markerColumn} = ${markerValue},
-           adaptive_last_signature = CASE
-             WHEN $3::text IS NULL THEN adaptive_last_signature
-             ELSE $3::text
-           END
-       WHERE user_id = $1
-         AND enabled = TRUE
-         AND ${enabledColumn} = TRUE
-         AND ${markerColumn} IS DISTINCT FROM ${markerValue}
-       RETURNING id`,
-      [userId, deliveryKey, stateSignature ?? null]
-    );
-    if ((claimed.rowCount ?? 0) === 0) {
-      await client.query('ROLLBACK');
-      return false;
+    if (kind === 'restock') {
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`proactive-restock:${userId}:${deliveryKey}`]
+      );
+      const { rows } = (await client.query(
+        `SELECT
+           EXISTS (
+             SELECT 1
+             FROM coach_profiles profile
+             WHERE profile.user_id = $1
+               AND profile.enabled = TRUE
+               AND 'nutrition' = ANY(profile.proactive_categories)
+               AND (
+                 profile.adaptive_check_ins_enabled = TRUE
+                 OR profile.daily_check_in_enabled = TRUE
+               )
+           ) AS enabled,
+           EXISTS (
+             SELECT 1
+             FROM sparky_chat_history history
+             WHERE history.user_id = $1
+               AND history.message_type = 'assistant'
+               AND history.metadata->>'source' = 'proactive_coach'
+               AND history.metadata->>'kind' = 'restock'
+               AND history.metadata->>'deliveryKey' = $2
+           ) AS already_delivered`,
+        [userId, deliveryKey]
+      )) as {
+        rows: Array<{ enabled: boolean; already_delivered: boolean }>;
+      };
+      if (!rows[0]?.enabled || rows[0].already_delivered) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+    } else {
+      const markerColumn =
+        kind === 'adaptive'
+          ? 'adaptive_last_sent_slot'
+          : kind === 'daily'
+            ? 'daily_last_sent_on'
+            : 'weekly_last_sent_on';
+      const enabledColumn =
+        kind === 'adaptive'
+          ? 'adaptive_check_ins_enabled'
+          : kind === 'daily'
+            ? 'daily_check_in_enabled'
+            : 'weekly_review_enabled';
+      const markerValue = kind === 'adaptive' ? '$2' : '$2::date';
+      const claimed = await client.query(
+        `UPDATE coach_profiles
+         SET ${markerColumn} = ${markerValue},
+             adaptive_last_signature = CASE
+               WHEN $3::text IS NULL THEN adaptive_last_signature
+               ELSE $3::text
+             END
+         WHERE user_id = $1
+           AND enabled = TRUE
+           AND ${enabledColumn} = TRUE
+           AND ${markerColumn} IS DISTINCT FROM ${markerValue}
+         RETURNING id`,
+        [userId, deliveryKey, stateSignature ?? null]
+      );
+      if ((claimed.rowCount ?? 0) === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
     }
 
     const metadata = {

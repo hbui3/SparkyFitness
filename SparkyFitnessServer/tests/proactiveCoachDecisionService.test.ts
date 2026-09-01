@@ -238,4 +238,65 @@ describe('proactiveCoachDecisionService', () => {
     expect(decision.shouldSend).toBe(true);
     expect(decision.opportunity?.topic).toBe('nutrition');
   });
+
+  it('can decide the first meal early enough to support shopping and prep', () => {
+    const current = snapshot({
+      today: {
+        ...snapshot().today,
+        caloriesConsumed: 0,
+        netCalories: 0,
+        caloriesRemaining: 3000,
+        proteinConsumedG: 0,
+        proteinRemainingG: 160,
+      },
+    });
+
+    const decision = evaluateProactiveCoachOpportunity({
+      snapshot: current,
+      categories: ['nutrition'],
+      timezone: current.timezone,
+      now: new Date('2026-08-24T07:30:00.000Z'),
+      minimumMessageIntervalMinutes: 60,
+      lastAdaptiveMessageAt: null,
+      lastUserMessageAt: null,
+      recentMessages: [],
+    });
+
+    expect(decision.shouldSend).toBe(true);
+    expect(decision.opportunity).toMatchObject({
+      topic: 'nutrition',
+      score: 72,
+      actionDe: expect.stringContaining('genauen Mengen'),
+    });
+  });
+
+  it('does not push a full meal for protein after the calorie budget is exhausted', () => {
+    const current = snapshot({
+      today: {
+        ...snapshot().today,
+        caloriesConsumed: 3100,
+        netCalories: 3100,
+        caloriesRemaining: -100,
+        proteinConsumedG: 130,
+        proteinRemainingG: 30,
+      },
+    });
+
+    const decision = evaluateProactiveCoachOpportunity({
+      snapshot: current,
+      categories: ['nutrition'],
+      timezone: current.timezone,
+      now,
+      minimumMessageIntervalMinutes: 60,
+      lastAdaptiveMessageAt: null,
+      lastUserMessageAt: null,
+      recentMessages: [],
+    });
+
+    expect(decision).toEqual({
+      shouldSend: false,
+      reason: 'no_relevant_opportunity',
+      opportunity: null,
+    });
+  });
 });

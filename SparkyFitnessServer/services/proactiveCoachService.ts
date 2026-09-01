@@ -2,7 +2,7 @@ import { dayOfWeek, instantHourMinute, instantToDay } from '@workspace/shared';
 import { createHash } from 'node:crypto';
 import coachProfileRepository, {
   type ProactiveCoachCandidate,
-  type ProactiveCoachMessageKind,
+  type ScheduledProactiveCoachMessageKind,
 } from '../models/coachProfileRepository.js';
 import coachContextService, {
   type CoachContextSnapshot,
@@ -12,12 +12,25 @@ import plannedWorkoutScheduleService from './plannedWorkoutScheduleService.js';
 import { log } from '../config/logging.js';
 import { evaluateProactiveCoachOpportunity } from './proactiveCoachDecisionService.js';
 import { composeAdaptiveCoachMessage } from './proactiveCoachMessageService.js';
+import {
+  getRestockReminder,
+  type CoachRestockReminder,
+} from './coachMealPlanningService.js';
+import {
+  COACH_MEAL_INGREDIENT_QUESTIONS,
+  getCoachMealSuggestion,
+  MIN_COACH_MEAL_CALORIES,
+  renderCoachMealSuggestion,
+  type CoachMealSuggestion,
+  type CoachMealTargets,
+} from './coachMealSuggestionService.js';
 
 export const ADAPTIVE_COACH_START_MINUTES = 7 * 60;
 export const ADAPTIVE_COACH_END_MINUTES = 20 * 60;
 export const ADAPTIVE_COACH_INTERVAL_MINUTES = 2 * 60;
 export const ADAPTIVE_COACH_MIN_CHECK_GAP_MINUTES = 3;
 export const ADAPTIVE_COACH_MAX_CHECK_GAP_MINUTES = 8;
+export const EVENING_RESTOCK_START_MINUTES = 17 * 60;
 
 function timeToMinutes(value: string): number {
   const [hour = '0', minute = '0'] = value.split(':');
@@ -78,8 +91,8 @@ export function getAdaptiveDeliverySlot(
 export function getDueMessageKinds(
   candidate: ProactiveCoachCandidate,
   now: Date
-): ProactiveCoachMessageKind[] {
-  const kinds: ProactiveCoachMessageKind[] = [];
+): ScheduledProactiveCoachMessageKind[] {
+  const kinds: ScheduledProactiveCoachMessageKind[] = [];
   const localDate = instantToDay(now, candidate.timezone);
   const adaptiveSlot = getAdaptiveDeliverySlot(candidate, now);
   if (adaptiveSlot && candidate.adaptiveLastObservedSlot !== adaptiveSlot) {
@@ -109,6 +122,22 @@ export function getDueMessageKinds(
     kinds.push('weekly');
   }
   return kinds;
+}
+
+export function isEveningRestockCheckDue(
+  candidate: ProactiveCoachCandidate,
+  now: Date
+): boolean {
+  if (
+    !candidate.proactiveCategories.includes('nutrition') ||
+    (!candidate.adaptiveCheckInsEnabled && !candidate.dailyCheckInEnabled)
+  ) {
+    return false;
+  }
+  const localDate = instantToDay(now, candidate.timezone);
+  if (candidate.restockLastSentOn === localDate) return false;
+  const local = instantHourMinute(now, candidate.timezone);
+  return local.hour * 60 + local.minute >= EVENING_RESTOCK_START_MINUTES;
 }
 
 function targetValue(value: number | null, suffix: string): string {
@@ -207,6 +236,15 @@ function adaptiveFocusDe(
       ? `Dein heutiger Trainingsvorschlag ist „${snapshot.adaptiveTraining.presetName ?? 'Training'}“ mit einem Fit-Score von ${snapshot.adaptiveTraining.score}/100${snapshot.adaptiveTraining.volumeFactor < 1 ? ` und ${Math.round(snapshot.adaptiveTraining.volumeFactor * 100)} % Volumen` : ''}.`
       : `Heute ist ein Erholungstag empfohlen (Score ${snapshot.adaptiveTraining.score}/100). Plane höchstens lockere Bewegung ein.`;
   }
+  if (
+    categories.includes('nutrition') &&
+    today.caloriesRemaining !== null &&
+    today.caloriesRemaining < MIN_COACH_MEAL_CALORIES
+  ) {
+    return today.caloriesRemaining < 0
+      ? `Du liegst ${Math.abs(today.caloriesRemaining)} kcal über deinem heutigen Ziel. Kein extremes Gegensteuern und keine zusätzliche große Mahlzeit nur wegen eines Proteinrests; plane die Proteinquelle morgen früher ein.`
+      : `Es bleiben nur noch ${today.caloriesRemaining} kcal. Ich empfehle jetzt keine volle Mahlzeit; plane die Proteinquelle morgen früher ein.`;
+  }
   if (categories.includes('nutrition') && today.caloriesConsumed === 0) {
     if (slotMinutes >= 10 * 60) {
       return `Bis ${slot} ist noch keine Mahlzeit erfasst. Falls du schon gegessen hast, trage sie jetzt nach; sonst plane die erste Mahlzeit passend zu deinem Ziel von ${targetValue(today.calorieTarget, 'kcal')}.`;
@@ -269,6 +307,15 @@ function adaptiveFocusEn(
     return snapshot.adaptiveTraining.kind === 'workout'
       ? `Today's workout recommendation is “${snapshot.adaptiveTraining.presetName ?? 'Workout'}” with a ${snapshot.adaptiveTraining.score}/100 fit score${snapshot.adaptiveTraining.volumeFactor < 1 ? ` and ${Math.round(snapshot.adaptiveTraining.volumeFactor * 100)}% volume` : ''}.`
       : `Today is a recommended recovery day (score ${snapshot.adaptiveTraining.score}/100). Keep movement easy.`;
+  }
+  if (
+    categories.includes('nutrition') &&
+    today.caloriesRemaining !== null &&
+    today.caloriesRemaining < MIN_COACH_MEAL_CALORIES
+  ) {
+    return today.caloriesRemaining < 0
+      ? `You are ${Math.abs(today.caloriesRemaining)} kcal above today's target. Do not compensate aggressively or add a large meal just for a protein gap; plan protein earlier tomorrow.`
+      : `Only ${today.caloriesRemaining} kcal remain. I am not recommending a full meal now; plan the protein source earlier tomorrow.`;
   }
   if (categories.includes('nutrition') && today.caloriesConsumed === 0) {
     if (slotMinutes >= 10 * 60) {
@@ -346,6 +393,14 @@ function dailyFocusDe(snapshot: CoachContextSnapshot): string {
   if (dueWorkout) {
     return `Das geplante Training „${dueWorkout.name}“ steht heute noch an.`;
   }
+  if (
+    today.caloriesRemaining !== null &&
+    today.caloriesRemaining < MIN_COACH_MEAL_CALORIES
+  ) {
+    return today.caloriesRemaining < 0
+      ? 'Dein Kalorienziel ist heute bereits überschritten. Iss nicht allein wegen des Proteinrests noch eine große Mahlzeit; plane die Proteinquelle morgen früher ein.'
+      : `Es bleiben nur noch ungefähr ${today.caloriesRemaining} kcal. Ich empfehle keine volle Mahlzeit mehr; plane die Proteinquelle morgen früher ein.`;
+  }
   if (today.caloriesConsumed === 0) {
     return 'Trage deine erste Mahlzeit ein, damit ich den restlichen Tag sinnvoll einordnen kann.';
   }
@@ -367,6 +422,14 @@ function dailyFocusEn(snapshot: CoachContextSnapshot): string {
   if (dueWorkout) {
     return `The scheduled workout “${dueWorkout.name}” is still due today.`;
   }
+  if (
+    today.caloriesRemaining !== null &&
+    today.caloriesRemaining < MIN_COACH_MEAL_CALORIES
+  ) {
+    return today.caloriesRemaining < 0
+      ? 'Today’s calorie target is already exceeded. Do not add a large meal solely for the protein gap; plan the protein source earlier tomorrow.'
+      : `Only about ${today.caloriesRemaining} kcal remain. I am not recommending another full meal; plan the protein source earlier tomorrow.`;
+  }
   if (today.caloriesConsumed === 0) {
     return 'Log your first meal so I can put the rest of the day into context.';
   }
@@ -384,7 +447,9 @@ function dailyFocusEn(snapshot: CoachContextSnapshot): string {
 
 export function renderDailyCoachMessage(
   snapshot: CoachContextSnapshot,
-  language: string
+  language: string,
+  mealSuggestion: CoachMealSuggestion | null = null,
+  nutritionPlanningAttempted = false
 ): string {
   const { today, week } = snapshot;
   if (language.toLowerCase().startsWith('de')) {
@@ -394,7 +459,12 @@ export function renderDailyCoachMessage(
       `Heute: **${today.caloriesConsumed} / ${today.calorieTarget ?? '–'} kcal**, **${today.proteinConsumedG} / ${today.proteinTargetG ?? '–'} g Protein** und **${today.waterConsumedMl} / ${today.waterTargetMl ?? '–'} ml Wasser**.`,
       `In den letzten sieben Tagen hast du an ${week.nutritionLoggedDays} von ${week.totalDays} Tagen Ernährung erfasst und ${week.workoutCount} Trainings protokolliert.`,
       '',
-      `**Nächster sinnvoller Schritt:** ${dailyFocusDe(snapshot)}`,
+      '**Nächster sinnvoller Schritt:**',
+      ...(mealSuggestion
+        ? renderCoachMealSuggestion(mealSuggestion, language)
+        : nutritionPlanningAttempted
+          ? [COACH_MEAL_INGREDIENT_QUESTIONS.de]
+          : [dailyFocusDe(snapshot)]),
     ].join('\n');
   }
   return [
@@ -403,13 +473,20 @@ export function renderDailyCoachMessage(
     `Today: **${today.caloriesConsumed} / ${today.calorieTarget ?? '–'} kcal**, **${today.proteinConsumedG} / ${today.proteinTargetG ?? '–'} g protein**, and **${today.waterConsumedMl} / ${today.waterTargetMl ?? '–'} ml water**.`,
     `Over the last seven days, you logged nutrition on ${week.nutritionLoggedDays} of ${week.totalDays} days and recorded ${week.workoutCount} workouts.`,
     '',
-    `**Next useful step:** ${dailyFocusEn(snapshot)}`,
+    '**Next useful step:**',
+    ...(mealSuggestion
+      ? renderCoachMealSuggestion(mealSuggestion, language)
+      : nutritionPlanningAttempted
+        ? [COACH_MEAL_INGREDIENT_QUESTIONS.en]
+        : [dailyFocusEn(snapshot)]),
   ].join('\n');
 }
 
 export function renderWeeklyCoachMessage(
   snapshot: CoachContextSnapshot,
-  language: string
+  language: string,
+  mealSuggestion: CoachMealSuggestion | null = null,
+  nutritionPlanningAttempted = false
 ): string {
   const { week, longTerm, weight30Days } = snapshot;
   const calorieDelta =
@@ -437,7 +514,16 @@ export function renderWeeklyCoachMessage(
         ? 'Ein Vergleich mit deinem 30-Tage-Kalorienmittel ist noch nicht belastbar.'
         : `Gegenüber deinem 30-Tage-Mittel lag diese Woche bei **${signed(calorieDelta)} kcal pro erfasstem Tag**.`,
       '',
-      '**Fokus für die nächste Woche:** Erst vollständiges Logging sichern, dann Ziele anhand des Trends beurteilen – fehlende Tage werden nicht als Nullverbrauch gewertet.',
+      mealSuggestion
+        ? '**Konkreter Meal-Prep-Start für die nächste Woche:**'
+        : nutritionPlanningAttempted
+          ? '**Meal-Prep für die nächste Woche:**'
+          : '**Fokus für die nächste Woche:** Erst vollständiges Logging sichern, dann Ziele anhand des Trends beurteilen – fehlende Tage werden nicht als Nullverbrauch gewertet.',
+      ...(mealSuggestion
+        ? renderCoachMealSuggestion(mealSuggestion, language, 'meal-prep')
+        : nutritionPlanningAttempted
+          ? [COACH_MEAL_INGREDIENT_QUESTIONS.de]
+          : []),
     ].join('\n');
   }
   return [
@@ -450,8 +536,74 @@ export function renderWeeklyCoachMessage(
       ? 'There is not enough data for a reliable comparison with your 30-day calorie average.'
       : `This week was **${signed(calorieDelta)} kcal per logged day** compared with your 30-day average.`,
     '',
-    '**Focus for next week:** establish complete logging first, then judge targets from the trend—missing days are never treated as zero intake.',
+    mealSuggestion
+      ? '**Concrete meal-prep start for next week:**'
+      : nutritionPlanningAttempted
+        ? '**Meal prep for next week:**'
+        : '**Focus for next week:** establish complete logging first, then judge targets from the trend—missing days are never treated as zero intake.',
+    ...(mealSuggestion
+      ? renderCoachMealSuggestion(mealSuggestion, language, 'meal-prep')
+      : nutritionPlanningAttempted
+        ? [COACH_MEAL_INGREDIENT_QUESTIONS.en]
+        : []),
   ].join('\n');
+}
+
+function dailyMealWouldHelp(snapshot: CoachContextSnapshot): boolean {
+  if (
+    snapshot.trainingSchedule?.dueToday.some((workout) => !workout.completed)
+  ) {
+    return false;
+  }
+  if (
+    snapshot.today.caloriesRemaining !== null &&
+    snapshot.today.caloriesRemaining < MIN_COACH_MEAL_CALORIES
+  ) {
+    return false;
+  }
+  return (
+    snapshot.today.caloriesConsumed === 0 ||
+    (snapshot.today.proteinRemainingG ?? 0) > 20 ||
+    (snapshot.today.caloriesRemaining ?? 0) > 400
+  );
+}
+
+async function loadMealSuggestion(
+  candidate: ProactiveCoachCandidate,
+  targets: CoachMealTargets,
+  seed: string
+): Promise<CoachMealSuggestion | null> {
+  if (!candidate.proactiveCategories.includes('nutrition')) return null;
+  try {
+    return await getCoachMealSuggestion(candidate.userId, targets, seed);
+  } catch (error) {
+    log(
+      'warn',
+      `Failed to build a concrete coach meal suggestion for user ${candidate.userId}:`,
+      error
+    );
+    return null;
+  }
+}
+
+async function loadEveningRestockReminder(
+  candidate: ProactiveCoachCandidate,
+  now: Date
+): Promise<CoachRestockReminder | null> {
+  if (!candidate.proactiveCategories.includes('nutrition')) return null;
+  const local = instantHourMinute(now, candidate.timezone);
+  if (local.hour * 60 + local.minute < EVENING_RESTOCK_START_MINUTES)
+    return null;
+  try {
+    return await getRestockReminder(candidate.userId);
+  } catch (error) {
+    log(
+      'warn',
+      `Failed to build a pantry restock reminder for user ${candidate.userId}:`,
+      error
+    );
+    return null;
+  }
 }
 
 let processing = false;
@@ -468,22 +620,51 @@ export async function processDueProactiveCoachMessages(
     for (const candidate of candidates) {
       try {
         const kinds = getDueMessageKinds(candidate, now);
+        const restockCheckDue = isEveningRestockCheckDue(candidate, now);
+        if (kinds.length === 0 && !restockCheckDue) continue;
+        const localDate = instantToDay(now, candidate.timezone);
+        const restockReminder = restockCheckDue
+          ? await loadEveningRestockReminder(candidate, now)
+          : null;
+        if (restockReminder) {
+          const content = candidate.language.toLowerCase().startsWith('de')
+            ? restockReminder.textDe
+            : restockReminder.textEn;
+          const saved = await coachProfileRepository.saveProactiveMessageIfDue(
+            candidate.userId,
+            'restock',
+            localDate,
+            content,
+            restockReminder.signature,
+            { topic: 'nutrition', score: 96, tone: 'push' }
+          );
+          if (saved) {
+            delivered++;
+            coachEventService.publish(candidate.userId, 'chat');
+          }
+        }
         if (kinds.length === 0) continue;
         if (candidate.proactiveCategories.includes('training')) {
           await plannedWorkoutScheduleService.carryForwardMissedWorkouts(
             candidate.userId,
-            instantToDay(now, candidate.timezone)
+            localDate
           );
         }
         const snapshot = await coachContextService.getCoachContextSnapshot(
           candidate.userId,
           candidate.timezone
         );
-        const localDate = instantToDay(now, candidate.timezone);
         const scheduledKinds = kinds.filter((kind) => kind !== 'adaptive');
         const kindsToProcess =
-          scheduledKinds.length > 0 ? scheduledKinds : kinds;
-        if (scheduledKinds.length > 0 && kinds.includes('adaptive')) {
+          scheduledKinds.length > 0
+            ? scheduledKinds
+            : restockReminder
+              ? []
+              : kinds;
+        if (
+          kinds.includes('adaptive') &&
+          (scheduledKinds.length > 0 || restockReminder)
+        ) {
           const adaptiveDeliveryKey = getAdaptiveDeliverySlot(candidate, now);
           if (adaptiveDeliveryKey) {
             await coachProfileRepository.markAdaptiveSlotObserved(
@@ -509,7 +690,7 @@ export async function processDueProactiveCoachMessages(
               timezone: candidate.timezone,
               now,
               minimumMessageIntervalMinutes: candidate.adaptiveIntervalMinutes,
-              lastAdaptiveMessageAt: candidate.adaptiveLastMessageAt,
+              lastAdaptiveMessageAt: candidate.adaptiveCooldownLastMessageAt,
               lastUserMessageAt: candidate.lastUserMessageAt,
               recentMessages,
             });
@@ -524,6 +705,16 @@ export async function processDueProactiveCoachMessages(
               );
               continue;
             }
+            const mealSuggestion =
+              decision.opportunity.topic === 'nutrition' &&
+              !decision.opportunity.messageDe &&
+              !decision.opportunity.messageEn
+                ? await loadMealSuggestion(
+                    candidate,
+                    snapshot.today,
+                    deliveryKey
+                  )
+                : null;
             const content = await composeAdaptiveCoachMessage({
               userId: candidate.userId,
               language: candidate.language,
@@ -534,6 +725,7 @@ export async function processDueProactiveCoachMessages(
               coachingNotes: candidate.coachingNotes,
               routines: candidate.routines,
               memoryEnabled: candidate.memoryEnabled,
+              mealSuggestion,
             });
             const saved =
               await coachProfileRepository.saveProactiveMessageIfDue(
@@ -549,15 +741,43 @@ export async function processDueProactiveCoachMessages(
             coachEventService.publish(candidate.userId, 'chat');
             continue;
           }
-          const content =
+          const nutritionPlanningAttempted =
+            candidate.proactiveCategories.includes('nutrition') &&
+            (kind === 'weekly' ||
+              (kind === 'daily' &&
+                !scheduledKinds.includes('weekly') &&
+                dailyMealWouldHelp(snapshot)));
+          const mealSuggestion = nutritionPlanningAttempted
+            ? await loadMealSuggestion(
+                candidate,
+                kind === 'weekly'
+                  ? {
+                      caloriesRemaining: snapshot.today.calorieTarget,
+                      proteinRemainingG: snapshot.today.proteinTargetG,
+                    }
+                  : snapshot.today,
+                `${deliveryKey}:${kind}`
+              )
+            : null;
+          const baseContent =
             kind === 'daily'
-              ? renderDailyCoachMessage(snapshot, candidate.language)
-              : renderWeeklyCoachMessage(snapshot, candidate.language);
+              ? renderDailyCoachMessage(
+                  snapshot,
+                  candidate.language,
+                  mealSuggestion,
+                  nutritionPlanningAttempted
+                )
+              : renderWeeklyCoachMessage(
+                  snapshot,
+                  candidate.language,
+                  mealSuggestion,
+                  nutritionPlanningAttempted
+                );
           const saved = await coachProfileRepository.saveProactiveMessageIfDue(
             candidate.userId,
             kind,
             deliveryKey,
-            content,
+            baseContent,
             undefined
           );
           if (!saved) continue;
@@ -584,6 +804,7 @@ export async function processDueProactiveCoachMessages(
 export default {
   getDueMessageKinds,
   getAdaptiveDeliverySlot,
+  isEveningRestockCheckDue,
   renderAdaptiveCoachMessage,
   renderDailyCoachMessage,
   renderWeeklyCoachMessage,
