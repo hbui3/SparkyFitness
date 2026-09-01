@@ -169,8 +169,7 @@ function buildRecoveryContext(
       health.entry_date || sleep.entry_date || hrv.entry_date
         ? dayString(
             (health.entry_date ?? sleep.entry_date ?? hrv.entry_date) as
-              | Date
-              | string
+              Date | string
           )
         : null,
     sleepHours: rounded(sleepSeconds === null ? null : sleepSeconds / 3600),

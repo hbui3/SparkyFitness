@@ -12,8 +12,7 @@ export interface TelegramRuntimeConfig {
 
 const CACHE_TTL_MS = 30_000;
 let cachedConfig:
-  | { value: TelegramRuntimeConfig; expiresAt: number }
-  | undefined;
+  { value: TelegramRuntimeConfig; expiresAt: number } | undefined;
 
 function environmentConfig(): TelegramRuntimeConfig {
   const botToken =

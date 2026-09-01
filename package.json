@@ -19,7 +19,7 @@
       "npx prettier --write"
     ],
     "SparkyFitnessMobile/**/*.{ts,tsx,js,jsx,mjs,cjs}": [
-      "npx prettier --write"
+      "npx prettier --write --ignore-path SparkyFitnessMobile/.prettierignore"
     ]
   },
   "pnpm": {

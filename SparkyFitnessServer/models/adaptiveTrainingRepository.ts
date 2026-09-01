@@ -196,8 +196,7 @@ async function getReadiness(
     );
     const sleepSeconds = sleep ? canonicalSleepSeconds(sleep) : null;
     const health = healthResult.rows[0] as
-      | { training_readiness_score: number | null }
-      | undefined;
+      { training_readiness_score: number | null } | undefined;
     return {
       sleep_hours: sleepSeconds === null ? null : sleepSeconds / 3600,
       sleep_score: sleep === null ? null : canonicalSleepScore(sleep),

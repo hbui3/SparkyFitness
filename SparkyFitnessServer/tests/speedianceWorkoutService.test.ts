@@ -854,8 +854,7 @@ describe('createAndScheduleSpeedianceWorkout', () => {
       nativeWorkoutPresetId: 44,
     });
     const persistedPayload = mocks.updateCustomWorkout.mock.calls[0]?.[1] as
-      | SpeedianceCustomWorkoutPayload
-      | undefined;
+      SpeedianceCustomWorkoutPayload | undefined;
     expect(persistedPayload?.actionLibraryList).toEqual([
       expect.objectContaining({ templatePresetId: 0, setsAndReps: '12' }),
       expect.objectContaining({
