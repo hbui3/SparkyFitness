@@ -137,6 +137,7 @@ const MealPlanningSettings = () => {
         <TabsContent value="plan" className="mt-5">
           <MealPlanView
             entries={data.planEntries}
+            dailyNutrition={data.dailyNutrition}
             catalog={data.mealCatalog}
             startDate={startDate}
             days={days}

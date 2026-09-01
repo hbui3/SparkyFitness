@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import type {
+  CoachMealPlanningDailyNutrition,
   CoachMealPlanningDashboardResponse,
   CoachPantryItemResponse,
   CoachShoppingListItemResponse,
@@ -223,6 +224,30 @@ const dashboard: CoachMealPlanningDashboardResponse = {
       updatedAt: TIMESTAMP,
     },
   ],
+  dailyNutrition: [
+    {
+      date: '2026-09-01',
+      targetCaloriesKcal: 2000,
+      targetProteinG: 150,
+      plannedCaloriesKcal: 550,
+      plannedProteinG: 32,
+      calorieDifferenceKcal: -1450,
+      proteinDifferenceG: -118,
+      isEstimateComplete: true,
+    },
+    ...['2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05'].map(
+      (date): CoachMealPlanningDailyNutrition => ({
+        date,
+        targetCaloriesKcal: 2000,
+        targetProteinG: 150,
+        plannedCaloriesKcal: 0,
+        plannedProteinG: 0,
+        calorieDifferenceKcal: -2000,
+        proteinDifferenceG: -150,
+        isEstimateComplete: true,
+      })
+    ),
+  ],
   mealCatalog: [
     {
       recipe: {
@@ -277,6 +302,25 @@ function dashboardWithPantryItem(
     ...dashboard,
     pantry: [{ ...item, ...patch }],
   };
+}
+
+function dashboardWithDailyNutrition(
+  patch: Partial<CoachMealPlanningDailyNutrition>
+): CoachMealPlanningDashboardResponse {
+  const [firstDay, ...remainingDays] = dashboard.dailyNutrition;
+  if (!firstDay) throw new Error('Expected daily nutrition fixture');
+  return {
+    ...dashboard,
+    dailyNutrition: [{ ...firstDay, ...patch }, ...remainingDays],
+  };
+}
+
+function firstDayNutritionSummary(): ReturnType<typeof within> {
+  const firstDaySummary = screen.getAllByRole('region', {
+    name: /Daily nutrition for/,
+  })[0];
+  if (!firstDaySummary) throw new Error('Expected daily nutrition summary');
+  return within(firstDaySummary);
 }
 
 function mockDashboard(value: CoachMealPlanningDashboardResponse): void {
@@ -391,6 +435,132 @@ describe('MealPlanningSettings', () => {
         action: 'prepared',
       },
     });
+  });
+
+  it('shows planned and target nutrition with an explicit under-target gap', () => {
+    render(<MealPlanningSettings />);
+
+    const summary = firstDayNutritionSummary();
+
+    expect(
+      summary.getByText('550 / 2000 kcal planned / target')
+    ).toBeInTheDocument();
+    expect(summary.getByText('1450 kcal below target')).toBeInTheDocument();
+    expect(
+      summary.getByText('32 / 150 g protein planned / target')
+    ).toBeInTheDocument();
+    expect(summary.getByText('118 g protein below target')).toBeInTheDocument();
+  });
+
+  it('labels nutrition totals above their targets', () => {
+    mockDashboard(
+      dashboardWithDailyNutrition({
+        plannedCaloriesKcal: 2200,
+        plannedProteinG: 165,
+        calorieDifferenceKcal: 200,
+        proteinDifferenceG: 15,
+      })
+    );
+    render(<MealPlanningSettings />);
+
+    const summary = firstDayNutritionSummary();
+
+    expect(summary.getByText('200 kcal above target')).toHaveClass(
+      'text-amber-700'
+    );
+    expect(summary.getByText('15 g protein above target')).toBeInTheDocument();
+  });
+
+  it('marks a one-percent calorie difference as within the target range', () => {
+    mockDashboard(
+      dashboardWithDailyNutrition({
+        plannedCaloriesKcal: 2020,
+        calorieDifferenceKcal: 20,
+      })
+    );
+    render(<MealPlanningSettings />);
+
+    const summary = firstDayNutritionSummary();
+
+    expect(
+      summary.getByText('Within calorie target range (20 kcal above target)')
+    ).toHaveClass('text-emerald-700');
+  });
+
+  it('states when calorie and protein targets are met exactly', () => {
+    mockDashboard(
+      dashboardWithDailyNutrition({
+        plannedCaloriesKcal: 2000,
+        plannedProteinG: 150,
+        calorieDifferenceKcal: 0,
+        proteinDifferenceG: 0,
+      })
+    );
+    render(<MealPlanningSettings />);
+
+    const summary = firstDayNutritionSummary();
+
+    expect(summary.getByText('Calorie target met')).toBeInTheDocument();
+    expect(summary.getByText('Protein target met')).toBeInTheDocument();
+  });
+
+  it('shows planned nutrition without inventing a missing target or gap', () => {
+    mockDashboard(
+      dashboardWithDailyNutrition({
+        targetCaloriesKcal: null,
+        targetProteinG: null,
+        calorieDifferenceKcal: null,
+        proteinDifferenceG: null,
+      })
+    );
+    render(<MealPlanningSettings />);
+
+    const summary = firstDayNutritionSummary();
+
+    expect(
+      summary.getByText('550 kcal planned · target not set')
+    ).toBeInTheDocument();
+    expect(
+      summary.getByText('32 g protein planned · target not set')
+    ).toBeInTheDocument();
+    expect(
+      summary.queryByText(/(?:below|above) target|target met/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it('marks daily totals incomplete when an eating-out meal has unknown nutrition', () => {
+    const incompleteDashboard = dashboardWithDailyNutrition({
+      plannedCaloriesKcal: 0,
+      plannedProteinG: 0,
+      calorieDifferenceKcal: null,
+      proteinDifferenceG: null,
+      isEstimateComplete: false,
+    });
+    mockDashboard({
+      ...incompleteDashboard,
+      planEntries: incompleteDashboard.planEntries.map((entry) => ({
+        ...entry,
+        status: 'eaten_out',
+      })),
+    });
+    render(<MealPlanningSettings />);
+
+    const summary = firstDayNutritionSummary();
+
+    expect(
+      summary.getByText('0 / 2000 kcal planned / target')
+    ).toBeInTheDocument();
+    expect(
+      summary.getByText('0 / 150 g protein planned / target')
+    ).toBeInTheDocument();
+    expect(
+      summary.getByText(
+        'Incomplete total: eating-out nutrition is not included.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      summary.queryByText(/(?:below|above) target|target met/i)
+    ).not.toBeInTheDocument();
   });
 
   it('uses package totals as the editable default for partial purchase confirmation', () => {

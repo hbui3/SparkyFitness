@@ -169,18 +169,26 @@ describe('coachMealPlanningRepository', () => {
     expect(loadUserTimezone).toHaveBeenCalledWith('user-1');
   });
 
-  it('projects only current and future reservations against stock valid on each meal date', async () => {
+  it('projects valid future reservations while excluding entries being regenerated', async () => {
+    const excludedEntryId = '55555555-5555-4555-8555-555555555555';
     const { client, query } = mockClient(() => []);
     vi.mocked(getClient).mockResolvedValue(client);
 
-    await expect(listPantryItems('user-1')).resolves.toEqual([]);
+    await expect(listPantryItems('user-1', [excludedEntryId])).resolves.toEqual(
+      []
+    );
 
     const projectionQuery = query.mock.calls.find(([sql]) =>
       compactSql(String(sql)).startsWith('WITH reservation AS')
     );
-    expect(projectionQuery?.[1]).toEqual(['user-1', '2026-09-02']);
+    expect(projectionQuery?.[1]).toEqual([
+      'user-1',
+      '2026-09-02',
+      [excludedEntryId],
+    ]);
     const sql = compactSql(String(projectionQuery?.[0]));
     expect(sql).toContain('entry.plan_date >= $2::date');
+    expect(sql).toContain('NOT (entry.id = ANY($3::uuid[]))');
     expect(sql).toContain('pantry.expires_on >= entry.plan_date');
     expect(sql).toContain('pantry.expires_on < entry.plan_date');
     expect(sql).toContain('pantry.expires_on < $2::date THEN 0');
@@ -1078,7 +1086,7 @@ describe('coachMealPlanningRepository', () => {
       if (
         sql.startsWith('SELECT id, start_date::text AS start_date') ||
         (sql.startsWith('SELECT id FROM coach_meal_plan_entries') &&
-          sql.includes("status = 'planned'"))
+          sql.includes("status <> 'replaced'"))
       ) {
         return [];
       }
@@ -1157,6 +1165,59 @@ describe('coachMealPlanningRepository', () => {
         compactSql(String(sql)).startsWith('INSERT INTO coach_pantry_events')
       )
     ).toBe(false);
+  });
+
+  it('rolls back instead of silently skipping a slot occupied after generation', async () => {
+    const planId = '44444444-4444-4444-8444-444444444444';
+    const terminalEntryId = '55555555-5555-4555-8555-555555555555';
+    const { client, query } = mockClient((sql) => {
+      if (isTransactionControl(sql)) return [];
+      if (sql.startsWith('SELECT id, start_date::text AS start_date')) {
+        return [];
+      }
+      if (sql.startsWith('INSERT INTO coach_meal_plans')) {
+        return [{ id: planId }];
+      }
+      if (
+        sql.startsWith('SELECT id FROM coach_meal_plan_entries') &&
+        sql.includes("status <> 'replaced'")
+      ) {
+        return [{ id: terminalEntryId }];
+      }
+      if (sql.includes('planned_need AS')) return [];
+      if (sql.includes('FROM coach_shopping_lists')) return [];
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    await expect(
+      generatePlan('user-1', {
+        operationId: 'generation-operation-terminal-slot',
+        startDate: '2026-09-02',
+        endDate: '2026-09-02',
+        replaceExisting: true,
+        algorithmVersion: 'goal-aware-pantry-plan-v3',
+        warnings: [],
+        entries: [planEntry],
+      })
+    ).rejects.toMatchObject({
+      name: 'CoachMealPlanningConflictError',
+      details: { planDate: '2026-09-02', mealSlot: 'dinner' },
+    });
+
+    expect(
+      query.mock.calls.some(([sql]) =>
+        compactSql(String(sql)).includes("slot = $3 AND status <> 'replaced'")
+      )
+    ).toBe(true);
+    expect(
+      query.mock.calls.some(([sql]) =>
+        compactSql(String(sql)).startsWith(
+          'INSERT INTO coach_meal_plan_entries'
+        )
+      )
+    ).toBe(false);
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
   });
 
   it('loads the original root entries and warnings for a generation retry', async () => {

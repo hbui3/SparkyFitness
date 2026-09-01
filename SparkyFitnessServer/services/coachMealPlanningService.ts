@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   addDays,
+  COACH_MEAL_PLANNING_CALORIE_TOLERANCE_RATIO,
   type CoachMealPlanActionRequest,
   type CoachMealPlanEntryResponse,
+  type CoachMealPlanningDailyNutrition,
   type CoachMealPlanningDashboardResponse,
   type CoachPantryItemResponse,
   type CoachRecipeCatalogItem,
@@ -19,14 +21,13 @@ import {
   type ReplaceCoachMealPlanEntryRequest,
 } from '@workspace/shared';
 import coachEventService from './coachEventService.js';
-import coachProfileService from './coachProfileService.js';
+import goalService from './goalService.js';
 import coachProfileRepository from '../models/coachProfileRepository.js';
 import {
   coachIngredientKey,
   getCoachMealCatalog,
   getCoachMealSuggestionById,
   getCoachMealSuggestions,
-  type CoachMealIngredient,
   type CoachMealSlot,
   type CoachMealSuggestion,
   type CoachMealTargets,
@@ -47,12 +48,160 @@ import coachMealPlanningRepository, {
   type ShoppingProductSnapshot,
 } from '../models/coachMealPlanningRepository.js';
 
-const COACH_MEAL_PLAN_ALGORITHM_VERSION = 'goal-aware-pantry-plan-v2';
+const COACH_MEAL_PLAN_ALGORITHM_VERSION = 'goal-aware-pantry-plan-v3';
 const GENERATED_SLOTS: readonly CoachMealSlot[] = [
   'breakfast',
   'lunch',
   'dinner',
+  'snack',
 ];
+const DEFAULT_MEAL_PERCENTAGES: Readonly<Record<CoachMealSlot, number>> = {
+  breakfast: 0.25,
+  lunch: 0.25,
+  dinner: 0.25,
+  snack: 0.25,
+};
+const MIN_SLOT_CALORIES_KCAL = 1;
+
+interface ResolvedDailyGoal {
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  mealPercentages: Readonly<Record<CoachMealSlot, number>>;
+}
+
+interface MealSlotAllocation {
+  slot: CoachMealSlot;
+  caloriesKcal: number | null;
+  proteinG: number | null;
+}
+
+interface DailyGenerationContext {
+  date: string;
+  goal: ResolvedDailyGoal;
+  allocations: MealSlotAllocation[];
+  knownCaloriesKcal: number;
+  estimateComplete: boolean;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nonNegativeNumber(value: unknown): number | null {
+  const parsed = finiteNumber(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function positiveNumber(value: unknown): number | null {
+  const parsed = finiteNumber(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function roundPlanningNumber(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1_000) / 1_000;
+}
+
+function normalizeMealPercentages(
+  goal: Record<string, unknown> | null
+): Readonly<Record<CoachMealSlot, number>> {
+  const raw: Record<CoachMealSlot, number> = {
+    breakfast: nonNegativeNumber(goal?.breakfast_percentage) ?? 0,
+    lunch: nonNegativeNumber(goal?.lunch_percentage) ?? 0,
+    dinner: nonNegativeNumber(goal?.dinner_percentage) ?? 0,
+    snack: nonNegativeNumber(goal?.snacks_percentage) ?? 0,
+  };
+  const total = Object.values(raw).reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return DEFAULT_MEAL_PERCENTAGES;
+  return {
+    breakfast: raw.breakfast / total,
+    lunch: raw.lunch / total,
+    dinner: raw.dinner / total,
+    snack: raw.snack / total,
+  };
+}
+
+function resolveDailyGoal(
+  goalRange: Readonly<Record<string, unknown>>,
+  date: string
+): ResolvedDailyGoal {
+  const goal = asRecord(goalRange[date]);
+  return {
+    caloriesKcal: positiveNumber(goal?.calories),
+    proteinG: nonNegativeNumber(goal?.protein),
+    mealPercentages: normalizeMealPercentages(goal),
+  };
+}
+
+function allocateAcrossSlots(
+  total: number,
+  slots: readonly CoachMealSlot[],
+  percentages: Readonly<Record<CoachMealSlot, number>>
+): ReadonlyMap<CoachMealSlot, number> {
+  if (slots.length === 0 || total <= 0) return new Map();
+  const totalWeight = slots.reduce((sum, slot) => sum + percentages[slot], 0);
+  if (totalWeight <= 0) return new Map();
+  const allocations = new Map<CoachMealSlot, number>();
+  let allocated = 0;
+  slots.forEach((slot, index) => {
+    const value =
+      index === slots.length - 1
+        ? roundPlanningNumber(total - allocated)
+        : roundPlanningNumber((total * percentages[slot]) / totalWeight);
+    allocations.set(slot, Math.max(0, value));
+    allocated = roundPlanningNumber(allocated + value);
+  });
+  return allocations;
+}
+
+function buildDailyNutrition(
+  startDate: string,
+  days: number,
+  entries: readonly MealPlanEntryRow[],
+  goalRange: Readonly<Record<string, unknown>>
+): CoachMealPlanningDailyNutrition[] {
+  return Array.from({ length: days }, (_, dayIndex) => {
+    const date = addDays(startDate, dayIndex);
+    const goal = resolveDailyGoal(goalRange, date);
+    const entriesForDate = entries.filter((entry) => entry.plan_date === date);
+    const included = entriesForDate.filter(
+      (entry) => entry.status === 'planned' || entry.status === 'prepared'
+    );
+    const isEstimateComplete = !entriesForDate.some(
+      (entry) => entry.status === 'eaten_out'
+    );
+    const plannedCaloriesKcal = roundPlanningNumber(
+      included.reduce((sum, entry) => sum + entry.estimated_calories, 0)
+    );
+    const plannedProteinG = roundPlanningNumber(
+      included.reduce((sum, entry) => sum + entry.estimated_protein_g, 0)
+    );
+    return {
+      date,
+      targetCaloriesKcal: goal.caloriesKcal,
+      targetProteinG: goal.proteinG,
+      plannedCaloriesKcal,
+      plannedProteinG,
+      calorieDifferenceKcal:
+        isEstimateComplete && goal.caloriesKcal !== null
+          ? roundPlanningNumber(plannedCaloriesKcal - goal.caloriesKcal)
+          : null,
+      proteinDifferenceG:
+        isEstimateComplete && goal.proteinG !== null
+          ? roundPlanningNumber(plannedProteinG - goal.proteinG)
+          : null,
+      isEstimateComplete,
+    };
+  });
+}
 
 export class CoachMealPlanningNotFoundError extends Error {
   constructor(message: string) {
@@ -305,7 +454,8 @@ function recipeCatalogItem(meal: CoachMealSuggestion): CoachRecipeCatalogItem {
 function dashboardWarnings(
   pantry: PantryProjectionRow[],
   entries: MealPlanEntryRow[],
-  language: string
+  language: string,
+  dailyNutrition: readonly CoachMealPlanningDailyNutrition[]
 ): string[] {
   const german = language.toLowerCase().startsWith('de');
   const warnings: string[] = [];
@@ -324,6 +474,36 @@ function dashboardWarnings(
         : `${shortages.length} ${shortages.length === 1 ? 'item is' : 'items are'} still missing from the pantry for the current plan.`
     );
   }
+  const datesWithEstimatedMeals = new Set(
+    entries
+      .filter(
+        (entry) => entry.status === 'planned' || entry.status === 'prepared'
+      )
+      .map((entry) => entry.plan_date)
+  );
+  for (const summary of dailyNutrition) {
+    if (
+      !datesWithEstimatedMeals.has(summary.date) ||
+      !summary.isEstimateComplete ||
+      summary.targetCaloriesKcal === null ||
+      summary.targetCaloriesKcal <= 0 ||
+      summary.calorieDifferenceKcal === null
+    ) {
+      continue;
+    }
+    const differenceRatio =
+      Math.abs(summary.calorieDifferenceKcal) / summary.targetCaloriesKcal;
+    if (differenceRatio <= COACH_MEAL_PLANNING_CALORIE_TOLERANCE_RATIO) {
+      continue;
+    }
+    const difference = Math.round(Math.abs(summary.calorieDifferenceKcal));
+    const percentage = Math.round(differenceRatio * 100);
+    warnings.push(
+      german
+        ? `Der Essensplan für ${summary.date} weicht um ${difference} kcal (${percentage} %) vom Tagesziel ab.`
+        : `The meal plan for ${summary.date} differs from the daily target by ${difference} kcal (${percentage}%).`
+    );
+  }
   return warnings;
 }
 
@@ -333,13 +513,25 @@ export async function getDashboard(
   days: number
 ): Promise<CoachMealPlanningDashboardResponse> {
   const endDate = addDays(startDate, days - 1);
-  const [pantry, planEntries, shopping, catalog, language] = await Promise.all([
-    coachMealPlanningRepository.listPantryItems(userId),
-    coachMealPlanningRepository.listMealPlanEntries(userId, startDate, endDate),
-    coachMealPlanningRepository.getOpenShoppingList(userId),
-    getCoachMealCatalog(userId),
-    coachProfileRepository.getCoachLanguage(userId),
-  ]);
+  const [pantry, planEntries, shopping, catalog, language, goalRange] =
+    await Promise.all([
+      coachMealPlanningRepository.listPantryItems(userId),
+      coachMealPlanningRepository.listMealPlanEntries(
+        userId,
+        startDate,
+        endDate
+      ),
+      coachMealPlanningRepository.getOpenShoppingList(userId),
+      getCoachMealCatalog(userId),
+      coachProfileRepository.getCoachLanguage(userId),
+      goalService.getUserGoalsForRange(userId, startDate, endDate, true),
+    ]);
+  const dailyNutrition = buildDailyNutrition(
+    startDate,
+    days,
+    planEntries,
+    goalRange
+  );
   return {
     startDate,
     days,
@@ -348,8 +540,9 @@ export async function getDashboard(
       ? shoppingListResponse(shopping.list, shopping.items)
       : null,
     planEntries: planEntries.map(mealPlanEntryResponse),
+    dailyNutrition,
     mealCatalog: catalog.map(recipeCatalogItem),
-    warnings: dashboardWarnings(pantry, planEntries, language),
+    warnings: dashboardWarnings(pantry, planEntries, language, dailyNutrition),
     lastUpdatedAt: new Date().toISOString(),
   };
 }
@@ -529,15 +722,21 @@ export async function confirmShoppingPurchase(
 
 function pantryCoverage(
   meal: CoachMealSuggestion,
-  available: ReadonlyMap<string, number>
+  available: ReadonlyMap<string, number>,
+  targetCaloriesKcal: number | null
 ): number {
+  const scale =
+    targetCaloriesKcal === null || meal.calories <= 0
+      ? 1
+      : targetCaloriesKcal / meal.calories;
   let required = 0;
   let covered = 0;
   for (const ingredient of meal.ingredients) {
     if (ingredient.shoppingRequired === false) continue;
     const key = `${coachIngredientKey(ingredient.nameDe)}\u0000${ingredient.unit}`;
-    required += ingredient.amount;
-    covered += Math.min(ingredient.amount, available.get(key) ?? 0);
+    const scaledAmount = ingredient.amount * scale;
+    required += scaledAmount;
+    covered += Math.min(scaledAmount, available.get(key) ?? 0);
   }
   return required === 0 ? 1 : covered / required;
 }
@@ -555,7 +754,8 @@ function chooseRecipe(
   date: string,
   available: ReadonlyMap<string, number>,
   usage: ReadonlyMap<string, number>,
-  suggestionRank: ReadonlyMap<string, number>
+  suggestionRank: ReadonlyMap<string, number>,
+  targetCaloriesKcal: number | null
 ): CoachMealSuggestion | null {
   const candidates = catalog.filter((meal) => meal.mealSlots.includes(slot));
   candidates.sort((left, right) => {
@@ -567,7 +767,8 @@ function chooseRecipe(
       (suggestionRank.get(right.id) ?? Number.MAX_SAFE_INTEGER);
     if (rankDifference !== 0) return rankDifference;
     const coverageDifference =
-      pantryCoverage(right, available) - pantryCoverage(left, available);
+      pantryCoverage(right, available, targetCaloriesKcal) -
+      pantryCoverage(left, available, targetCaloriesKcal);
     if (Math.abs(coverageDifference) > 0.001) return coverageDifference;
     return (
       seededRecipeValue(`${date}:${slot}`, left.id) -
@@ -577,20 +778,16 @@ function chooseRecipe(
   return candidates[0] ?? null;
 }
 
-function perMealTarget(target: number | null): number | null {
-  return target === null ? null : target / GENERATED_SLOTS.length;
-}
-
 function consumeVirtualPantry(
   available: Map<string, number>,
-  ingredients: readonly CoachMealIngredient[]
+  ingredients: Readonly<PlanEntryInput['ingredients']>
 ): void {
   for (const ingredient of ingredients) {
     if (ingredient.shoppingRequired === false) continue;
-    const key = `${coachIngredientKey(ingredient.nameDe)}\u0000${ingredient.unit}`;
+    const key = `${ingredient.ingredientKey}\u0000${ingredient.unit}`;
     available.set(
       key,
-      Math.max(0, (available.get(key) ?? 0) - ingredient.amount)
+      Math.max(0, (available.get(key) ?? 0) - ingredient.quantity)
     );
   }
 }
@@ -598,18 +795,25 @@ function consumeVirtualPantry(
 function planEntryInput(
   meal: CoachMealSuggestion,
   date: string,
-  slot: CoachMealSlot
+  slot: CoachMealSlot,
+  targetCaloriesKcal: number | null = null
 ): PlanEntryInput {
+  const scale =
+    targetCaloriesKcal === null || meal.calories <= 0
+      ? 1
+      : targetCaloriesKcal / meal.calories;
+  const scaledQuantity = (quantity: number): number =>
+    Math.max(0.001, roundPlanningNumber(quantity * scale));
   return {
     planDate: date,
     mealSlot: slot,
     recipeKey: meal.id,
     recipeName: meal.nameDe,
-    servings: 1,
-    estimatedCalories: meal.calories,
-    estimatedProteinG: meal.proteinG,
-    estimatedCarbsG: meal.carbsG,
-    estimatedFatG: meal.fatG,
+    servings: Math.max(0.001, roundPlanningNumber(scale)),
+    estimatedCalories: roundPlanningNumber(meal.calories * scale),
+    estimatedProteinG: roundPlanningNumber(meal.proteinG * scale),
+    estimatedCarbsG: roundPlanningNumber(meal.carbsG * scale),
+    estimatedFatG: roundPlanningNumber(meal.fatG * scale),
     prepMinutes: 30,
     preparation: meal.preparationDe,
     safetyStatus: 'validated',
@@ -617,7 +821,7 @@ function planEntryInput(
       ingredientKey: coachIngredientKey(ingredient.nameDe),
       name: ingredient.nameDe,
       category: ingredient.category,
-      quantity: ingredient.amount,
+      quantity: scaledQuantity(ingredient.amount),
       unit: ingredient.unit,
       shoppingRequired: ingredient.shoppingRequired !== false,
     })),
@@ -650,23 +854,155 @@ export async function generateMealPlan(
       warnings: previous.warnings,
     };
   }
-  const [pantry, catalog, occupied, profile, language] = await Promise.all([
-    coachMealPlanningRepository.listPantryItems(userId),
+  const [catalog, existingEntries, goalRange, language] = await Promise.all([
     getCoachMealCatalog(userId),
-    input.replaceExisting
-      ? Promise.resolve([])
-      : coachMealPlanningRepository.listOccupiedPlanSlots(
-          userId,
-          input.startDate,
-          endDate
-        ),
-    coachProfileService.getCoachProfile(userId),
+    coachMealPlanningRepository.listMealPlanEntries(
+      userId,
+      input.startDate,
+      endDate
+    ),
+    goalService.getUserGoalsForRange(userId, input.startDate, endDate, true),
     coachProfileRepository.getCoachLanguage(userId),
   ]);
+  const replacedPlannedEntryIds = input.replaceExisting
+    ? existingEntries
+        .filter((entry) => entry.status === 'planned')
+        .map((entry) => entry.id)
+    : [];
+  const pantry = await coachMealPlanningRepository.listPantryItems(
+    userId,
+    replacedPlannedEntryIds
+  );
   const german = language.toLowerCase().startsWith('de');
+  const warnings: string[] = [];
+  const generationContexts: DailyGenerationContext[] = [];
+  for (let dayIndex = 0; dayIndex < input.days; dayIndex += 1) {
+    const date = addDays(input.startDate, dayIndex);
+    const goal = resolveDailyGoal(goalRange, date);
+    const entriesForDate = existingEntries.filter(
+      (entry) => entry.plan_date === date && entry.status !== 'replaced'
+    );
+    const preservedEntries = entriesForDate.filter(
+      (entry) => !(input.replaceExisting && entry.status === 'planned')
+    );
+    const occupiedSlots = new Set(
+      preservedEntries.map((entry) => entry.meal_slot)
+    );
+    const knownEntries = preservedEntries.filter(
+      (entry) => entry.status === 'planned' || entry.status === 'prepared'
+    );
+    const knownCaloriesKcal = roundPlanningNumber(
+      knownEntries.reduce((sum, entry) => sum + entry.estimated_calories, 0)
+    );
+    const knownProteinG = roundPlanningNumber(
+      knownEntries.reduce((sum, entry) => sum + entry.estimated_protein_g, 0)
+    );
+    const estimateComplete = !preservedEntries.some(
+      (entry) => entry.status === 'eaten_out'
+    );
+    const openSlots = GENERATED_SLOTS.filter(
+      (slot) => goal.mealPercentages[slot] > 0 && !occupiedSlots.has(slot)
+    );
+    const feasibleSlots = openSlots.filter((slot) => {
+      const feasible = catalog.some((meal) => meal.mealSlots.includes(slot));
+      if (!feasible) {
+        warnings.push(
+          german
+            ? `Für ${date} (${slot}) gibt es wegen deiner Ernährungsregeln noch kein sicher validiertes Rezept.`
+            : `There is no safely validated recipe for ${date} (${slot}) under your dietary rules yet.`
+        );
+      }
+      return feasible;
+    });
+    const dailyCaloriesTarget = goal.caloriesKcal;
+    const calorieAllocations =
+      dailyCaloriesTarget === null
+        ? new Map<CoachMealSlot, number>()
+        : estimateComplete
+          ? allocateAcrossSlots(
+              Math.max(0, dailyCaloriesTarget - knownCaloriesKcal),
+              feasibleSlots,
+              goal.mealPercentages
+            )
+          : new Map(
+              feasibleSlots.map((slot) => [
+                slot,
+                roundPlanningNumber(
+                  dailyCaloriesTarget * goal.mealPercentages[slot]
+                ),
+              ])
+            );
+    const dailyProteinTarget = goal.proteinG;
+    const proteinAllocations =
+      dailyProteinTarget === null
+        ? new Map<CoachMealSlot, number>()
+        : estimateComplete
+          ? allocateAcrossSlots(
+              Math.max(0, dailyProteinTarget - knownProteinG),
+              feasibleSlots,
+              goal.mealPercentages
+            )
+          : new Map(
+              feasibleSlots.map((slot) => [
+                slot,
+                roundPlanningNumber(
+                  dailyProteinTarget * goal.mealPercentages[slot]
+                ),
+              ])
+            );
+    const allocations = feasibleSlots.flatMap((slot) => {
+      const caloriesKcal = calorieAllocations.get(slot) ?? null;
+      if (
+        dailyCaloriesTarget !== null &&
+        (caloriesKcal === null || caloriesKcal < MIN_SLOT_CALORIES_KCAL)
+      ) {
+        warnings.push(
+          german
+            ? `Für ${date} (${slot}) bleibt nach bereits eingeplanten Mahlzeiten kein sinnvoller Kalorienanteil übrig.`
+            : `No meaningful calorie allocation remains for ${date} (${slot}) after existing meals are counted.`
+        );
+        return [];
+      }
+      return [
+        {
+          slot,
+          caloriesKcal,
+          proteinG: proteinAllocations.get(slot) ?? null,
+        },
+      ];
+    });
+    generationContexts.push({
+      date,
+      goal,
+      allocations,
+      knownCaloriesKcal,
+      estimateComplete,
+    });
+  }
+  const allAllocations = generationContexts.flatMap(
+    (context) => context.allocations
+  );
   const targets: CoachMealTargets = {
-    caloriesRemaining: perMealTarget(profile.calorieTarget),
-    proteinRemainingG: perMealTarget(profile.proteinTargetG),
+    caloriesRemaining:
+      allAllocations.length === 0 ||
+      allAllocations.some((allocation) => allocation.caloriesKcal === null)
+        ? null
+        : roundPlanningNumber(
+            allAllocations.reduce(
+              (sum, allocation) => sum + (allocation.caloriesKcal ?? 0),
+              0
+            ) / allAllocations.length
+          ),
+    proteinRemainingG:
+      allAllocations.length === 0 ||
+      allAllocations.some((allocation) => allocation.proteinG === null)
+        ? null
+        : roundPlanningNumber(
+            allAllocations.reduce(
+              (sum, allocation) => sum + (allocation.proteinG ?? 0),
+              0
+            ) / allAllocations.length
+          ),
   };
   const rankedSuggestions = await getCoachMealSuggestions(
     userId,
@@ -677,9 +1013,6 @@ export async function generateMealPlan(
   const suggestionRank = new Map(
     rankedSuggestions.map((meal, index) => [meal.id, index])
   );
-  const occupiedKeys = new Set(
-    occupied.map((entry) => `${entry.plan_date}\u0000${entry.meal_slot}`)
-  );
   const available = new Map(
     pantry.map((item) => [
       `${item.ingredient_key}\u0000${item.unit}`,
@@ -688,31 +1021,62 @@ export async function generateMealPlan(
   );
   const usage = new Map<string, number>();
   const entries: PlanEntryInput[] = [];
-  const warnings: string[] = [];
-  for (let dayIndex = 0; dayIndex < input.days; dayIndex += 1) {
-    const date = addDays(input.startDate, dayIndex);
-    for (const slot of GENERATED_SLOTS) {
-      if (occupiedKeys.has(`${date}\u0000${slot}`)) continue;
+  for (const context of generationContexts) {
+    for (const allocation of context.allocations) {
       const recipe = chooseRecipe(
         catalog,
-        slot,
-        date,
+        allocation.slot,
+        context.date,
         available,
         usage,
-        suggestionRank
+        suggestionRank,
+        allocation.caloriesKcal
       );
       if (!recipe) {
         warnings.push(
           german
-            ? `Für ${date} (${slot}) gibt es wegen deiner Ernährungsregeln noch kein sicher validiertes Rezept.`
-            : `There is no safely validated recipe for ${date} (${slot}) under your dietary rules yet.`
+            ? `Für ${context.date} (${allocation.slot}) gibt es wegen deiner Ernährungsregeln noch kein sicher validiertes Rezept.`
+            : `There is no safely validated recipe for ${context.date} (${allocation.slot}) under your dietary rules yet.`
         );
         continue;
       }
-      entries.push(planEntryInput(recipe, date, slot));
+      const entry = planEntryInput(
+        recipe,
+        context.date,
+        allocation.slot,
+        allocation.caloriesKcal
+      );
+      entries.push(entry);
       usage.set(recipe.id, (usage.get(recipe.id) ?? 0) + 1);
-      consumeVirtualPantry(available, recipe.ingredients);
+      consumeVirtualPantry(available, entry.ingredients);
     }
+  }
+  for (const context of generationContexts) {
+    if (!context.estimateComplete) {
+      warnings.push(
+        german
+          ? `Die Kalorienabweichung für ${context.date} kann wegen einer auswärts gegessenen Mahlzeit nicht vollständig geprüft werden.`
+          : `The calorie deviation for ${context.date} cannot be checked completely because a meal was eaten out.`
+      );
+      continue;
+    }
+    if (context.goal.caloriesKcal === null) continue;
+    const generatedCalories = entries
+      .filter((entry) => entry.planDate === context.date)
+      .reduce((sum, entry) => sum + entry.estimatedCalories, 0);
+    const plannedCalories = roundPlanningNumber(
+      context.knownCaloriesKcal + generatedCalories
+    );
+    const difference = plannedCalories - context.goal.caloriesKcal;
+    const differenceRatio = Math.abs(difference) / context.goal.caloriesKcal;
+    if (differenceRatio <= COACH_MEAL_PLANNING_CALORIE_TOLERANCE_RATIO) {
+      continue;
+    }
+    warnings.push(
+      german
+        ? `Der Essensplan für ${context.date} erreicht ${Math.round(plannedCalories)} statt ${Math.round(context.goal.caloriesKcal)} kcal und weicht damit um ${Math.round(Math.abs(difference))} kcal (${Math.round(differenceRatio * 100)} %) vom Tagesziel ab.`
+        : `The meal plan for ${context.date} reaches ${Math.round(plannedCalories)} instead of ${Math.round(context.goal.caloriesKcal)} kcal, a deviation of ${Math.round(Math.abs(difference))} kcal (${Math.round(differenceRatio * 100)}%).`
+    );
   }
   const generated = await coachMealPlanningRepository.generatePlan(userId, {
     operationId: input.operationId,
@@ -771,7 +1135,12 @@ export async function replaceMealPlanEntry(
     userId,
     entryId,
     input.operationId,
-    planEntryInput(meal, oldEntry.plan_date, oldEntry.meal_slot)
+    planEntryInput(
+      meal,
+      oldEntry.plan_date,
+      oldEntry.meal_slot,
+      oldEntry.estimated_calories
+    )
   );
   if (!replaced) {
     throw new CoachMealPlanningNotFoundError('Meal-plan entry not found.');
