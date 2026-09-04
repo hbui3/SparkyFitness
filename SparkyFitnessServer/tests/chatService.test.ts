@@ -1105,7 +1105,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 44\/65 active tools for chatbot \(profile=core/
+          /Loaded 45\/66 active tools for chatbot \(profile=core/
         )
       );
       // The core profile is the mitigation, so no context-window warning.
@@ -1187,7 +1187,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 65\/65 active tools for chatbot \(profile=full/
+          /Loaded 66\/66 active tools for chatbot \(profile=full/
         )
       );
       // Ollama + full profile is the risky combo, so warn about the 4096 default.
@@ -1220,7 +1220,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 65\/65 active tools for chatbot \(profile=full/
+          /Loaded 66\/66 active tools for chatbot \(profile=full/
         )
       );
     });
@@ -1247,7 +1247,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 65\/65 active tools for chatbot \(profile=full/
+          /Loaded 66\/66 active tools for chatbot \(profile=full/
         )
       );
       // The context-window warning is Ollama-only; cloud providers never see it.

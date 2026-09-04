@@ -23,6 +23,7 @@ const EXPECTED_TOOLS = [
   'sparky_check_engagement',
   'sparky_confirm_grocery_purchase',
   'sparky_daily_checkin_wizard',
+  'sparky_delete_planned_meal',
   'sparky_detect_patterns',
   'sparky_generate_coaching_plan',
   'sparky_generate_meal_plan',
@@ -92,6 +93,7 @@ const EXPECTED_TOOLS = [
 // photos, sleep science, etc.) since those now live inside those categories.
 const EXPECTED_CORE_TOOLS = [
   'sparky_confirm_grocery_purchase',
+  'sparky_delete_planned_meal',
   'sparky_generate_meal_plan',
   'sparky_get_barcode',
   'sparky_get_daily_exercise_totals',
