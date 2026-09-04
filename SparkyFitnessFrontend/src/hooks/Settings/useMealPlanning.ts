@@ -21,8 +21,10 @@ import {
   getCoachMealPlanningDashboard,
   patchCoachPantryItem,
   patchCoachShoppingItem,
+  recalculateCoachShoppingList,
   removeCoachShoppingItem,
   replaceCoachMealPlanEntry,
+  deleteCoachMealPlanEntry,
 } from '@/api/Settings/mealPlanning';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -264,6 +266,44 @@ export const useReplaceCoachMealPlanEntry = () => {
       errorMessage: t(
         'settings.mealPlanning.messages.mealReplaceError',
         'Could not replace the meal.'
+      ),
+    },
+  });
+};
+
+export const useDeleteCoachMealPlanEntry = () => {
+  const invalidate = useInvalidateMealPlanningDashboard();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: (entryId: string) => deleteCoachMealPlanEntry(entryId),
+    onSuccess: invalidate,
+    meta: {
+      successMessage: t(
+        'settings.mealPlanning.messages.mealDeleted',
+        'Meal removed and shopping list updated.'
+      ),
+      errorMessage: t(
+        'settings.mealPlanning.messages.mealDeleteError',
+        'Could not remove the meal.'
+      ),
+    },
+  });
+};
+
+export const useRecalculateCoachShoppingList = () => {
+  const invalidate = useInvalidateMealPlanningDashboard();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: () => recalculateCoachShoppingList(),
+    onSuccess: invalidate,
+    meta: {
+      successMessage: t(
+        'settings.mealPlanning.messages.shoppingRecalculated',
+        'Shopping list recalculated.'
+      ),
+      errorMessage: t(
+        'settings.mealPlanning.messages.shoppingRecalculateError',
+        'Could not recalculate the shopping list.'
       ),
     },
   });

@@ -749,6 +749,9 @@
       "bmrSourceMeasured": "Measured",
       "bmrSourceAlgorithm": "Algorithm",
       "totalCaloriesBurned": "Total: {{totalCaloriesBurned}} cal",
+      "activeCaloriesBurnedTotal": "Active Burned: {{activeCalories}} {{energyUnit}}",
+      "totalDayBurn": "Total (incl. BMR): {{totalBurn}} {{energyUnit}}",
+      "notInBurned": "not in burned total",
       "goal": "goal",
       "caloriesBurnedBreakdownTitle": "Calories Burned Breakdown",
       "netCalories": "Net Calories: {{netCalories}}",
@@ -1969,6 +1972,10 @@
         "skipFor": "Skip {{meal}} on {{date}}",
         "replace": "Replace",
         "replaceFor": "Replace {{meal}} on {{date}}",
+        "delete": "Delete",
+        "deleteFor": "Delete {{meal}} on {{date}}",
+        "deleteConfirmTitle": "Delete this planned meal?",
+        "deleteConfirmDescription": "The meal will be removed from your plan and unneeded ingredients will be removed from your shopping list.",
         "createConfirmTitle": "Create this meal plan?",
         "createConfirmDescription": "Existing meals in this period stay in place. Missing slots will be planned.",
         "rebuildConfirmTitle": "Rebuild this meal plan?",
@@ -1981,6 +1988,8 @@
       "shopping": {
         "title": "Shopping list",
         "description": "Adjust amounts and products, then confirm exactly what you bought.",
+        "recalculate": "Recalculate list",
+        "recalculating": "Recalculating...",
         "coverage": "For {{start}} to {{end}}",
         "empty": "Your shopping list is empty.",
         "add": "Add item",
@@ -2052,7 +2061,11 @@
         "planUpdated": "Meal updated.",
         "planUpdateError": "Could not update the meal.",
         "mealReplaced": "Meal replaced.",
-        "mealReplaceError": "Could not replace the meal."
+        "mealReplaceError": "Could not replace the meal.",
+        "mealDeleted": "Meal removed and shopping list updated.",
+        "mealDeleteError": "Could not remove the meal.",
+        "shoppingRecalculated": "Shopping list recalculated.",
+        "shoppingRecalculateError": "Could not recalculate the shopping list."
       }
     },
     "calculationExplanation": {

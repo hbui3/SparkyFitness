@@ -3,6 +3,7 @@ import type {
   CoachMealPlanActionRequest,
   CoachMealPlanningDashboardQuery,
   CoachMealPlanningDashboardResponse,
+  CoachShoppingListResponse,
   ConfirmCoachShoppingPurchaseRequest,
   CreateCoachPantryItemRequest,
   CreateCoachShoppingItemRequest,
@@ -99,3 +100,10 @@ export const replaceCoachMealPlanEntry = (
     method: 'POST',
     body: request,
   });
+
+export const deleteCoachMealPlanEntry = (entryId: string): Promise<void> =>
+  apiCall(`${BASE_PATH}/plan/${entryId}`, { method: 'DELETE' });
+
+export const recalculateCoachShoppingList =
+  (): Promise<CoachShoppingListResponse | null> =>
+    apiCall(`${BASE_PATH}/shopping/recalculate`, { method: 'POST' });

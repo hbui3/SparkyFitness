@@ -73,6 +73,7 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
     calorieSafetyFloorValue,
     activityLevel,
     timezone,
+    includeBmrInNetCalories,
   } = usePreferences();
 
   // `smart` computes identically to `tdee` server-side and arrives with a populated
@@ -438,19 +439,51 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                       {bmrSource === 'measured'
                         ? ` (${t('exercise.dailyProgress.bmrSourceMeasured', 'Measured')})`
                         : ` (${t('exercise.dailyProgress.bmrSourceAlgorithm', 'Algorithm')})`}
+                      {!includeBmrInNetCalories && (
+                        <span className="text-gray-400 text-[10px] ml-1">
+                          (
+                          {t(
+                            'exercise.dailyProgress.notInBurned',
+                            'not in burned total'
+                          )}
+                          )
+                        </span>
+                      )}
                     </p>
                   )}
 
                   <p>
-                    {t(
-                      'exercise.dailyProgress.totalCaloriesBurned',
-                      'Total: {{totalCaloriesBurned}} {{energyUnit}}',
-                      {
-                        totalCaloriesBurned: display.burnedTotal,
-                        energyUnit: getEnergyUnitString(energyUnit),
-                      }
-                    )}
+                    {includeBmrInNetCalories
+                      ? t(
+                          'exercise.dailyProgress.totalCaloriesBurned',
+                          'Total: {{totalCaloriesBurned}} {{energyUnit}}',
+                          {
+                            totalCaloriesBurned: display.burnedTotal,
+                            energyUnit: getEnergyUnitString(energyUnit),
+                          }
+                        )
+                      : t(
+                          'exercise.dailyProgress.activeCaloriesBurnedTotal',
+                          'Active Burned: {{activeCalories}} {{energyUnit}}',
+                          {
+                            activeCalories: display.burnedTotal,
+                            energyUnit: getEnergyUnitString(energyUnit),
+                          }
+                        )}
                   </p>
+
+                  {!includeBmrInNetCalories && bmr ? (
+                    <p className="border-t border-gray-700 pt-1 text-gray-300">
+                      {t(
+                        'exercise.dailyProgress.totalDayBurn',
+                        'Total (incl. BMR): {{totalBurn}} {{energyUnit}}',
+                        {
+                          totalBurn: display.burnedTotal + display.bmr,
+                          energyUnit: getEnergyUnitString(energyUnit),
+                        }
+                      )}
+                    </p>
+                  ) : null}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -532,6 +565,16 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                   {bmrSource === 'measured'
                     ? ` (${t('exercise.dailyProgress.bmrSourceMeasured', 'Measured')})`
                     : ` (${t('exercise.dailyProgress.bmrSourceAlgorithm', 'Algorithm')})`}
+                  {!includeBmrInNetCalories && (
+                    <span className="text-blue-500/80 text-[11px] ml-1">
+                      (
+                      {t(
+                        'exercise.dailyProgress.notInBurned',
+                        'not in burned total'
+                      )}
+                      )
+                    </span>
+                  )}
                 </div>
               )}
             </div>

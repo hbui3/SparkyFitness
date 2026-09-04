@@ -1211,6 +1211,30 @@ export async function getRestockReminder(
   };
 }
 
+export async function deleteMealPlanEntry(
+  userId: string,
+  entryId: string
+): Promise<void> {
+  const deleted = await coachMealPlanningRepository.deletePlanEntry(
+    userId,
+    entryId
+  );
+  if (!deleted) {
+    throw new CoachMealPlanningNotFoundError('Meal-plan entry not found.');
+  }
+  coachEventService.publish(userId, 'coach');
+}
+
+export async function recalculateShoppingList(
+  userId: string
+): Promise<CoachShoppingListResponse | null> {
+  await coachMealPlanningRepository.recalculateShoppingList(userId);
+  coachEventService.publish(userId, 'coach');
+  const shopping =
+    await coachMealPlanningRepository.getOpenShoppingList(userId);
+  return shopping ? shoppingListResponse(shopping.list, shopping.items) : null;
+}
+
 export default {
   getDashboard,
   createPantryItem,
@@ -1223,5 +1247,7 @@ export default {
   generateMealPlan,
   applyMealPlanAction,
   replaceMealPlanEntry,
+  deleteMealPlanEntry,
+  recalculateShoppingList,
   getRestockReminder,
 };

@@ -13,6 +13,7 @@ import { usePreferences } from '@/contexts/PreferencesContext';
 import {
   useApplyCoachMealPlanAction,
   useCoachMealPlanningDashboard,
+  useDeleteCoachMealPlanEntry,
   useGenerateCoachMealPlan,
   useReplaceCoachMealPlanEntry,
 } from '@/hooks/Settings/useMealPlanning';
@@ -27,6 +28,7 @@ const MealPlanningSettings = () => {
   const generatePlan = useGenerateCoachMealPlan();
   const applyAction = useApplyCoachMealPlanAction();
   const replaceEntry = useReplaceCoachMealPlanEntry();
+  const deleteEntry = useDeleteCoachMealPlanEntry();
 
   if (dashboard.isLoading) {
     return (
@@ -162,8 +164,13 @@ const MealPlanningSettings = () => {
                 request: { operationId: generateClientId(), recipeKey },
               })
             }
+            onDelete={(entryId) => deleteEntry.mutate(entryId)}
             isGenerating={generatePlan.isPending}
-            isUpdating={applyAction.isPending || replaceEntry.isPending}
+            isUpdating={
+              applyAction.isPending ||
+              replaceEntry.isPending ||
+              deleteEntry.isPending
+            }
           />
         </TabsContent>
 

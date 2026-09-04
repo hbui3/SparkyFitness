@@ -202,6 +202,17 @@ router.post('/shopping/purchase', async (req, res, next) => {
   }
 });
 
+router.post('/shopping/recalculate', async (req, res, next) => {
+  try {
+    const list = await coachMealPlanningService.recalculateShoppingList(
+      req.authenticatedUserId
+    );
+    res.json(list);
+  } catch (error) {
+    handleDomainError(error, res, next);
+  }
+});
+
 router.post('/plan/generate', async (req, res, next) => {
   try {
     const parsed = generateCoachMealPlanRequestSchema.safeParse(req.body);
@@ -259,6 +270,23 @@ router.post('/plan/:id/replace', async (req, res, next) => {
       body.data
     );
     res.json({ entryId });
+  } catch (error) {
+    handleDomainError(error, res, next);
+  }
+});
+
+router.delete('/plan/:id', async (req, res, next) => {
+  try {
+    const id = uuidSchema.safeParse(req.params.id);
+    if (!id.success) {
+      invalidRequest(res, id.error.flatten());
+      return;
+    }
+    await coachMealPlanningService.deleteMealPlanEntry(
+      req.authenticatedUserId,
+      id.data
+    );
+    res.status(204).send();
   } catch (error) {
     handleDomainError(error, res, next);
   }

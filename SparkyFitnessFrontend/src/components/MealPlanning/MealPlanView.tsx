@@ -6,6 +6,7 @@ import {
   Clock3,
   RefreshCw,
   SkipForward,
+  Trash2,
   TriangleAlert,
   Utensils,
 } from 'lucide-react';
@@ -67,6 +68,7 @@ interface MealPlanViewProps {
   onGenerate: (replaceExisting: boolean) => void;
   onAction: (entryId: string, action: MealPlanAction) => void;
   onReplace: (entryId: string, recipeKey: string) => void;
+  onDelete?: (entryId: string) => void;
   isGenerating: boolean;
   isUpdating: boolean;
 }
@@ -285,6 +287,7 @@ export default function MealPlanView({
   onGenerate,
   onAction,
   onReplace,
+  onDelete,
   isGenerating,
   isUpdating,
 }: MealPlanViewProps) {
@@ -293,6 +296,8 @@ export default function MealPlanView({
   const [replacementEntry, setReplacementEntry] =
     useState<CoachMealPlanEntryResponse | null>(null);
   const [replacementRecipeKey, setReplacementRecipeKey] = useState('');
+  const [deletingEntry, setDeletingEntry] =
+    useState<CoachMealPlanEntryResponse | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en';
   const dates = useMemo(
     () => Array.from({ length: days }, (_, index) => addDays(startDate, index)),
@@ -397,7 +402,9 @@ export default function MealPlanView({
         {dates.map((date) => {
           const dayNutrition = dailyNutritionByDate.get(date);
           const dayEntries = entries
-            .filter((entry) => entry.date === date)
+            .filter(
+              (entry) => entry.date === date && entry.status !== 'replaced'
+            )
             .sort(
               (left, right) =>
                 SLOT_ORDER.indexOf(left.slot) - SLOT_ORDER.indexOf(right.slot)
@@ -601,6 +608,27 @@ export default function MealPlanView({
                             <RefreshCw className="mr-1.5 h-4 w-4" />
                             {t('settings.mealPlanning.plan.replace', 'Replace')}
                           </Button>
+                          {onDelete && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              aria-label={t(
+                                'settings.mealPlanning.plan.deleteFor',
+                                'Delete {{meal}} on {{date}}',
+                                {
+                                  meal: entry.recipe.name,
+                                  date: formatPlanningDay(entry.date, locale),
+                                }
+                              )}
+                              onClick={() => setDeletingEntry(entry)}
+                              disabled={!isPlanned || isUpdating}
+                            >
+                              <Trash2 className="mr-1.5 h-4 w-4" />
+                              {t('common.delete', 'Delete')}
+                            </Button>
+                          )}
                         </div>
                       </article>
                     );
@@ -611,6 +639,46 @@ export default function MealPlanView({
           );
         })}
       </div>
+
+      <AlertDialog
+        open={Boolean(deletingEntry)}
+        onOpenChange={(open) => {
+          if (!open) setDeletingEntry(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(
+                'settings.mealPlanning.plan.deleteConfirmTitle',
+                'Delete this planned meal?'
+              )}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'settings.mealPlanning.plan.deleteConfirmDescription',
+                'The meal will be removed from your plan and unneeded ingredients will be removed from your shopping list.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t('common.cancel', 'Cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (deletingEntry && onDelete) {
+                  onDelete(deletingEntry.id);
+                  setDeletingEntry(null);
+                }
+              }}
+            >
+              {t('common.delete', 'Delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={generateDialogOpen}

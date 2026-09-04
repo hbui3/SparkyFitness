@@ -2032,6 +2032,51 @@ export async function listOccupiedPlanSlots(
   });
 }
 
+export async function deletePlanEntry(
+  userId: string,
+  entryId: string
+): Promise<boolean> {
+  return withTransaction(userId, async (client, ownerToday) => {
+    const { rows } = await client.query<{
+      id: string;
+      status: CoachMealPlanEntryStatus;
+    }>(
+      `SELECT id, status FROM coach_meal_plan_entries
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE`,
+      [entryId, userId]
+    );
+    const entry = rows[0];
+    if (!entry) return false;
+    if (entry.status === 'prepared') {
+      throw new CoachMealPlanningConflictError(
+        'A prepared meal cannot be deleted because pantry ingredients have already been consumed.'
+      );
+    }
+    await client.query(
+      `UPDATE coach_meal_plan_entries
+          SET replacement_for_id = NULL
+        WHERE user_id = $1 AND replacement_for_id = $2`,
+      [userId, entryId]
+    );
+    await client.query(
+      `DELETE FROM coach_meal_plan_entries
+        WHERE id = $1 AND user_id = $2`,
+      [entryId, userId]
+    );
+    await syncShoppingList(client, userId, ownerToday);
+    return true;
+  });
+}
+
+export async function recalculateShoppingList(
+  userId: string
+): Promise<ShoppingListRow | null> {
+  return withTransaction(userId, async (client, ownerToday) => {
+    return syncShoppingList(client, userId, ownerToday);
+  });
+}
+
 export default {
   listPantryItems,
   listMealPlanEntries,
@@ -2049,4 +2094,6 @@ export default {
   applyPlanEntryAction,
   replacePlanEntry,
   listOccupiedPlanSlots,
+  deletePlanEntry,
+  recalculateShoppingList,
 };
