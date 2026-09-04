@@ -71,6 +71,10 @@ const ReplacePlannedMealSchema = z.object({
   recipe_key: z.string().trim().min(1).max(200),
 });
 
+const DeletePlannedMealSchema = z.object({
+  entry_id: z.string().uuid(),
+});
+
 const ManagePantrySchema = z
   .object({
     action: z.enum(['add', 'update', 'remove']),
@@ -390,6 +394,31 @@ export function buildMealPlanningTools(userId: string, tz: string) {
           );
         } catch (error) {
           log('error', '[Meal Planning Tool] replacement error:', error);
+          return ERRORS.DB_ERROR(error);
+        }
+      },
+    }),
+    sparky_delete_planned_meal: tool({
+      description:
+        'Delete one planned meal from the meal plan. Automatically updates and recalculates the shopping list to remove or reduce ingredients for that meal.',
+      inputSchema: DeletePlannedMealSchema,
+      execute: async (rawArgs) => {
+        const parsed = DeletePlannedMealSchema.safeParse(rawArgs ?? {});
+        if (!parsed.success) return formatZodError(parsed.error);
+        try {
+          await coachMealPlanningService.deleteMealPlanEntry(
+            userId,
+            parsed.data.entry_id
+          );
+          return formatSuccess(
+            {
+              deletedEntryId: parsed.data.entry_id,
+              dashboard: await refreshedDashboard(userId, tz),
+            },
+            'Deleted Planned Meal'
+          );
+        } catch (error) {
+          log('error', '[Meal Planning Tool] delete error:', error);
           return ERRORS.DB_ERROR(error);
         }
       },

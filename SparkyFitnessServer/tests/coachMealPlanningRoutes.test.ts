@@ -19,6 +19,8 @@ const serviceMocks = vi.hoisted(() => ({
   generateMealPlan: vi.fn(),
   applyMealPlanAction: vi.fn(),
   replaceMealPlanEntry: vi.fn(),
+  deleteMealPlanEntry: vi.fn(),
+  recalculateShoppingList: vi.fn(),
 }));
 
 vi.mock('../middleware/authMiddleware.js', () => ({
@@ -342,5 +344,65 @@ describe('coach meal-planning routes', () => {
         shortages: [{ ingredientKey: 'reis', missingQuantity: 80 }],
       },
     });
+  });
+
+  it('deletes a planned meal entry and returns 204', async () => {
+    vi.mocked(coachMealPlanningService.deleteMealPlanEntry).mockResolvedValue(
+      undefined
+    );
+
+    const response = await request(app).delete(
+      `/api/coach-meal-planning/plan/${ITEM_ID}`
+    );
+
+    expect(response.statusCode).toBe(204);
+    expect(coachMealPlanningService.deleteMealPlanEntry).toHaveBeenCalledWith(
+      'owner-user',
+      ITEM_ID
+    );
+  });
+
+  it('rejects malformed meal plan entry id on delete with 400', async () => {
+    const response = await request(app).delete(
+      '/api/coach-meal-planning/plan/not-a-uuid'
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(coachMealPlanningService.deleteMealPlanEntry).not.toHaveBeenCalled();
+  });
+
+  it('maps missing entry on delete to 404', async () => {
+    vi.mocked(coachMealPlanningService.deleteMealPlanEntry).mockRejectedValue(
+      new CoachMealPlanningNotFoundError('Meal-plan entry not found.')
+    );
+
+    const response = await request(app).delete(
+      `/api/coach-meal-planning/plan/${ITEM_ID}`
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(response.body).toEqual({ message: 'Meal-plan entry not found.' });
+  });
+
+  it('recalculates the shopping list and returns 200 with the list', async () => {
+    const mockList = {
+      id: ITEM_ID,
+      title: 'Einkauf für deinen Essensplan',
+      status: 'open',
+      items: [],
+    };
+    vi.mocked(
+      coachMealPlanningService.recalculateShoppingList
+    ).mockResolvedValue(mockList as never);
+
+    const response = await request(app).post(
+      '/api/coach-meal-planning/shopping/recalculate'
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toEqual(mockList);
+    expect(
+      coachMealPlanningService.recalculateShoppingList
+    ).toHaveBeenCalledWith('owner-user');
   });
 });

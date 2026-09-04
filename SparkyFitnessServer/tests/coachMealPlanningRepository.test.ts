@@ -8,10 +8,12 @@ import {
   confirmPurchases,
   createManualShoppingItem,
   createPantryItem,
+  deletePlanEntry,
   generatePlan,
   getOpenShoppingList,
   getPlanGenerationResult,
   listPantryItems,
+  recalculateShoppingList,
   replacePlanEntry,
   updatePantryItem,
   updateShoppingItem,
@@ -1649,5 +1651,88 @@ describe('coachMealPlanningRepository', () => {
         compactSql(String(sql)).startsWith('INSERT INTO coach_pantry_events')
       )
     ).toBe(false);
+  });
+
+  it('rejects deleting a prepared meal entry with conflict error', async () => {
+    const entryId = '77777777-7777-4777-8777-777777777777';
+    const { client } = mockClient((sql) => {
+      if (isTransactionControl(sql)) return [];
+      if (sql.startsWith('SELECT id, status FROM coach_meal_plan_entries')) {
+        return [{ id: entryId, status: 'prepared' }];
+      }
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    await expect(deletePlanEntry('user-1', entryId)).rejects.toBeInstanceOf(
+      CoachMealPlanningConflictError
+    );
+  });
+
+  it('returns false when deleting a non-existent meal entry', async () => {
+    const entryId = '77777777-7777-4777-8777-777777777777';
+    const { client } = mockClient((sql) => {
+      if (isTransactionControl(sql)) return [];
+      if (sql.startsWith('SELECT id, status FROM coach_meal_plan_entries')) {
+        return [];
+      }
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    await expect(deletePlanEntry('user-1', entryId)).resolves.toBe(false);
+  });
+
+  it('deletes a planned meal entry, resets self references, and syncs shopping list', async () => {
+    const entryId = '77777777-7777-4777-8777-777777777777';
+    const { client, query } = mockClient((sql) => {
+      if (isTransactionControl(sql)) return [];
+      if (sql.startsWith('SELECT id, status FROM coach_meal_plan_entries')) {
+        return [{ id: entryId, status: 'planned' }];
+      }
+      if (
+        sql.startsWith(
+          'UPDATE coach_meal_plan_entries SET replacement_for_id = NULL'
+        )
+      ) {
+        return [];
+      }
+      if (sql.startsWith('DELETE FROM coach_meal_plan_entries')) {
+        return [];
+      }
+      if (sql.startsWith('WITH planned_need AS')) return [];
+      if (sql.includes('FROM coach_shopping_lists')) return [];
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    await expect(deletePlanEntry('user-1', entryId)).resolves.toBe(true);
+
+    expect(
+      query.mock.calls.some(([sql]) =>
+        compactSql(String(sql)).startsWith(
+          'UPDATE coach_meal_plan_entries SET replacement_for_id = NULL'
+        )
+      )
+    ).toBe(true);
+    expect(
+      query.mock.calls.some(([sql]) =>
+        compactSql(String(sql)).startsWith(
+          'DELETE FROM coach_meal_plan_entries'
+        )
+      )
+    ).toBe(true);
+  });
+
+  it('recalculates the shopping list in a transaction', async () => {
+    const { client } = mockClient((sql) => {
+      if (isTransactionControl(sql)) return [];
+      if (sql.startsWith('WITH planned_need AS')) return [];
+      if (sql.includes('FROM coach_shopping_lists')) return [];
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    await expect(recalculateShoppingList('user-1')).resolves.toBeNull();
   });
 });

@@ -26,6 +26,8 @@ const repositoryMocks = vi.hoisted(() => ({
   applyPlanEntryAction: vi.fn(),
   getMealPlanEntry: vi.fn(),
   replacePlanEntry: vi.fn(),
+  deletePlanEntry: vi.fn(),
+  recalculateShoppingList: vi.fn(),
 }));
 
 const mealCatalogMocks = vi.hoisted(() => ({
@@ -1397,5 +1399,49 @@ describe('coach meal-planning service', () => {
     await expect(
       coachMealPlanningService.getRestockReminder(USER_ID)
     ).resolves.toBeNull();
+  });
+
+  it('deletes a meal-plan entry and publishes coach event', async () => {
+    repositoryMocks.deletePlanEntry.mockResolvedValue(true);
+
+    await coachMealPlanningService.deleteMealPlanEntry(USER_ID, ENTRY_ID);
+
+    expect(repositoryMocks.deletePlanEntry).toHaveBeenCalledWith(
+      USER_ID,
+      ENTRY_ID
+    );
+    expect(eventMocks.publish).toHaveBeenCalledWith(USER_ID, 'coach');
+  });
+
+  it('throws CoachMealPlanningNotFoundError when meal-plan entry does not exist on delete', async () => {
+    repositoryMocks.deletePlanEntry.mockResolvedValue(false);
+
+    await expect(
+      coachMealPlanningService.deleteMealPlanEntry(USER_ID, ENTRY_ID)
+    ).rejects.toThrow('Meal-plan entry not found.');
+    expect(eventMocks.publish).not.toHaveBeenCalled();
+  });
+
+  it('recalculates shopping list, publishes coach event, and returns response', async () => {
+    repositoryMocks.recalculateShoppingList.mockResolvedValue({ id: LIST_ID });
+    repositoryMocks.getOpenShoppingList.mockResolvedValue({
+      list: shoppingListRow({ id: LIST_ID }),
+      items: [],
+    });
+    repositoryMocks.listPantryItems.mockResolvedValue([]);
+
+    const result =
+      await coachMealPlanningService.recalculateShoppingList(USER_ID);
+
+    expect(repositoryMocks.recalculateShoppingList).toHaveBeenCalledWith(
+      USER_ID
+    );
+    expect(eventMocks.publish).toHaveBeenCalledWith(USER_ID, 'coach');
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: LIST_ID,
+        items: [],
+      })
+    );
   });
 });

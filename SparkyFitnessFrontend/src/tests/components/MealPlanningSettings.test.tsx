@@ -25,8 +25,10 @@ import {
   useGenerateCoachMealPlan,
   usePatchCoachPantryItem,
   usePatchCoachShoppingItem,
+  useRecalculateCoachShoppingList,
   useRemoveCoachShoppingItem,
   useReplaceCoachMealPlanEntry,
+  useDeleteCoachMealPlanEntry,
 } from '@/hooks/Settings/useMealPlanning';
 
 jest.mock('@/contexts/PreferencesContext', () => ({
@@ -42,8 +44,10 @@ jest.mock('@/hooks/Settings/useMealPlanning', () => ({
   useGenerateCoachMealPlan: jest.fn(),
   usePatchCoachPantryItem: jest.fn(),
   usePatchCoachShoppingItem: jest.fn(),
+  useRecalculateCoachShoppingList: jest.fn(),
   useRemoveCoachShoppingItem: jest.fn(),
   useReplaceCoachMealPlanEntry: jest.fn(),
+  useDeleteCoachMealPlanEntry: jest.fn(),
 }));
 jest.mock('@/utils/generateClientId', () => ({
   generateClientId: () => '33333333-3333-4333-8333-333333333333',
@@ -341,6 +345,8 @@ const purchaseMutate = jest.fn();
 const createPantryMutate = jest.fn();
 const patchPantryMutate = jest.fn();
 const archivePantryMutate = jest.fn();
+const deleteMealMutate = jest.fn();
+const recalculateShoppingMutate = jest.fn();
 
 describe('MealPlanningSettings', () => {
   beforeAll(() => {
@@ -398,6 +404,14 @@ describe('MealPlanningSettings', () => {
       mutate: archivePantryMutate,
       isPending: false,
     } as unknown as ReturnType<typeof useArchiveCoachPantryItem>);
+    jest.mocked(useDeleteCoachMealPlanEntry).mockReturnValue({
+      mutate: deleteMealMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useDeleteCoachMealPlanEntry>);
+    jest.mocked(useRecalculateCoachShoppingList).mockReturnValue({
+      mutate: recalculateShoppingMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useRecalculateCoachShoppingList>);
   });
 
   it('shows concrete meals, macros, ingredients, and owner actions', () => {
@@ -502,6 +516,68 @@ describe('MealPlanningSettings', () => {
 
     expect(summary.getByText('Calorie target met')).toBeInTheDocument();
     expect(summary.getByText('Protein target met')).toBeInTheDocument();
+  });
+
+  it('does not render replaced meal plan entries', () => {
+    const baseEntry = dashboard.planEntries[0];
+    if (!baseEntry) throw new Error('Expected default plan entry');
+    mockDashboard({
+      ...dashboard,
+      planEntries: [
+        ...dashboard.planEntries,
+        {
+          ...baseEntry,
+          id: 'replaced-entry-id',
+          recipe: {
+            ...baseEntry.recipe,
+            recipeKey: 'old-oatmeal',
+            name: 'Old Oatmeal',
+          },
+          status: 'replaced',
+        },
+      ],
+    });
+    render(<MealPlanningSettings />);
+    expect(screen.getByText('Red lentil bowl')).toBeInTheDocument();
+    expect(screen.queryByText('Old Oatmeal')).not.toBeInTheDocument();
+  });
+
+  it('opens a confirmation dialog and deletes a planned meal entry', () => {
+    render(<MealPlanningSettings />);
+
+    const deleteButton = screen.getByRole('button', {
+      name: /Delete Red lentil bowl/i,
+    });
+    fireEvent.click(deleteButton);
+
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Delete this planned meal\?/i)
+    ).toBeInTheDocument();
+
+    const confirmButton = within(dialog).getByRole('button', {
+      name: 'Delete',
+    });
+    fireEvent.click(confirmButton);
+
+    expect(deleteMealMutate).toHaveBeenCalledWith(ENTRY_ID);
+  });
+
+  it('triggers recalculation of the shopping list', () => {
+    render(<MealPlanningSettings />);
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Shopping' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+
+    const recalculateButton = screen.getByRole('button', {
+      name: /Recalculate list/i,
+    });
+    fireEvent.click(recalculateButton);
+
+    expect(recalculateShoppingMutate).toHaveBeenCalled();
   });
 
   it('shows planned nutrition without inventing a missing target or gap', () => {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { todayInZone } from '@workspace/shared';
 import type { CoachContextSnapshot } from '../services/coachContextService.js';
 import type { CoachMealSuggestion } from '../services/coachMealSuggestionService.js';
 import coachContextService from '../services/coachContextService.js';
@@ -28,6 +29,7 @@ vi.mock('../services/coachMealPlanningService.js', () => ({
     generateMealPlan: vi.fn(),
     applyMealPlanAction: vi.fn(),
     replaceMealPlanEntry: vi.fn(),
+    deleteMealPlanEntry: vi.fn(),
   },
 }));
 
@@ -233,11 +235,12 @@ describe('sparky_suggest_next_meal', () => {
       { toolCallId: 'call-plan', messages: [] }
     )) as string;
 
+    const todayStr = todayInZone('Europe/Berlin');
     expect(result).toContain('Generated Meal Plan');
     expect(coachMealPlanningService.generateMealPlan).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
-        startDate: '2026-09-01',
+        startDate: todayStr,
         days: 3,
         replaceExisting: true,
         operationId: expect.any(String),
@@ -245,7 +248,7 @@ describe('sparky_suggest_next_meal', () => {
     );
     expect(coachMealPlanningService.getDashboard).toHaveBeenCalledWith(
       'user-1',
-      '2026-09-01',
+      todayStr,
       3
     );
   });
@@ -346,5 +349,24 @@ describe('sparky_suggest_next_meal', () => {
     expect(
       coachMealPlanningService.confirmShoppingPurchase
     ).not.toHaveBeenCalled();
+  });
+
+  it('deletes a planned meal through explicit mutation', async () => {
+    const tool = buildMealPlanningTools(
+      'user-1',
+      'Europe/Berlin'
+    ).sparky_delete_planned_meal;
+    const entryId = '20000000-0000-4000-8000-000000000001';
+
+    const result = (await tool.execute!(
+      { entry_id: entryId },
+      { toolCallId: 'call-delete', messages: [] }
+    )) as string;
+
+    expect(result).toContain('Deleted Planned Meal');
+    expect(coachMealPlanningService.deleteMealPlanEntry).toHaveBeenCalledWith(
+      'user-1',
+      entryId
+    );
   });
 });

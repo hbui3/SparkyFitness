@@ -5,6 +5,7 @@ import {
   ListPlus,
   LockKeyhole,
   Pencil,
+  RefreshCw,
   Trash2,
 } from 'lucide-react';
 import type {
@@ -51,6 +52,7 @@ import {
   useConfirmCoachShoppingPurchase,
   useCreateCoachShoppingItem,
   usePatchCoachShoppingItem,
+  useRecalculateCoachShoppingList,
   useRemoveCoachShoppingItem,
 } from '@/hooks/Settings/useMealPlanning';
 import { generateClientId } from '@/utils/generateClientId';
@@ -210,6 +212,7 @@ export default function ShoppingListView({
   const patchItem = usePatchCoachShoppingItem();
   const removeItem = useRemoveCoachShoppingItem();
   const confirmPurchase = useConfirmCoachShoppingPurchase();
+  const recalculateList = useRecalculateCoachShoppingList();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] =
     useState<CoachShoppingListItemResponse | null>(null);
@@ -401,6 +404,20 @@ export default function ShoppingListView({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => recalculateList.mutate()}
+            disabled={recalculateList.isPending}
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${recalculateList.isPending ? 'animate-spin' : ''}`}
+            />
+            {t(
+              'settings.mealPlanning.shopping.recalculate',
+              'Recalculate list'
+            )}
+          </Button>
           <Button type="button" variant="outline" onClick={openAddDialog}>
             <ListPlus className="mr-2 h-4 w-4" />
             {t('settings.mealPlanning.shopping.add', 'Add item')}

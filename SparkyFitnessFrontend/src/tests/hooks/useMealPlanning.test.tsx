@@ -17,8 +17,10 @@ import {
   useGenerateCoachMealPlan,
   usePatchCoachPantryItem,
   usePatchCoachShoppingItem,
+  useRecalculateCoachShoppingList,
   useRemoveCoachShoppingItem,
   useReplaceCoachMealPlanEntry,
+  useDeleteCoachMealPlanEntry,
 } from '@/hooks/Settings/useMealPlanning';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -137,6 +139,10 @@ describe('meal-planning hooks', () => {
     jest
       .mocked(mealPlanningApi.replaceCoachMealPlanEntry)
       .mockResolvedValue({ entryId: ENTRY_ID });
+    jest.mocked(mealPlanningApi.deleteCoachMealPlanEntry).mockResolvedValue();
+    jest
+      .mocked(mealPlanningApi.recalculateCoachShoppingList)
+      .mockResolvedValue(null);
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(
@@ -151,6 +157,8 @@ describe('meal-planning hooks', () => {
         generate: useGenerateCoachMealPlan(),
         action: useApplyCoachMealPlanAction(),
         replace: useReplaceCoachMealPlanEntry(),
+        deleteMeal: useDeleteCoachMealPlanEntry(),
+        recalculateShopping: useRecalculateCoachShoppingList(),
       }),
       { wrapper }
     );
@@ -201,9 +209,11 @@ describe('meal-planning hooks', () => {
         entryId: ENTRY_ID,
         request: { operationId: OPERATION_ID, recipeKey: 'lentil-bowl' },
       });
+      await result.current.deleteMeal.mutateAsync(ENTRY_ID);
+      await result.current.recalculateShopping.mutateAsync();
     });
 
-    expect(invalidate).toHaveBeenCalledTimes(10);
+    expect(invalidate).toHaveBeenCalledTimes(12);
     for (const call of invalidate.mock.calls) {
       expect(call[0]).toEqual({ queryKey: coachMealPlanningKeys.all });
     }
