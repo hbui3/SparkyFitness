@@ -1,69 +1,76 @@
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import type { CompositeScreenProps } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { hasSupplementNutrition } from '@workspace/shared';
 import React, {
-  useState,
   useCallback,
-  useRef,
-  useMemo,
   useEffect,
   useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
 } from 'react';
-import { View, Text, ScrollView, RefreshControl } from 'react-native';
-import Button from '../components/ui/Button';
+import { useTranslation } from 'react-i18next';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import {
+  Directions,
   Gesture,
   GestureDetector,
-  Directions,
 } from 'react-native-gesture-handler';
-import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
-import { hasSupplementNutrition } from '@workspace/shared';
-import DateNavigator from '../components/DateNavigator';
-import FoodSummary from '../components/FoodSummary';
-import ExerciseSummary from '../components/ExerciseSummary';
-import MeasurementsSummary from '../components/MeasurementsSummary';
+import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
 import { addSheetRef } from '../components/AddSheet';
 import CalendarSheet, {
   type CalendarSheetRef,
 } from '../components/CalendarSheet';
+import CheckInPhotosSummary from '../components/CheckInPhotosSummary';
+import DateNavigator from '../components/DateNavigator';
+import DiaryCalorieMacroSummary from '../components/DiaryCalorieMacroSummary';
+import EmptyDayIllustration from '../components/EmptyDayIllustration';
+import ExerciseSummary from '../components/ExerciseSummary';
+import FoodSummary from '../components/FoodSummary';
+import MeasurementsSummary from '../components/MeasurementsSummary';
 import ServingAdjustSheet, {
   type ServingAdjustSheetRef,
 } from '../components/ServingAdjustSheet';
-import EmptyDayIllustration from '../components/EmptyDayIllustration';
-import DiaryCalorieMacroSummary from '../components/DiaryCalorieMacroSummary';
+import { BedTimeCard, NapsCard, WakeUpCard } from '../components/SleepCards';
 import StatusView from '../components/StatusView';
-import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
+import Button from '../components/ui/Button';
 import {
-  useServerConnection,
-  useDailySummary,
   useCustomNutrients,
+  useDailySummary,
   useFamilyUsers,
-  useNutrientDisplayPreferences,
   useMealTypes,
+  useNutrientDisplayPreferences,
+  useServerConnection,
 } from '../hooks';
-import { useMeasurements } from '../hooks/useMeasurements';
-import { useCustomMeasurementsByDate } from '../hooks/useCustomMeasurements';
-import { isManualSource } from '../utils/customMeasurementsForm';
-import { usePreferences } from '../hooks/usePreferences';
-import { useExerciseImageSource } from '../hooks/useExerciseImageSource';
 import {
-  setNativeHeaderDatePickerOptions,
-  type NativeHeaderDatePickerNavigation,
-} from '../utils/nativeHeaderDatePicker';
+  useCheckInPhotoDates,
+  useCheckInPhotosByDate,
+} from '../hooks/useCheckInPhotos';
+import { useCustomMeasurementsByDate } from '../hooks/useCustomMeasurements';
+import { useExerciseImageSource } from '../hooks/useExerciseImageSource';
+import { useHeaderActionColors } from '../hooks/useHeaderActionColors';
+import { useMeasurements } from '../hooks/useMeasurements';
+import { usePreferences } from '../hooks/usePreferences';
+import { useSleepDay } from '../hooks/useSleepDay';
 import { useNativeIOSTabsActive } from '../services/nativeTabBarPreference';
 import { useActiveWorkoutStore } from '../stores/activeWorkoutStore';
 import { useDiaryDateStore } from '../stores/diaryDateStore';
+import type { FoodEntry } from '../types/foodEntries';
+import type { RootStackParamList, TabParamList } from '../types/navigation';
+import { isManualSource } from '../utils/customMeasurementsForm';
+import { formatDateLabel } from '../utils/dateUtils';
 import {
   getHistoricalMealTypeLabel,
   getMealTypeDisplayLabel,
 } from '../utils/mealNutrition';
-import { formatDateLabel } from '../utils/dateUtils';
-import type { FoodEntry } from '../types/foodEntries';
-import type { CompositeScreenProps } from '@react-navigation/native';
-import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList, TabParamList } from '../types/navigation';
-import { useHeaderActionColors } from '../hooks/useHeaderActionColors';
-import { useTranslation } from 'react-i18next';
+import {
+  setNativeHeaderDatePickerOptions,
+  type NativeHeaderDatePickerNavigation,
+} from '../utils/nativeHeaderDatePicker';
 
 type DiaryScreenProps = CompositeScreenProps<
   BottomTabScreenProps<TabParamList, 'Diary'>,
@@ -110,7 +117,19 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
     navigation.setParams({ selectedDate });
   }, [navigation, selectedDate]);
 
-  const openCalendar = useCallback(() => calendarRef.current?.present(), []);
+  // The photo-day markers are fetched on first calendar open rather than at
+  // mount: a user who never opens the picker should not pay a request for it.
+  const [calendarOpened, setCalendarOpened] = useState(false);
+  const { dates: photoDates } = useCheckInPhotoDates(calendarOpened);
+  // Owned here rather than inside CheckInPhotosSummary: the empty-day predicate
+  // below needs the same answer, and one subscription keeps refetch-on-focus
+  // from firing twice for one query.
+  const { photos: dayPhotos, isLoading: isPhotosLoading } =
+    useCheckInPhotosByDate(selectedDate);
+  const openCalendar = useCallback(() => {
+    setCalendarOpened(true);
+    calendarRef.current?.present();
+  }, []);
   const openFamilyDiaries = useCallback(
     () => navigation.navigate('FamilyMembers'),
     [navigation]
@@ -240,6 +259,15 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
     useCustomNutrients({ enabled: isConnected });
   const { preferences: nutrientPrefs, refetch: refetchNutrientPrefs } =
     useNutrientDisplayPreferences({ enabled: isConnected });
+
+  const {
+    wakeUp,
+    naps,
+    bedTime,
+    isLoading: isSleepLoading,
+    refetch: refetchSleep,
+  } = useSleepDay(selectedDate, { enabled: isConnected });
+
   const diaryNutrientRow = nutrientPrefs.find(
     (p) => p.view_group === 'diary' && p.platform === 'mobile'
   );
@@ -289,6 +317,7 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
         refetchCustomMeasurements(),
         refetchCustomNutrients(),
         refetchNutrientPrefs(),
+        refetchSleep(),
       ]);
     } finally {
       setRefreshing(false);
@@ -300,9 +329,38 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
     refetchCustomMeasurements,
     refetchCustomNutrients,
     refetchNutrientPrefs,
+    refetchSleep,
   ]);
 
   const isRefreshing = refreshing;
+
+  const isDayEmpty = useMemo(() => {
+    return (
+      !isSleepLoading &&
+      wakeUp === null &&
+      summary?.foodEntries.length === 0 &&
+      !hasSupplementNutrition(summary?.supplementTotals) && //A logged supplement is something the user recorded for this day, so the day is not empty even with no food, exercise or measurement.
+      summary?.exerciseEntries.length === 0 &&
+      !hasAnyMeasurement &&
+      // A progress photo is something the user recorded for this day, so it
+      // defeats the empty state exactly as a logged supplement does. Gated on
+      // the load like sleep above: ungated, a day with photos flashes the empty
+      // illustration until they arrive.
+      !isPhotosLoading &&
+      dayPhotos.length === 0 &&
+      naps.length === 0 &&
+      bedTime === null
+    );
+  }, [
+    isSleepLoading,
+    wakeUp,
+    summary,
+    hasAnyMeasurement,
+    isPhotosLoading,
+    dayPhotos,
+    naps,
+    bedTime,
+  ]);
 
   const renderContent = () => {
     if (!isConnectionLoading && !isConnected) {
@@ -325,6 +383,9 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
       );
     }
 
+    // Sleep is deliberately not part of this gate: the cards render nothing until their
+    // entries arrive, so a slow `/api/sleep` fills them in late instead of holding the
+    // food and exercise that already loaded behind "Loading diary...".
     if (isLoading || isConnectionLoading) {
       return (
         <StatusView
@@ -392,12 +453,7 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
             customNutrients={customNutrients}
           />
         )}
-        {/* A logged supplement is something the user recorded for this day, so the day is
-            not empty even with no food, exercise or measurement. */}
-        {summary.foodEntries.length === 0 &&
-        !hasSupplementNutrition(summary.supplementTotals) &&
-        summary.exerciseEntries.length === 0 &&
-        !hasAnyMeasurement ? (
+        {isDayEmpty ? (
           <>
             <EmptyDayIllustration />
             <Button
@@ -412,6 +468,11 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
           </>
         ) : (
           <>
+            <WakeUpCard
+              entry={wakeUp}
+              day={selectedDate}
+              navigation={navigation}
+            />
             <FoodSummary
               foodEntries={summary.foodEntries}
               mealTypes={mealTypes}
@@ -450,6 +511,12 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
                 }
               }}
             />
+            <NapsCard naps={naps} day={selectedDate} navigation={navigation} />
+            <BedTimeCard
+              entry={bedTime}
+              day={selectedDate}
+              navigation={navigation}
+            />
             <MeasurementsSummary
               measurements={measurements}
               customMeasurements={manualCustomMeasurements}
@@ -458,6 +525,15 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
               heightMode={heightMode}
               onPress={() =>
                 navigation.navigate('MeasurementsAdd', { date: selectedDate })
+              }
+            />
+            {/* Below the measurements: both are the same check-in, keyed on
+                (user_id, entry_date) server-side. */}
+            <CheckInPhotosSummary
+              date={selectedDate}
+              photos={dayPhotos}
+              onPress={() =>
+                navigation.navigate('ProgressPhotos', { date: selectedDate })
               }
             />
           </>
@@ -480,6 +556,7 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
           ref={calendarRef}
           selectedDate={selectedDate}
           onSelectDate={handleCalendarSelect}
+          markedDates={photoDates}
         />
         <ServingAdjustSheet
           ref={servingSheetRef}
@@ -526,6 +603,7 @@ const DiaryScreen: React.FC<DiaryScreenProps> = ({ navigation }) => {
         ref={calendarRef}
         selectedDate={selectedDate}
         onSelectDate={handleCalendarSelect}
+        markedDates={photoDates}
       />
       <ServingAdjustSheet
         ref={servingSheetRef}

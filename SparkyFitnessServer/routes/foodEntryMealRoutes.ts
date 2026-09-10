@@ -61,9 +61,11 @@ router.post('/', async (req, res, next) => {
       entry_time,
       name,
       description,
+      notes,
       foods,
       quantity,
       unit,
+      entry_total_servings,
     } = req.body;
 
     if (
@@ -73,6 +75,17 @@ router.post('/', async (req, res, next) => {
     ) {
       return res.status(400).json({
         error: 'entry_time must be in HH:MM (24h) format.',
+      });
+    }
+
+    if (
+      entry_total_servings !== null &&
+      entry_total_servings !== undefined &&
+      (!Number.isFinite(Number(entry_total_servings)) ||
+        Number(entry_total_servings) <= 0)
+    ) {
+      return res.status(400).json({
+        error: 'entry_total_servings must be a positive number.',
       });
     }
 
@@ -104,9 +117,16 @@ router.post('/', async (req, res, next) => {
         entry_time,
         name,
         description,
+        notes,
         foods,
         quantity,
         unit,
+        entry_total_servings:
+          entry_total_servings !== undefined
+            ? entry_total_servings !== null
+              ? Number(entry_total_servings)
+              : null
+            : undefined,
         _clientMealModelVersion: clientMealModelVersion,
       } // mealData
     );
@@ -501,6 +521,7 @@ router.put('/:id', async (req, res, next) => {
     const {
       name,
       description,
+      notes,
       meal_type,
       meal_type_id,
       entry_date,
@@ -509,6 +530,7 @@ router.put('/:id', async (req, res, next) => {
       quantity,
       unit,
       meal_template_id,
+      entry_total_servings,
     } = req.body;
 
     if (
@@ -520,11 +542,24 @@ router.put('/:id', async (req, res, next) => {
         error: 'entry_time must be in HH:MM (24h) format.',
       });
     }
+
+    if (
+      entry_total_servings !== null &&
+      entry_total_servings !== undefined &&
+      (!Number.isFinite(Number(entry_total_servings)) ||
+        Number(entry_total_servings) <= 0)
+    ) {
+      return res.status(400).json({
+        error: 'entry_total_servings must be a positive number.',
+      });
+    }
+
     log('info', `[DEBUG] PUT /food-entry-meals/${id} Body:`, {
       quantity,
       unit,
       name,
       meal_template_id,
+      entry_total_servings,
     }); // DEBUG LOG
 
     const userId = req.userId; // From authMiddleware
@@ -564,6 +599,7 @@ router.put('/:id', async (req, res, next) => {
       {
         name,
         description,
+        notes,
         meal_type,
         meal_type_id,
         entry_date,
@@ -572,6 +608,12 @@ router.put('/:id', async (req, res, next) => {
         quantity,
         unit,
         meal_template_id,
+        entry_total_servings:
+          entry_total_servings !== undefined
+            ? entry_total_servings !== null
+              ? Number(entry_total_servings)
+              : null
+            : undefined,
       } // updatedMealData
     );
     log('info', `User ${userId} updated FoodEntryMeal`);

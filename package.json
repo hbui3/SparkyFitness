@@ -13,10 +13,10 @@
   },
   "lint-staged": {
     "SparkyFitnessFrontend/**/*.{ts,tsx}": [
-      "npx prettier --write"
+      "npx prettier --write --ignore-path SparkyFitnessFrontend/.prettierignore"
     ],
     "SparkyFitnessServer/**/*.{js,ts}": [
-      "npx prettier --write"
+      "npx prettier --write --ignore-path SparkyFitnessServer/.prettierignore"
     ],
     "SparkyFitnessMobile/**/*.{ts,tsx,js,jsx,mjs,cjs}": [
       "npx prettier --write --ignore-path SparkyFitnessMobile/.prettierignore"

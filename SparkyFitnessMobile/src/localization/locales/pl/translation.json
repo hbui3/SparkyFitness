@@ -10,7 +10,7 @@
     "close": "Zamknij",
     "cancel": "Anuluj",
     "continue": "Kontynuuj",
-    "retry": "Ponów",
+    "retry": "Spróbuj ponownie",
     "details": "Szczegóły",
     "error": "Błąd",
     "delete": "Usuń",
@@ -19,7 +19,6 @@
     "itemCount_one": "{{count}} element",
     "itemCount_few": "{{count}} elementy",
     "itemCount_many": "{{count}} elementów",
-    "itemCount_other": "{{count}} elementów",
     "off": "Wyłączone",
     "openSelectionMenu": "Otwiera menu wyboru",
     "selectOptionHint": "Stuknij dwukrotnie, aby wybrać tę opcję",
@@ -64,7 +63,7 @@
     "requestTimedOut": "Przekroczono limit czasu żądania. Sprawdź połączenie z serwerem.",
     "nextStep": "Następny krok",
     "notNow": "Później",
-    "retry": "Spróbuj ponownie"
+    "itemCount_other": "{{count}} elementów"
   },
   "settings": {
     "app": "Ustawienia aplikacji",
@@ -234,8 +233,8 @@
       "bodySetProgressReps_one": "{{setProgress}} · cel {{formattedCount}} powtórzenie",
       "bodySetProgressReps_few": "{{setProgress}} · cel {{formattedCount}} powtórzenia",
       "bodySetProgressReps_many": "{{setProgress}} · cel {{formattedCount}} powtórzeń",
-      "bodySetProgressReps_other": "{{setProgress}} · cel {{formattedCount}} powtórzenia",
-      "bodySetProgressDuration": "{{setProgress}} · cel {{duration}}"
+      "bodySetProgressDuration": "{{setProgress}} · cel {{duration}}",
+      "bodySetProgressReps_other": "{{setProgress}} · cel {{formattedCount}} powtórzenia"
     },
     "fasting": {
       "title": "Osiągnięto cel postu",
@@ -291,11 +290,11 @@
       "exerciseProgress_one": "{{completed}} / {{count}} ćwiczenie",
       "exerciseProgress_few": "{{completed}} / {{count}} ćwiczenia",
       "exerciseProgress_many": "{{completed}} / {{count}} ćwiczeń",
-      "exerciseProgress_other": "{{completed}} / {{count}} ćwiczeń",
       "renameWorkout": "Zmień nazwę treningu",
       "reorderExercises": "Zmień kolejność ćwiczeń",
       "menu": "Menu treningu",
-      "settings": "Ustawienia treningu"
+      "settings": "Ustawienia treningu",
+      "exerciseProgress_other": "{{completed}} / {{count}} ćwiczeń"
     },
     "exerciseCard": {
       "addNote": "Dodaj notatkę do tego ćwiczenia…",
@@ -321,8 +320,8 @@
       "setSummary_one": "{{count}} seria{{detail}}",
       "setSummary_few": "{{count}} serie{{detail}}",
       "setSummary_many": "{{count}} serii{{detail}}",
-      "setSummary_other": "{{count}} serii{{detail}}",
-      "notesForSet": "Notatki dla serii {{setNumber}}"
+      "notesForSet": "Notatki dla serii {{setNumber}}",
+      "setSummary_other": "{{count}} serii{{detail}}"
     },
     "rail": {
       "add": "Dodaj",
@@ -786,15 +785,15 @@
     "minutesAgo_one": "{{count}} minutę temu",
     "minutesAgo_few": "{{count}} minuty temu",
     "minutesAgo_many": "{{count}} minut temu",
-    "minutesAgo_other": "{{count}} minut temu",
     "hoursAgo_one": "{{count}} godzinę temu",
     "hoursAgo_few": "{{count}} godziny temu",
     "hoursAgo_many": "{{count}} godzin temu",
-    "hoursAgo_other": "{{count}} godzin temu",
     "yesterdayAt": "Wczoraj o {{time}}",
     "onDateAt": "{{date}} o {{time}}",
     "today": "Dzisiaj",
-    "yesterday": "Wczoraj"
+    "yesterday": "Wczoraj",
+    "minutesAgo_other": "{{count}} minut temu",
+    "hoursAgo_other": "{{count}} godzin temu"
   },
   "calorieSettings": {
     "restingEnergy": "Energia spoczynkowa",
@@ -1175,14 +1174,14 @@
       "cycleOn_one": "{{count}} dzień stosowania",
       "cycleOn_few": "{{count}} dni stosowania",
       "cycleOn_many": "{{count}} dni stosowania",
-      "cycleOn_other": "{{count}} dni stosowania",
       "cycleOff_one": "{{count}} dzień przerwy",
       "cycleOff_few": "{{count}} dni przerwy",
       "cycleOff_many": "{{count}} dni przerwy",
-      "cycleOff_other": "{{count}} dni przerwy",
       "everyNDays_one": "Co {{count}} dzień",
       "everyNDays_few": "Co {{count}} dni",
       "everyNDays_many": "Co {{count}} dni",
+      "cycleOn_other": "{{count}} dni stosowania",
+      "cycleOff_other": "{{count}} dni przerwy",
       "everyNDays_other": "Co {{count}} dnia"
     },
     "notificationScheduledDose": "Zaplanowano przyjęcie dawki",
@@ -1190,14 +1189,14 @@
     "inactiveA11y_one": "Nieaktywny lek ({{count}})",
     "inactiveA11y_few": "Nieaktywne leki ({{count}})",
     "inactiveA11y_many": "Nieaktywnych leków ({{count}})",
-    "inactiveA11y_other": "Nieaktywnego leku ({{count}})",
     "inactiveCount_one": "Nieaktywny ({{count}})",
     "inactiveCount_few": "Nieaktywne ({{count}})",
     "inactiveCount_many": "Nieaktywnych ({{count}})",
-    "inactiveCount_other": "Nieaktywnego ({{count}})",
     "mealRelation": {
-      "awayFromMeals": "Z dala od posiłków"
-    }
+      "awayFromMeals": "Poza posiłkami"
+    },
+    "inactiveA11y_other": "Nieaktywnego leku ({{count}})",
+    "inactiveCount_other": "Nieaktywnego ({{count}})"
   },
   "scheduleSummary": {
     "daily": "Codziennie",
@@ -1212,10 +1211,10 @@
     "cycleOn_one": "{{count}} dzień stosowania",
     "cycleOn_few": "{{count}} dni stosowania",
     "cycleOn_many": "{{count}} dni stosowania",
-    "cycleOn_other": "{{count}} dni stosowania",
     "cycleOff_one": "{{count}} dzień przerwy",
     "cycleOff_few": "{{count}} dni przerwy",
     "cycleOff_many": "{{count}} dni przerwy",
+    "cycleOn_other": "{{count}} dni stosowania",
     "cycleOff_other": "{{count}} dni przerwy"
   },
   "devTools": {
@@ -1279,13 +1278,11 @@
       "healthSeeded_one": "Dodano {{count}} rekord danych zdrowotnych z ostatnich {{days}} dni.",
       "healthSeeded_few": "Dodano {{count}} rekordy danych zdrowotnych z ostatnich {{days}} dni.",
       "healthSeeded_many": "Dodano {{count}} rekordów danych zdrowotnych z ostatnich {{days}} dni.",
-      "healthSeeded_other": "Dodano {{count}} rekordu danych zdrowotnych z ostatnich {{days}} dni.",
       "healthSeedFailed": "Nie udało się dodać danych zdrowotnych.",
       "healthSeedFailedWithMessage": "Nie udało się dodać danych zdrowotnych: {{message}}",
       "historicalSeeded_one": "Dodano {{count}} historyczny rekord kroków z ostatniego roku.",
       "historicalSeeded_few": "Dodano {{count}} historyczne rekordy kroków z ostatniego roku.",
       "historicalSeeded_many": "Dodano {{count}} historycznych rekordów kroków z ostatniego roku.",
-      "historicalSeeded_other": "Dodano {{count}} historycznego rekordu kroków z ostatniego roku.",
       "historicalSeedFailed": "Nie udało się dodać historycznych danych kroków.",
       "historicalSeedFailedWithMessage": "Nie udało się dodać historycznych danych kroków: {{message}}",
       "reset": "Zresetowano",
@@ -1297,7 +1294,6 @@
       "seedOldSeeded_one": "Dodano {{count}} rekord sprzed 1–3 lat.",
       "seedOldSeeded_few": "Dodano {{count}} rekordy sprzed 1–3 lat.",
       "seedOldSeeded_many": "Dodano {{count}} rekordów sprzed 1–3 lat.",
-      "seedOldSeeded_other": "Dodano {{count}} rekordów sprzed 1–3 lat.",
       "seedOldFailedWithMessage": "Nie udało się dodać starych danych zdrowotnych: {{message}}",
       "seedOldFailed": "Nie udało się dodać starych danych zdrowotnych.",
       "richWorkoutSeeded": "Dodano 12-minutowy spacer z trasą, tętnem, prędkością i okrążeniami. Uruchom synchronizację na pierwszym planie, aby go pobrać.",
@@ -1307,7 +1303,10 @@
       "richWorkoutFailed": "Nie udało się dodać bogatego treningu.",
       "richWorkoutFailedWithMessage": "Nie udało się dodać bogatego treningu: {{message}}",
       "richStrengthFailed": "Nie udało się dodać treningu siłowego.",
-      "richStrengthFailedWithMessage": "Nie udało się dodać treningu siłowego: {{message}}"
+      "richStrengthFailedWithMessage": "Nie udało się dodać treningu siłowego: {{message}}",
+      "healthSeeded_other": "Dodano {{count}} rekordu danych zdrowotnych z ostatnich {{days}} dni.",
+      "historicalSeeded_other": "Dodano {{count}} historycznego rekordu kroków z ostatniego roku.",
+      "seedOldSeeded_other": "Dodano {{count}} rekordów sprzed 1–3 lat."
     },
     "gallery": {
       "title": "Galeria karty cyklu",
@@ -1361,7 +1360,6 @@
     "exerciseCount_one": "{{formattedCount}} ćwiczenie",
     "exerciseCount_few": "{{formattedCount}} ćwiczenia",
     "exerciseCount_many": "{{formattedCount}} ćwiczeń",
-    "exerciseCount_other": "{{formattedCount}} ćwiczenia",
     "failedToSaveActivity": "Nie udało się zapisać aktywności",
     "pleaseTryAgain": "Spróbuj ponownie.",
     "avgHeartRateLabel": "Śr. tętno",
@@ -1422,7 +1420,6 @@
     "workoutPresetCount_one": "{{formattedCount}} ćwiczenie",
     "workoutPresetCount_few": "{{formattedCount}} ćwiczenia",
     "workoutPresetCount_many": "{{formattedCount}} ćwiczeń",
-    "workoutPresetCount_other": "{{formattedCount}} ćwiczenia",
     "activity": "Aktywność",
     "date": "Data",
     "useYesterday": "Użyj wczoraj",
@@ -1621,7 +1618,6 @@
     "setCount_one": "{{formattedCount}} seria",
     "setCount_few": "{{formattedCount}} serie",
     "setCount_many": "{{formattedCount}} serii",
-    "setCount_other": "{{formattedCount}} serii",
     "caloriesShort": "kcal",
     "caloriesUnit": "kcal",
     "unknownExercise": "Nieznane ćwiczenie",
@@ -1629,10 +1625,13 @@
     "setOf_one": "Seria {{number}} z {{count}}",
     "setOf_few": "Seria {{number}} z {{count}}",
     "setOf_many": "Seria {{number}} z {{count}}",
-    "setOf_other": "Seria {{number}} z {{count}}",
     "repCount_one": "{{formattedCount}} powtórzenie",
     "repCount_few": "{{formattedCount}} powtórzenia",
     "repCount_many": "{{formattedCount}} powtórzeń",
+    "exerciseCount_other": "{{formattedCount}} ćwiczenia",
+    "workoutPresetCount_other": "{{formattedCount}} ćwiczenia",
+    "setCount_other": "{{formattedCount}} serii",
+    "setOf_other": "Seria {{number}} z {{count}}",
     "repCount_other": "{{formattedCount}} powtórzeń"
   },
   "cycleCard": {
@@ -1675,10 +1674,10 @@
     "periodLate_one": "Miesiączka spóźnia się o {{count}} dzień",
     "periodLate_few": "Miesiączka spóźnia się o {{count}} dni",
     "periodLate_many": "Miesiączka spóźnia się o {{count}} dni",
-    "periodLate_other": "Miesiączka spóźnia się o {{count}} dni",
     "daysToDue_one": "{{count}} dzień do terminu",
     "daysToDue_few": "{{count}} dni do terminu",
     "daysToDue_many": "{{count}} dni do terminu",
+    "periodLate_other": "Miesiączka spóźnia się o {{count}} dni",
     "daysToDue_other": "{{count}} dni do terminu"
   },
   "syncHealth": {
@@ -1693,10 +1692,10 @@
     "readErrors_one": "Nie udało się odczytać {{count}} metryki. Zostanie ponownie zsynchronizowana przy następnej próbie.",
     "readErrors_few": "Nie udało się odczytać {{count}} metryk. Zostaną ponownie zsynchronizowane przy następnej próbie.",
     "readErrors_many": "Nie udało się odczytać {{count}} metryk. Zostaną ponownie zsynchronizowane przy następnej próbie.",
-    "readErrors_other": "Nie udało się odczytać {{count}} metryk. Zostaną ponownie zsynchronizowane przy następnej próbie.",
     "uploadErrors_one": "Serwer odrzucił {{count}} rekord. Sprawdź dzienniki.",
     "uploadErrors_few": "Serwer odrzucił {{count}} rekordy. Sprawdź dzienniki.",
     "uploadErrors_many": "Serwer odrzucił {{count}} rekordów. Sprawdź dzienniki.",
+    "readErrors_other": "Nie udało się odczytać {{count}} metryk. Zostaną ponownie zsynchronizowane przy następnej próbie.",
     "uploadErrors_other": "Serwer odrzucił {{count}} rekordów. Sprawdź dzienniki."
   },
   "fastingCard": {
@@ -2238,34 +2237,34 @@
     "days_one": "{{count}} dzień",
     "days_few": "{{count}} dni",
     "days_many": "{{count}} dni",
-    "days_other": "{{count}} dni",
     "anomaly": {
       "irregular_cycles": "Długość cykli zmieniała się ostatnio o więcej niż kilka dni. Jeśli to nowa sytuacja, warto wspomnieć o tym lekarzowi.",
       "short_cycle_one": "Zarejestrowano krótki cykl trwający {{count}} dzień.",
       "short_cycle_few": "Zarejestrowano krótki cykl trwający {{count}} dni.",
       "short_cycle_many": "Zarejestrowano krótki cykl trwający {{count}} dni.",
-      "short_cycle_other": "Zarejestrowano krótki cykl trwający {{count}} dni.",
       "long_cycle_one": "Zarejestrowano długi cykl trwający {{count}} dzień.",
       "long_cycle_few": "Zarejestrowano długi cykl trwający {{count}} dni.",
       "long_cycle_many": "Zarejestrowano długi cykl trwający {{count}} dni.",
-      "long_cycle_other": "Zarejestrowano długi cykl trwający {{count}} dni.",
       "heavy_bleeding": "Ostatnie wpisy wskazują na silniejsze niż zwykle krwawienie lub miesiączkę trwającą dłużej niż 7 dni. Jeśli to się utrzyma, warto wspomnieć o tym lekarzowi.",
       "unusual_discharge": "Zanotowano nietypową wydzielinę. Warto zwrócić uwagę na zmiany koloru, zapachu lub konsystencji.",
       "short_cycle_generic": "Zarejestrowano krótki cykl. Warto monitorować cykle krótsze niż 21 dni.",
-      "long_cycle_generic": "Zarejestrowano długi cykl. Warto monitorować cykle dłuższe niż 45 dni."
+      "long_cycle_generic": "Zarejestrowano długi cykl. Warto monitorować cykle dłuższe niż 45 dni.",
+      "short_cycle_other": "Zarejestrowano krótki cykl trwający {{count}} dni.",
+      "long_cycle_other": "Zarejestrowano długi cykl trwający {{count}} dni."
     },
     "alert": {
       "late_period_one": "Miesiączka jest opóźniona o {{count}} dzień.",
       "late_period_few": "Miesiączka jest opóźniona o {{count}} dni.",
       "late_period_many": "Miesiączka jest opóźniona o {{count}} dni.",
-      "late_period_other": "Miesiączka jest opóźniona o {{count}} dni.",
       "upcoming_period_one": "Miesiączka jest spodziewana za {{count}} dzień.",
       "upcoming_period_few": "Miesiączka jest spodziewana za {{count}} dni.",
       "upcoming_period_many": "Miesiączka jest spodziewana za {{count}} dni.",
-      "upcoming_period_other": "Miesiączka jest spodziewana za {{count}} dni.",
       "ovulation_today": "Owulacja przewidywana jest na dziś.",
-      "upcoming_period_today": "Miesiączka jest spodziewana dziś."
-    }
+      "upcoming_period_today": "Miesiączka jest spodziewana dziś.",
+      "late_period_other": "Miesiączka jest opóźniona o {{count}} dni.",
+      "upcoming_period_other": "Miesiączka jest spodziewana za {{count}} dni."
+    },
+    "days_other": "{{count}} dni"
   },
   "cycleCorrelations": {
     "metrics": {
@@ -2326,10 +2325,10 @@
     "dayPeriod_one": "{{count}} dzień miesiączki",
     "dayPeriod_few": "{{count}} dni miesiączki",
     "dayPeriod_many": "{{count}} dni miesiączki",
-    "dayPeriod_other": "{{count}} dni miesiączki",
     "dayCycle_one": "{{count}}-dniowy cykl",
     "dayCycle_few": "{{count}}-dniowe cykle",
     "dayCycle_many": "{{count}}-dniowy cykl",
+    "dayPeriod_other": "{{count}} dni miesiączki",
     "dayCycle_other": "{{count}}-dniowy cykl"
   },
   "nutrients": {
@@ -2506,7 +2505,6 @@
     "subjectLabel_one": "zdjęcie",
     "subjectLabel_few": "zdjęcia",
     "subjectLabel_many": "zdjęć",
-    "subjectLabel_other": "zdjęć",
     "totalWeightOptional": "Łączna masa (opcjonalnie)",
     "weightPlaceholder": "np. 350",
     "descriptionOptional": "Opis (opcjonalnie)",
@@ -2528,7 +2526,8 @@
     "providerNotAllowedTitle": "Dostawca AI jest niedozwolony",
     "providerNotAllowedMessage": "Ten dostawca AI wskazuje prywatny adres sieciowy. Poproś administratora o skonfigurowanie go globalnie.",
     "providerUnreachableTitle": "Nie udało się połączyć z dostawcą AI",
-    "providerUnreachableMessage": "Spróbuj ponownie lub dodaj produkt ręcznie."
+    "providerUnreachableMessage": "Spróbuj ponownie lub dodaj produkt ręcznie.",
+    "subjectLabel_other": "zdjęć"
   },
   "serverSettingsUi": {
     "activeServerChanged": "Zmieniono aktywny serwer",
@@ -2905,11 +2904,9 @@
     "servingsLabel_one": "porcja",
     "servingsLabel_few": "porcje",
     "servingsLabel_many": "porcji",
-    "servingsLabel_other": "porcji",
     "ingredientsLabel_one": "składnik",
     "ingredientsLabel_few": "składniki",
     "ingredientsLabel_many": "składników",
-    "ingredientsLabel_other": "składników",
     "foodsInMeal": "Składniki posiłku",
     "linkedMeal": "Połączony posiłek",
     "protein": "białko",
@@ -2923,10 +2920,12 @@
     "items_one": "{{formattedCount}} element",
     "items_few": "{{formattedCount}} elementy",
     "items_many": "{{formattedCount}} elementów",
-    "items_other": "{{formattedCount}} elementu",
     "makesSummary_one": "Przygotowano: {{servings}} {{servingLabel}} · {{count}} {{ingredientLabel}}",
     "makesSummary_few": "Przygotowano: {{servings}} {{servingLabel}} · {{count}} {{ingredientLabel}}",
     "makesSummary_many": "Przygotowano: {{servings}} {{servingLabel}} · {{count}} {{ingredientLabel}}",
+    "servingsLabel_other": "porcji",
+    "ingredientsLabel_other": "składników",
+    "items_other": "{{formattedCount}} elementu",
     "makesSummary_other": "Przygotowano: {{servings}} {{servingLabel}} · {{count}} {{ingredientLabel}}"
   },
   "dailyNutritionDetails": {
@@ -2980,10 +2979,10 @@
       "serving_one": "porcja",
       "serving_few": "porcje",
       "serving_many": "porcji",
-      "serving_other": "porcji",
       "mealMakes_one": "posiłek daje {{formattedCount}} porcję",
       "mealMakes_few": "posiłek daje {{formattedCount}} porcje",
       "mealMakes_many": "posiłek daje {{formattedCount}} porcji",
+      "serving_other": "porcji",
       "mealMakes_other": "posiłek daje {{formattedCount}} porcji"
     },
     "pickers": {
@@ -3056,7 +3055,6 @@
       "scanFood": "Skanuj produkt",
       "searchingFoods": "Wyszukiwanie zapisanych produktów",
       "searchingFoodsMeals": "Wyszukiwanie zapisanych produktów i posiłków",
-      "sourceChange": "Źródło: {{source}}, dotknij, aby zmienić",
       "providerError": "{{provider}}, nie udało się wczytać, dotknij, aby spróbować ponownie",
       "providerNoResults": "{{provider}}, brak wyników",
       "favorite": "Ulubione",
@@ -3065,6 +3063,7 @@
       "providerExpand_one": "{{provider}}, wyników: {{count}}, dotknij, aby {{action}}",
       "providerExpand_few": "{{provider}}, wyniki: {{count}}, dotknij, aby {{action}}",
       "providerExpand_many": "{{provider}}, wyników: {{count}}, dotknij, aby {{action}}",
+      "sourceChange": "Źródło: {{source}}, dotknij, aby zmienić",
       "providerExpand_other": "{{provider}}, wyniku: {{count}}, dotknij, aby {{action}}"
     },
     "errors": {
@@ -3078,8 +3077,8 @@
       "yourFoods": "Twoje produkty",
       "yourMeals": "Twoje posiłki",
       "topMatches": "Najlepsze dopasowania",
-      "bySource": "Według źródła",
-      "onlineResults": "Wyniki online"
+      "onlineResults": "Wyniki online",
+      "bySource": "Według źródła"
     },
     "search": {
       "placeholder": "Szukaj produktów..."
@@ -3109,10 +3108,10 @@
       "showAllLocalResults_one": "Pokaż wszystkie: {{count}} {{itemType}}",
       "showAllLocalResults_few": "Pokaż wszystkie: {{count}} {{itemType}}",
       "showAllLocalResults_many": "Pokaż wszystkie: {{count}} {{itemType}}",
-      "showAllLocalResults_other": "Pokaż wszystkie: {{count}} {{itemType}}",
       "showAllProviderResults_one": "Pokaż wszystkie wyniki ({{count}}) z usługi {{provider}}",
       "showAllProviderResults_few": "Pokaż wszystkie wyniki ({{count}}) z usługi {{provider}}",
       "showAllProviderResults_many": "Pokaż wszystkie wyniki ({{count}}) z usługi {{provider}}",
+      "showAllLocalResults_other": "Pokaż wszystkie: {{count}} {{itemType}}",
       "showAllProviderResults_other": "Pokaż wszystkie wyniki ({{count}}) z usługi {{provider}}"
     },
     "pickers": {
@@ -3169,10 +3168,10 @@
       "exercise_one": "Ćwiczenie",
       "exercise_few": "Ćwiczenia",
       "exercise_many": "Ćwiczeń",
-      "exercise_other": "Ćwiczenia",
       "sets": "Serie",
       "volume": "Objętość",
-      "calories": "Kalorie"
+      "calories": "Kalorie",
+      "exercise_other": "Ćwiczenia"
     },
     "errors": {
       "needsExercise": "Trening musi zawierać ćwiczenie",
@@ -3286,14 +3285,14 @@
       "allSets_one": "{{count}} seria",
       "allSets_few": "{{count}} serie",
       "allSets_many": "{{count}} serii",
-      "allSets_other": "{{count}} serii",
       "sets_one": "{{count}} seria",
       "sets_few": "{{count}} serie",
       "sets_many": "{{count}} serii",
-      "sets_other": "{{count}} serii",
       "personalRecordCount_one": "{{formattedCount}} rekord osobisty",
       "personalRecordCount_few": "{{formattedCount}} rekordy osobiste",
       "personalRecordCount_many": "{{formattedCount}} rekordów osobistych",
+      "allSets_other": "{{count}} serii",
+      "sets_other": "{{count}} serii",
       "personalRecordCount_other": "{{formattedCount}} rekordów osobistych"
     },
     "accessibility": {
@@ -3426,7 +3425,6 @@
   "workoutPresetCount_one": "{{formattedCount}} ćwiczenie",
   "workoutPresetCount_few": "{{formattedCount}} ćwiczenia",
   "workoutPresetCount_many": "{{formattedCount}} ćwiczeń",
-  "workoutPresetCount_other": "{{formattedCount}} ćwiczenia",
   "workoutPresetForm": {
     "nameRequired": "Nazwa *",
     "namePlaceholder": "np. Dzień push",
@@ -3458,7 +3456,6 @@
     "showingLogs_one": "Wyświetlanie {{count}} wpisu",
     "showingLogs_few": "Wyświetlanie {{count}} wpisów",
     "showingLogs_many": "Wyświetlanie {{count}} wpisów",
-    "showingLogs_other": "Wyświetlanie {{count}} wpisu",
     "status": {
       "error": "Błąd",
       "warning": "Ostrzeżenie",
@@ -3470,7 +3467,8 @@
       "message": "Wiadomość",
       "details": "Szczegóły",
       "timestamp": "Znacznik czasu"
-    }
+    },
+    "showingLogs_other": "Wyświetlanie {{count}} wpisu"
   },
   "testQuickLog": {
     "title": "Zapisz wynik testu",
@@ -3757,9 +3755,9 @@
       "duplicate": "Powiel szablon treningu"
     },
     "duplicateName": "{{name}} (kopia)",
+    "exerciseCount_one": "{{count}} ćwiczenie",
     "exerciseCount_few": "{{count}} ćwiczenia",
     "exerciseCount_many": "{{count}} ćwiczeń",
-    "exerciseCount_other": "{{count}} ćwiczenia",
     "actions": {
       "starting": "Uruchamianie…",
       "start": "Rozpocznij trening",
@@ -3769,7 +3767,7 @@
       "duplicating": "Powielanie…",
       "duplicate": "Powiel szablon"
     },
-    "exerciseCount_one": "{{count}} ćwiczenie"
+    "exerciseCount_other": "{{count}} ćwiczenia"
   },
   "workoutPresetMutations": {
     "errors": {
@@ -3926,78 +3924,78 @@
       "cup_one": "szklanka",
       "cup_few": "szklanki",
       "cup_many": "szklanek",
-      "cup_other": "szklanki",
       "cups_one": "szklanka",
       "cups_few": "szklanki",
       "cups_many": "szklanek",
-      "cups_other": "szklanki",
       "tbsp_one": "łyżka",
       "tbsp_few": "łyżki",
       "tbsp_many": "łyżek",
-      "tbsp_other": "łyżki",
       "tsp_one": "łyżeczka",
       "tsp_few": "łyżeczki",
       "tsp_many": "łyżeczek",
-      "tsp_other": "łyżeczki",
       "piece_one": "sztuka",
       "piece_few": "sztuki",
       "piece_many": "sztuk",
-      "piece_other": "sztuki",
       "slice_one": "plaster",
       "slice_few": "plastry",
       "slice_many": "plastrów",
-      "slice_other": "plastry",
       "serving_one": "porcja",
       "serving_few": "porcje",
       "serving_many": "porcji",
-      "serving_other": "porcje",
       "portion_one": "porcja",
       "portion_few": "porcje",
       "portion_many": "porcji",
-      "portion_other": "porcje",
       "can_one": "puszka",
       "can_few": "puszki",
       "can_many": "puszek",
-      "can_other": "puszki",
       "bottle_one": "butelka",
       "bottle_few": "butelki",
       "bottle_many": "butelek",
-      "bottle_other": "butelki",
       "packet_one": "opakowanie",
       "packet_few": "opakowania",
       "packet_many": "opakowań",
-      "packet_other": "opakowania",
       "bag_one": "woreczek",
       "bag_few": "woreczki",
       "bag_many": "woreczków",
-      "bag_other": "woreczki",
       "bowl_one": "miska",
       "bowl_few": "miski",
       "bowl_many": "misek",
-      "bowl_other": "miski",
       "plate_one": "talerz",
       "plate_few": "talerze",
       "plate_many": "talerzy",
-      "plate_other": "talerze",
       "handful_one": "garść",
       "handful_few": "garście",
       "handful_many": "garści",
-      "handful_other": "garście",
       "scoop_one": "miarka",
       "scoop_few": "miarki",
       "scoop_many": "miarek",
-      "scoop_other": "miarki",
       "bar_one": "baton",
       "bar_few": "batony",
       "bar_many": "batonów",
-      "bar_other": "batony",
       "stick_one": "paluszek",
       "stick_few": "paluszki",
       "stick_many": "paluszków",
-      "stick_other": "paluszki",
       "whole_one": "całość",
       "whole_few": "całości",
       "whole_many": "całości",
+      "cup_other": "szklanki",
+      "cups_other": "szklanki",
+      "tbsp_other": "łyżki",
+      "tsp_other": "łyżeczki",
+      "piece_other": "sztuki",
+      "slice_other": "plastry",
+      "serving_other": "porcje",
+      "portion_other": "porcje",
+      "can_other": "puszki",
+      "bottle_other": "butelki",
+      "packet_other": "opakowania",
+      "bag_other": "woreczki",
+      "bowl_other": "miski",
+      "plate_other": "talerze",
+      "handful_other": "garście",
+      "scoop_other": "miarki",
+      "bar_other": "batony",
+      "stick_other": "paluszki",
       "whole_other": "całości"
     }
   },
@@ -4102,10 +4100,10 @@
     "exercise": "ćwiczenie",
     "exercises": "ćwiczenia",
     "exerciseCount_one": "{{count}} ćwiczenie",
-    "exerciseCount_other": "{{count}} ćwiczenia",
     "exerciseCount_few": "{{count}} ćwiczenia",
     "exerciseCount_many": "{{count}} ćwiczeń",
-    "noun": "szablony treningów"
+    "noun": "szablony treningów",
+    "exerciseCount_other": "{{count}} ćwiczenia"
   },
   "workoutForm": {
     "viewExercise": "Wyświetl ćwiczenie",
@@ -4211,15 +4209,15 @@
     "days_one": "{{count}} dzień",
     "days_few": "{{count}} dni",
     "days_many": "{{count}} dni",
-    "days_other": "{{count}} dni",
     "twoWeekWait": "Oczekiwanie po owulacji",
     "ovulationDay": "Dzień owulacji",
     "daysPastOvulation_one": "{{count}} dzień po owulacji",
     "daysPastOvulation_few": "{{count}} dni po owulacji",
     "daysPastOvulation_many": "{{count}} dni po owulacji",
-    "daysPastOvulation_other": "{{count}} dni po owulacji",
     "testAccuracy": "Testy domowe są zwykle najdokładniejsze od 12 do 14 dni po owulacji.",
-    "disclaimer": "Szacunki na podstawie zapisanych danych. To nie jest porada medyczna."
+    "disclaimer": "Szacunki na podstawie zapisanych danych. To nie jest porada medyczna.",
+    "days_other": "{{count}} dni",
+    "daysPastOvulation_other": "{{count}} dni po owulacji"
   },
   "pregnancySetup": {
     "checkDates": "Sprawdź daty",
@@ -4256,10 +4254,10 @@
     "sets_one": "{{count}} seria",
     "sets_few": "{{count}} serie",
     "sets_many": "{{count}} serii",
-    "sets_other": "{{count}} serii",
     "drag": "Przeciągnij, aby zmienić kolejność",
     "title": "Zmień kolejność ćwiczeń",
-    "doneHint": "Zakończono zmianę kolejności"
+    "doneHint": "Zakończono zmianę kolejności",
+    "sets_other": "{{count}} serii"
   },
   "ranges": {
     "7d": "7 dni",
@@ -4695,7 +4693,8 @@
     "configure": "Skonfiguruj połączenie z serwerem w Ustawieniach, aby wyświetlić szablony treningów."
   },
   "time": {
-    "hoursShort": "godz."
+    "hoursShort": "godz.",
+    "minutesShort": "min"
   },
   "exerciseImage": {
     "playAnimation": "Odtwórz animację ćwiczenia",
@@ -4739,11 +4738,12 @@
     "workouts_one": "{{count}} trening",
     "workouts_few": "{{count}} treningi",
     "workouts_many": "{{count}} treningów",
-    "workouts_other": "{{count}} treningów",
     "records_one": "{{count}} rekord",
     "records_few": "{{count}} rekordy",
     "records_many": "{{count}} rekordów",
-    "records_other": "{{count}} rekordów",
-    "error": "Błąd"
-  }
+    "error": "Błąd",
+    "workouts_other": "{{count}} treningów",
+    "records_other": "{{count}} rekordów"
+  },
+  "workoutPresetCount_other": "{{formattedCount}} ćwiczenia"
 }

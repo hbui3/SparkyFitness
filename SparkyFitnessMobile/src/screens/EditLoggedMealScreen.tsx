@@ -15,6 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
 import Button from '../components/ui/Button';
 import FormInput from '../components/FormInput';
+import MarkdownNotesField from '../components/MarkdownNotesField';
+import { NoteMarkdown } from '../components/NoteMarkdown';
 import EntryImageOverride from '../components/EntryImageOverride';
 import Icon from '../components/Icon';
 import { useScreenHeader } from '../hooks/useScreenHeader';
@@ -26,6 +28,7 @@ import CalendarSheet, {
 import TimeSheet, { type TimeSheetRef } from '../components/TimeSheet';
 import { toHourMinute } from '@workspace/shared';
 import { formatTimeLabel } from '../utils/entryTimeDisplay';
+import { usableFoodImages } from '../utils/foodImages';
 import NutritionMacroCard from '../components/NutritionMacroCard';
 import StatusView from '../components/StatusView';
 import SwipeableIngredientRow from '../components/SwipeableIngredientRow';
@@ -123,6 +126,8 @@ const EditLoggedMealScreen: React.FC<EditLoggedMealScreenProps> = ({
   const showNetCarbs = preferences?.show_net_carbs === true;
 
   const [name, setName] = useState<string | null>(null);
+  // null means "untouched", matching the other fields on this screen.
+  const [notes, setNotes] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [entryTime, setEntryTime] = useState<string | null>(null);
   const [selectedMealId, setSelectedMealId] = useState<string | undefined>(
@@ -186,6 +191,7 @@ const EditLoggedMealScreen: React.FC<EditLoggedMealScreenProps> = ({
   );
 
   const effectiveName = name ?? meal?.name ?? '';
+  const effectiveNotes = notes ?? meal?.notes ?? '';
   const effectiveDate =
     selectedDate ?? (meal ? normalizeDate(meal.entry_date) : null);
   const effectiveEntryTime =
@@ -236,6 +242,7 @@ const EditLoggedMealScreen: React.FC<EditLoggedMealScreenProps> = ({
         entryTime !== (toHourMinute(meal.entry_time) ?? '')) ||
       (selectedMealId !== undefined && selectedMealId !== meal.meal_type_id) ||
       (quantityText !== null && quantity !== meal.quantity) ||
+      (notes !== null && notes !== (meal.notes ?? '')) ||
       foodsTouched);
 
   const {
@@ -271,21 +278,31 @@ const EditLoggedMealScreen: React.FC<EditLoggedMealScreenProps> = ({
     [ingredients]
   );
 
-  // Template-linked meals come back with component foods at recipe BASE
-  // quantities but meal.calories as the CONSUMED total (server divides foods by
-  // the storage multiplier on read, foodEntryService.ts). Base totals alone
-  // would therefore understate the meal, so recover that multiplier (consumed /
-  // base) from the loaded snapshot and fold it into all display scaling.
-  // Non-template meals already store consumed amounts, so this is 1 for them.
+  // Whether the server applies a portion multiplier to this entry's components.
+  // This mirrors the gate in resolveLoggedMealPortion: a linked template OR a
+  // snapshotted yield is enough. Checking meal_template_id alone used to be
+  // equivalent, but an entry whose template was deleted keeps its snapshot and
+  // is still scaled, so the template check would both misrender it and
+  // double-scale it on save.
+  const serverScalesComponents = Boolean(
+    meal?.meal_template_id || meal?.entry_total_servings
+  );
+
+  // Scaled meals come back with component foods at recipe BASE quantities but
+  // meal.calories as the CONSUMED total (server divides foods by the storage
+  // multiplier on read, foodEntryService.ts). Base totals alone would therefore
+  // understate the meal, so recover that multiplier (consumed / base) from the
+  // loaded snapshot and fold it into all display scaling. Unscaled meals
+  // already store consumed amounts, so this is 1 for them.
   const templateScale = useMemo(() => {
-    // Guard null/zero calories: without it a template meal with no aggregate
+    // Guard null/zero calories: without it a scaled meal with no aggregate
     // calories would yield templateScale 0 and zero out the whole display.
-    if (!meal?.meal_template_id || !meal.calories) return 1;
+    if (!serverScalesComponents || !meal?.calories) return 1;
     const base = computeBaseTotals(
       meal.foods.map(buildMealIngredientDraftFromEntryMealFood)
     ).calories;
     return base > 0 ? meal.calories / base : 1;
-  }, [meal]);
+  }, [meal, serverScalesComponents]);
 
   // Keep displayScaleRef current so the deferred handlers (editIngredient and
   // the meal-builder focus effect) unscale consumed amounts using the latest
@@ -366,14 +383,17 @@ const EditLoggedMealScreen: React.FC<EditLoggedMealScreenProps> = ({
       meal_type_id: effectiveMealId,
       entry_date: effectiveDate,
       entry_time: effectiveEntryTime || null,
+      notes: effectiveNotes.trim() || null,
       quantity,
       unit: meal.unit,
       meal_template_id: meal.meal_template_id,
+      entry_total_servings: meal.entry_total_servings,
       foods: ingredients.map(({ brand: _brand, ...food }) => ({
         ...food,
-        // Non-template meals persist consumed (scaled) component quantities;
-        // template-linked meals are rescaled server-side, so send base values.
-        quantity: meal.meal_template_id
+        // Unscaled meals persist consumed component quantities verbatim; meals
+        // the server rescales (linked template or snapshotted yield) take base
+        // values, because it applies the multiplier itself on write.
+        quantity: serverScalesComponents
           ? food.quantity
           : food.quantity * scaleFactor,
       })),
@@ -458,6 +478,35 @@ const EditLoggedMealScreen: React.FC<EditLoggedMealScreenProps> = ({
             autoCapitalize="sentences"
           />
         </View>
+
+        {meal?.meal_notes ? (
+          <View>
+            <Text className="text-xs font-semibold uppercase text-text-muted mb-1">
+              {t('editLoggedMeal.fields.aboutThisMeal', {
+                defaultValue: 'About this meal',
+              })}
+            </Text>
+            <View className="rounded-lg border border-border-subtle bg-raised px-3 py-2">
+              <NoteMarkdown
+                text={meal.meal_notes}
+                fontSize={14}
+                images={usableFoodImages(meal.meal_images)}
+              />
+            </View>
+          </View>
+        ) : null}
+
+        <MarkdownNotesField
+          images={[
+            ...usableFoodImages(meal?.images),
+            ...usableFoodImages(meal?.meal_images),
+          ]}
+          value={effectiveNotes}
+          onCommit={setNotes}
+          label={t('editLoggedMeal.fields.notes', {
+            defaultValue: 'Note for this entry',
+          })}
+        />
 
         <EntryImageOverride
           images={meal?.images}

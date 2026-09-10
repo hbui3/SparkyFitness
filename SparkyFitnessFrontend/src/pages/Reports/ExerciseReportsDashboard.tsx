@@ -606,7 +606,7 @@ const ExerciseReportsDashboard = ({
             onClick={() => setViewMode('all')}
           >
             <LayoutDashboard className="w-3.5 h-3.5 mr-1.5" />
-            All Workouts
+            {t('exerciseAnalytics.views.all', 'All Workouts')}
           </Button>
           <Button
             variant={viewMode === 'strength' ? 'default' : 'ghost'}
@@ -615,7 +615,7 @@ const ExerciseReportsDashboard = ({
             onClick={() => setViewMode('strength')}
           >
             <Dumbbell className="w-3.5 h-3.5 mr-1.5" />
-            Strength & Resistance
+            {t('exerciseAnalytics.views.strength', 'Strength & Resistance')}
           </Button>
           <Button
             variant={viewMode === 'cardio' ? 'default' : 'ghost'}
@@ -624,14 +624,14 @@ const ExerciseReportsDashboard = ({
             onClick={() => setViewMode('cardio')}
           >
             <Activity className="w-3.5 h-3.5 mr-1.5" />
-            Cardio & GPS
+            {t('exerciseAnalytics.views.cardio', 'Cardio & GPS')}
           </Button>
         </div>
 
         {/* Global Interval Selector */}
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">
-            Interval:
+            {t('exerciseAnalytics.interval', 'Interval:')}
           </span>
           <div className="flex items-center bg-muted p-1 rounded-md text-xs">
             {(['day', 'week', 'month', 'year'] as const).map((int) => (
@@ -655,7 +655,7 @@ const ExerciseReportsDashboard = ({
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {int}
+                {t(`exerciseAnalytics.intervals.${int}`, int)}
               </button>
             ))}
           </div>
@@ -690,7 +690,10 @@ const ExerciseReportsDashboard = ({
           ) : (
             <Card className="h-full border shadow-sm flex items-center justify-center p-6">
               <p className="text-center text-muted-foreground text-xs py-8">
-                No workout data available for heatmap.
+                {t(
+                  'exerciseAnalytics.noHeatmapData',
+                  'No workout data available for heatmap.'
+                )}
               </p>
             </Card>
           )}
@@ -751,10 +754,19 @@ const ExerciseReportsDashboard = ({
         parseISO={parseISO}
         title={
           viewMode === 'strength'
-            ? 'Strength Workout Activity Logs'
+            ? t(
+                'exerciseAnalytics.activityLogs.strength',
+                'Strength Workout Activity Logs'
+              )
             : viewMode === 'cardio'
-              ? 'Cardio & GPS Activity Maps'
-              : 'Workout Activity History & Maps'
+              ? t(
+                  'exerciseAnalytics.activityLogs.cardio',
+                  'Cardio & GPS Activity Maps'
+                )
+              : t(
+                  'exerciseAnalytics.activityLogs.all',
+                  'Workout Activity History & Maps'
+                )
         }
       />
     </div>

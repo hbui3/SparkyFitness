@@ -30,6 +30,7 @@ import {
   Copy,
   Trash2,
   Star,
+  Globe2,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -75,13 +76,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCustomNutrients } from '@/hooks/Foods/useCustomNutrients';
 import { formatServingLabel } from '@/utils/foodServing';
 import { usableFoodImages } from '@/utils/foodImages';
+import { MarkdownView } from '@/components/ui/MarkdownView';
 import { useImageLightbox } from '@/hooks/Foods/useImageLightbox';
 import ImageLightbox from '@/components/FoodSearch/ImageLightbox';
+import { useOpenFoodFactsContributionAvailability } from '@/hooks/Foods/useOpenFoodFactsContribution';
+import { isOpenFoodFactsContributionCandidate } from '@/utils/openFoodFactsContribution';
+import OpenFoodFactsContributionDialog from './OpenFoodFactsContributionDialog';
 
 const FoodDatabaseManager = () => {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const [viewingFood, setViewingFood] = useState<Food | null>(null);
+  const [contributionFood, setContributionFood] = useState<Food | null>(null);
+  const { available: contributionsAvailable, userId: contributionUserId } =
+    useOpenFoodFactsContributionAvailability();
   const { data: customNutrients = [] } = useCustomNutrients();
 
   // Favorites: a star INDICATOR on favorited rows (a dedicated column on desktop,
@@ -416,6 +424,19 @@ const FoodDatabaseManager = () => {
                   <Copy className="mr-2 h-4 w-4" />
                   {t('foodDatabaseManager.duplicateFood', 'Duplicate food')}
                 </DropdownMenuItem>
+                {contributionsAvailable &&
+                  isOpenFoodFactsContributionCandidate(
+                    food,
+                    contributionUserId
+                  ) && (
+                    <DropdownMenuItem onClick={() => setContributionFood(food)}>
+                      <Globe2 className="mr-2 h-4 w-4" />
+                      {t(
+                        'openFoodFactsContribution.title',
+                        'Contribute to Open Food Facts'
+                      )}
+                    </DropdownMenuItem>
+                  )}
                 <DropdownMenuItem
                   onClick={() =>
                     toggleFavorite({
@@ -495,6 +516,8 @@ const FoodDatabaseManager = () => {
       favoriteFoodIds,
       toggleFavorite,
       openLightbox,
+      contributionsAvailable,
+      contributionUserId,
     ]
   );
 
@@ -866,6 +889,19 @@ const FoodDatabaseManager = () => {
             })}
           </div>
 
+          {/* After the nutrition grid: the numbers are what this dialog is
+              opened to check. */}
+          {viewingFood?.notes ? (
+            <div className="mt-6 rounded-md border bg-muted/40 px-3 py-2">
+              <h4 className="font-semibold mb-1 text-sm">
+                {t('foodDatabaseManager.notes', 'Notes')}
+              </h4>
+              <MarkdownView images={usableFoodImages(viewingFood.images)}>
+                {viewingFood.notes}
+              </MarkdownView>
+            </div>
+          ) : null}
+
           <div className="mt-8 flex justify-end">
             <Button variant="outline" onClick={() => setViewingFood(null)}>
               {t('common.close', 'Close')}
@@ -874,6 +910,13 @@ const FoodDatabaseManager = () => {
         </DialogContent>
       </Dialog>
       <ImageLightbox {...lightboxProps} />
+      {contributionFood && (
+        <OpenFoodFactsContributionDialog
+          open
+          food={contributionFood}
+          onOpenChange={(open) => !open && setContributionFood(null)}
+        />
+      )}
     </div>
   );
 };

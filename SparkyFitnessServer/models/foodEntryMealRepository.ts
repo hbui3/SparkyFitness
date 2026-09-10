@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { getClient } from '../db/poolManager.js';
 import { toImageArray } from '../utils/imageLocalizer.js';
 import { log } from '../config/logging.js';
+import { sanitizeNotes } from '@workspace/shared';
 
 /**
  * Fields accepted when creating or updating a logged meal.
@@ -18,9 +19,12 @@ interface FoodEntryMealInput {
   entry_time?: string | null;
   name: string;
   description?: string | null;
+  /** Per-occurrence markdown note. Never derived from the meal template. */
+  notes?: string | null;
   quantity?: number | null;
   unit?: string | null;
   legacy_serving_unit_math?: boolean;
+  entry_total_servings?: number | null;
 }
 
 /** The subset of fields an update may change. */
@@ -85,15 +89,17 @@ async function createFoodEntryMealWithClient(
   // template and simply keep an empty array.
   const result = await client.query(
     `INSERT INTO food_entry_meals (
-                user_id, meal_template_id, meal_type_id, entry_date, entry_time, name, description,
+                user_id, meal_template_id, meal_type_id, entry_date, entry_time, name, description, notes,
                 quantity, unit, legacy_serving_unit_math,
-                created_by_user_id, updated_by_user_id, images
+                created_by_user_id, updated_by_user_id, images,
+                entry_total_servings
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
               COALESCE(
                 (SELECT m.images FROM meals m WHERE m.id = $2),
                 '[]'::jsonb
-              )
+              ),
+              $14
             )
             RETURNING *`,
     [
@@ -104,11 +110,13 @@ async function createFoodEntryMealWithClient(
       foodEntryMealData.entry_time ?? null,
       foodEntryMealData.name,
       foodEntryMealData.description,
+      sanitizeNotes(foodEntryMealData.notes) ?? null,
       foodEntryMealData.quantity,
       foodEntryMealData.unit,
       foodEntryMealData.legacy_serving_unit_math ?? false,
       createdByUserId,
       createdByUserId,
+      foodEntryMealData.entry_total_servings ?? null,
     ]
   );
   return result.rows[0];
@@ -161,7 +169,13 @@ async function updateFoodEntryMeal(
     }
     const result = await client.query(
       `UPDATE food_entry_meals SET
-                meal_template_id = $1,
+                -- Key-presence flag, like entry_time and notes below: an
+                -- omitted key preserves the existing link, an explicit null
+                -- clears it. A bare assignment silently unlinked the entry
+                -- from its template on any partial update, after which the
+                -- portion resolver finds neither template nor snapshot and
+                -- writes the components at whole-dish scale.
+                meal_template_id = CASE WHEN $16::boolean THEN $1::uuid ELSE meal_template_id END,
                 meal_type_id = COALESCE($2, meal_type_id),
                 entry_date = COALESCE($3, entry_date),
                 name = COALESCE($4, name),
@@ -171,12 +185,15 @@ async function updateFoodEntryMeal(
                 -- COALESCE cannot clear a value; $10 flags whether entry_time
                 -- was provided so an explicit null clears it.
                 entry_time = CASE WHEN $10::boolean THEN $11::time ELSE entry_time END,
+                -- Same key-presence flag for notes, so a user can delete one.
+                notes = CASE WHEN $12::boolean THEN $13 ELSE notes END,
+                entry_total_servings = CASE WHEN $14::boolean THEN $15::numeric ELSE entry_total_servings END,
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by_user_id = $8
             WHERE id = $9
             RETURNING *`,
       [
-        foodEntryMealData.meal_template_id,
+        foodEntryMealData.meal_template_id ?? null,
         mealTypeId,
         foodEntryMealData.entry_date,
         foodEntryMealData.name,
@@ -187,6 +204,11 @@ async function updateFoodEntryMeal(
         foodEntryMealId,
         foodEntryMealData.entry_time !== undefined,
         foodEntryMealData.entry_time ?? null,
+        foodEntryMealData.notes !== undefined,
+        sanitizeNotes(foodEntryMealData.notes) ?? null,
+        foodEntryMealData.entry_total_servings !== undefined,
+        foodEntryMealData.entry_total_servings ?? null,
+        foodEntryMealData.meal_template_id !== undefined,
       ]
     );
     if (result.rows.length === 0) {
@@ -222,9 +244,11 @@ async function getFoodEntryMealById(foodEntryMealId: string, userId: string) {
             fem.entry_time,
             fem.name,
             fem.description,
+            fem.notes,
             fem.quantity,
             fem.unit,
             fem.legacy_serving_unit_math,
+            fem.entry_total_servings,
             fem.created_at,
             fem.updated_at,
             fem.created_by_user_id,
@@ -232,7 +256,10 @@ async function getFoodEntryMealById(foodEntryMealId: string, userId: string) {
             -- Per-entry override photo, plus the meal template's own images so
             -- the diary can fall back when this entry has no override.
             fem.images,
-            m.images AS meal_images
+            m.images AS meal_images,
+            -- The template's own note, so the diary can show it beside this
+            -- entry's note rather than copying it into every occurrence.
+            m.notes AS meal_notes
             FROM food_entry_meals fem
             LEFT JOIN meal_types mt ON fem.meal_type_id = mt.id
             LEFT JOIN meals m ON fem.meal_template_id = m.id
@@ -269,9 +296,11 @@ async function getFoodEntryMealsByDate(userId: string, selectedDate: string) {
             fem.entry_time,
             fem.name,
             fem.description,
+            fem.notes,
             fem.quantity,
             fem.unit,
             fem.legacy_serving_unit_math,
+            fem.entry_total_servings,
             fem.created_at,
             fem.updated_at,
             fem.created_by_user_id,
@@ -279,7 +308,10 @@ async function getFoodEntryMealsByDate(userId: string, selectedDate: string) {
             -- Per-entry override photo, plus the meal template's own images so
             -- the diary can fall back when this entry has no override.
             fem.images,
-            m.images AS meal_images
+            m.images AS meal_images,
+            -- The template's own note, so the diary can show it beside this
+            -- entry's note rather than copying it into every occurrence.
+            m.notes AS meal_notes
             FROM food_entry_meals fem
             LEFT JOIN meal_types mt ON fem.meal_type_id = mt.id
             LEFT JOIN meals m ON fem.meal_template_id = m.id
