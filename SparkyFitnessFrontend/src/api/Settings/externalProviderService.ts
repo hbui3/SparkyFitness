@@ -63,6 +63,7 @@ export const createExternalProvider = async (
         'norish',
         'speediance',
         'igpsport',
+        'openfoodfacts',
       ].includes(payload.provider_type)
         ? payload.base_url || null
         : null,

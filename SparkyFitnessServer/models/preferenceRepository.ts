@@ -1,4 +1,82 @@
 import { getClient } from '../db/poolManager.js';
+
+export interface OpenFoodFactsContributionPreferences {
+  enabled: boolean;
+  productLanguage: string;
+  backfillPending: boolean;
+}
+
+interface OpenFoodFactsPreferenceRow {
+  auto_contribute_openfoodfacts: boolean;
+  openfoodfacts_product_language: string;
+  openfoodfacts_backfill_pending: boolean;
+}
+
+function mapOpenFoodFactsPreferences(
+  row?: OpenFoodFactsPreferenceRow
+): OpenFoodFactsContributionPreferences {
+  return {
+    enabled: row?.auto_contribute_openfoodfacts ?? false,
+    productLanguage: row?.openfoodfacts_product_language ?? 'en',
+    backfillPending: row?.openfoodfacts_backfill_pending ?? false,
+  };
+}
+
+async function getOpenFoodFactsContributionPreferences(
+  userId: string
+): Promise<OpenFoodFactsContributionPreferences> {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      `SELECT auto_contribute_openfoodfacts,
+              openfoodfacts_product_language,
+              openfoodfacts_backfill_pending
+         FROM user_preferences
+        WHERE user_id = $1`,
+      [userId]
+    );
+    return mapOpenFoodFactsPreferences(
+      result.rows[0] as OpenFoodFactsPreferenceRow | undefined
+    );
+  } finally {
+    client.release();
+  }
+}
+
+async function setOpenFoodFactsContributionPreferences(
+  userId: string,
+  input: {
+    enabled: boolean;
+    productLanguage: string;
+  }
+): Promise<OpenFoodFactsContributionPreferences> {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      `INSERT INTO user_preferences (
+         user_id,
+         auto_contribute_openfoodfacts,
+         openfoodfacts_product_language,
+         created_at,
+         updated_at
+       ) VALUES ($1, $2, $3, now(), now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         auto_contribute_openfoodfacts = EXCLUDED.auto_contribute_openfoodfacts,
+         openfoodfacts_product_language = EXCLUDED.openfoodfacts_product_language,
+         updated_at = now()
+       RETURNING auto_contribute_openfoodfacts,
+                 openfoodfacts_product_language,
+                 openfoodfacts_backfill_pending`,
+      [userId, input.enabled, input.productLanguage]
+    );
+    return mapOpenFoodFactsPreferences(
+      result.rows[0] as OpenFoodFactsPreferenceRow | undefined
+    );
+  } finally {
+    client.release();
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function updateUserPreferences(userId: any, preferenceData: any) {
   const client = await getClient(userId); // User-specific operation
@@ -48,6 +126,7 @@ async function updateUserPreferences(userId: any, preferenceData: any) {
         added_sugar_algorithm = COALESCE($43, added_sugar_algorithm),
         calorie_safety_floor_mode = COALESCE($45, calorie_safety_floor_mode),
         calorie_safety_floor_value = COALESCE($46, calorie_safety_floor_value),
+        chart_scale_mode = COALESCE($48, chart_scale_mode),
         updated_at = now()
       WHERE user_id = $28
       RETURNING *`,
@@ -99,6 +178,7 @@ async function updateUserPreferences(userId: any, preferenceData: any) {
         preferenceData.calorie_safety_floor_mode,
         preferenceData.calorie_safety_floor_value,
         preferenceData.food_search_all_providers_default,
+        preferenceData.chart_scale_mode,
       ]
     );
     return result.rows[0];
@@ -188,6 +268,7 @@ async function upsertUserPreferences(preferenceData: any) {
        added_sugar_algorithm,
        calorie_safety_floor_mode,
        calorie_safety_floor_value,
+       chart_scale_mode,
        created_at, updated_at
      ) VALUES (
        $1, COALESCE($2, 'yyyy-MM-dd'), COALESCE($44, 'HH:mm'), COALESCE($3, 'lbs'), COALESCE($4, 'in'), COALESCE($5, 'km'),
@@ -216,6 +297,7 @@ async function upsertUserPreferences(preferenceData: any) {
        COALESCE($43, 'WHO_IDEAL'),
        COALESCE($45, 'standard'),
        COALESCE($46, 1200),
+       COALESCE($48, 'time'),
        now(), now()
      )
      ON CONFLICT (user_id) DO UPDATE SET
@@ -266,6 +348,8 @@ async function upsertUserPreferences(preferenceData: any) {
        -- as time_format below.
        food_search_all_providers_default = COALESCE($47, user_preferences.food_search_all_providers_default),
        time_format = COALESCE($44, user_preferences.time_format),
+       -- Read $48 directly rather than EXCLUDED, for the same reason as $47.
+       chart_scale_mode = COALESCE($48, user_preferences.chart_scale_mode),
        updated_at = now()
      RETURNING *`,
       [
@@ -316,6 +400,7 @@ async function upsertUserPreferences(preferenceData: any) {
         preferenceData.calorie_safety_floor_mode,
         preferenceData.calorie_safety_floor_value,
         preferenceData.food_search_all_providers_default,
+        preferenceData.chart_scale_mode,
       ]
     );
     return result.rows[0];
@@ -328,10 +413,14 @@ export { deleteUserPreferences };
 export { getUserPreferences };
 export { bootstrapUserTimezoneIfUnset };
 export { upsertUserPreferences };
+export { getOpenFoodFactsContributionPreferences };
+export { setOpenFoodFactsContributionPreferences };
 export default {
   updateUserPreferences,
   deleteUserPreferences,
   getUserPreferences,
   bootstrapUserTimezoneIfUnset,
   upsertUserPreferences,
+  getOpenFoodFactsContributionPreferences,
+  setOpenFoodFactsContributionPreferences,
 };

@@ -12,9 +12,17 @@ import { Switch } from '@/components/ui/switch';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { useTranslation } from 'react-i18next';
 import { UnitInput } from '@/components/ui/UnitInput';
-import { CustomCategoriesResponse } from '@workspace/shared';
+import {
+  CustomCategoriesResponse,
+  MIN_MEASURED_BMR_KCAL,
+  MAX_MEASURED_BMR_KCAL,
+} from '@workspace/shared';
 import { CheckInPlaceholders } from '@/types/checkin';
 import { History } from 'lucide-react';
+import {
+  healthMetricLabel,
+  healthMetricUnitLabel,
+} from '@/utils/healthMetricLabels';
 
 interface UseLastButtonProps {
   value: string;
@@ -364,8 +372,8 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
               <Input
                 id="bmr"
                 type="number"
-                min="300"
-                max="10000"
+                min={MIN_MEASURED_BMR_KCAL}
+                max={MAX_MEASURED_BMR_KCAL}
                 step="1"
                 value={bmr}
                 onChange={(e) => setBmr(e.target.value)}
@@ -378,6 +386,11 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
             {/* Custom Categories */}
             {customCategories.map((category) => {
+              const categoryLabel = healthMetricLabel(
+                category.name,
+                category.display_name,
+                t
+              );
               const isConvertible = shouldConvertCustomMeasurement(
                 category.measurement_type
               );
@@ -388,11 +401,12 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                   ? defaultWeightUnit
                   : defaultMeasurementUnit
                 : category.measurement_type;
+              const displayUnit = healthMetricUnitLabel(unitToUse, t);
 
               return (
                 <div key={category.id}>
                   <Label htmlFor={`custom-${category.id}`}>
-                    {category.display_name || category.name} ({unitToUse})
+                    {categoryLabel} ({displayUnit})
                   </Label>
                   {isConvertible && category.data_type === 'numeric' ? (
                     <UnitInput
@@ -430,10 +444,8 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                         }));
                       }}
                       placeholder={t('checkIn.enterCustomCategory', {
-                        categoryName: (
-                          category.display_name || category.name
-                        ).toLowerCase(),
-                        defaultValue: `Enter ${(category.display_name || category.name).toLowerCase()}`,
+                        categoryName: categoryLabel.toLowerCase(),
+                        defaultValue: `Enter ${categoryLabel.toLowerCase()}`,
                       })}
                     />
                   )}

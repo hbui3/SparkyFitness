@@ -12,11 +12,9 @@ jest.mock('@/contexts/PreferencesContext', () => ({
   }),
 }));
 
-jest.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback: string) => fallback,
-  }),
-}));
+jest.mock('react-i18next', () =>
+  jest.requireActual('@/tests/mocks/reactI18next')
+);
 
 const makeExercise = (
   id: string,

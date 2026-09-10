@@ -358,8 +358,8 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                 {display.eaten}
               </div>
               <div className="text-xs text-gray-500">
-                {t('exercise.dailyProgress.eaten', 'eaten')}{' '}
-                {getEnergyUnitString(energyUnit)}
+                {getEnergyUnitString(energyUnit)}{' '}
+                {t('exercise.dailyProgress.eaten', 'eaten')}
               </div>
             </div>
 
@@ -373,8 +373,8 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                       {display.burnedTotal}
                     </div>
                     <div className="text-xs text-gray-500">
-                      {t('exercise.dailyProgress.burned', 'burned')}{' '}
-                      {getEnergyUnitString(energyUnit)}
+                      {getEnergyUnitString(energyUnit)}{' '}
+                      {t('exercise.dailyProgress.burned', 'burned')}
                     </div>
                   </div>
                 </TooltipTrigger>
@@ -495,8 +495,8 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                 {display.goal}
               </div>
               <div className="text-xs dark:text-slate-400 text-gray-500">
-                {t('exercise.dailyProgress.goal', 'goal')}{' '}
-                {getEnergyUnitString(energyUnit)}
+                {getEnergyUnitString(energyUnit)}{' '}
+                {t('exercise.dailyProgress.goal', 'goal')}
               </div>
             </div>
           </div>

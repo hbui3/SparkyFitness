@@ -1,8 +1,14 @@
 import externalProviderRepository, {
   usesWriteOnlyPassword,
 } from '../models/externalProviderRepository.js';
+import globalSettingsRepository from '../models/globalSettingsRepository.js';
+import preferenceRepository from '../models/preferenceRepository.js';
 import { log } from '../config/logging.js';
-import { invalidateOpenFoodFactsSession } from '../integrations/openfoodfacts/openFoodFactsAuth.js';
+import {
+  assertSecureOpenFoodFactsWriteBaseUrl,
+  createOpenFoodFactsProviderConfigurationIdentity,
+  invalidateOpenFoodFactsSession,
+} from '../integrations/openfoodfacts/openFoodFactsAuth.js';
 import {
   YAZIO_OAUTH_CONFIG_ERROR,
   hasYazioProviderOAuthConfig,
@@ -10,8 +16,15 @@ import {
 } from '../integrations/yazio/yazioService.js';
 import { normalizeSpeedianceBaseUrl } from '../integrations/speediance/speedianceConfig.js';
 import { normalizeIGPSportBaseUrl } from '../integrations/igpsport/igpsportConfig.js';
+import {
+  evaluateOpenFoodFactsProviderCredentials,
+  OPEN_FOOD_FACTS_PROVIDER_TYPE,
+} from './openFoodFactsProviderCredentials.js';
 
-function validateSpeedianceCredentials(email: unknown, password: unknown) {
+function validateSpeedianceCredentials(
+  email: unknown,
+  password: unknown
+): void {
   if (
     typeof email !== 'string' ||
     !email.trim() ||
@@ -25,7 +38,10 @@ function validateSpeedianceCredentials(email: unknown, password: unknown) {
   }
 }
 
-function validateIGPSportCredentials(username: unknown, password: unknown) {
+function validateIGPSportCredentials(
+  username: unknown,
+  password: unknown
+): void {
   if (
     typeof username !== 'string' ||
     !username.trim() ||
@@ -50,12 +66,8 @@ function resolveCredentialField(
 // Build a 400-tagged Error for user-input validation failures so the
 // centralized errorHandler surfaces them as client errors instead of the
 // default 500 Internal Server Error.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function badRequest(message: any) {
-  const err = new Error(message);
-  // @ts-expect-error TS(2339): Property 'statusCode' does not exist on type 'Erro... Remove this comment to see the full error message
-  err.statusCode = 400;
-  return err;
+function badRequest(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 400 });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,50 +99,99 @@ function validateYazioProviderCredentials(appId: any, appKey: any) {
   }
 }
 
-// Strip decrypted credentials and their encrypted backing columns from any
-// provider row the viewer does not own. Prevents family / public sharing from
-// leaking OFF passwords (or any other per-row `app_id`/`app_key`).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function redactCredentialsForNonOwner(provider: any, authenticatedUserId: any) {
-  if (provider.user_id === authenticatedUserId) {
-    return provider;
+type ProviderResponseRow = Record<string, unknown>;
+
+function stripCredentialStorageFields(
+  provider: ProviderResponseRow
+): ProviderResponseRow {
+  const sanitized = { ...provider };
+  for (const field of Object.keys(sanitized)) {
+    if (
+      field.startsWith('encrypted_') ||
+      field.endsWith('_iv') ||
+      field.endsWith('_tag')
+    ) {
+      delete sanitized[field];
+    }
   }
-  const {
-    app_id: _appId,
-    app_key: _appKey,
-    encrypted_app_id: _eAppId,
-    app_id_iv: _iAppId,
-    app_id_tag: _tAppId,
-    encrypted_app_key: _eAppKey,
-    app_key_iv: _iAppKey,
-    app_key_tag: _tAppKey,
-    ...rest
-  } = provider;
-  return rest;
+  return sanitized;
+}
+
+function omitProviderFields(
+  provider: ProviderResponseRow,
+  fields: readonly string[]
+): ProviderResponseRow {
+  const sanitized = { ...provider };
+  for (const field of fields) {
+    delete sanitized[field];
+  }
+  return sanitized;
+}
+
+// Serialized database ciphertext, IVs, and authentication tags never belong
+// in a browser response. Non-owners additionally cannot receive decrypted
+// credentials, and OFF passwords stay server-side even for the row owner.
+function redactCredentialsForNonOwner(
+  provider: ProviderResponseRow,
+  authenticatedUserId: string
+): ProviderResponseRow {
+  const sanitized = stripCredentialStorageFields(provider);
+  if (sanitized.user_id === authenticatedUserId) {
+    return sanitized.provider_type === OPEN_FOOD_FACTS_PROVIDER_TYPE ||
+      usesWriteOnlyPassword(sanitized.provider_type)
+      ? omitProviderFields(sanitized, ['app_key'])
+      : sanitized;
+  }
+  return omitProviderFields(sanitized, ['app_id', 'app_key']);
 }
 
 // Strip every decrypted secret from a single provider's detail row before it
 // leaves the server to a non-owner. Unlike `redactCredentialsForNonOwner`
 // (which only sheds `app_id`/`app_key`), the by-id detail row also carries the
 // decrypted Garmin session dump and the provider's base URL / external user id,
-// so the detail endpoint needs a wider net. Owners get the row untouched.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// so the detail endpoint needs a wider net. Non-OFF owners retain the decrypted
+// values required by existing browser integrations such as Nutritionix.
 function redactProviderDetailsForNonOwner(
-  provider: any,
-  authenticatedUserId: any
-) {
-  if (!provider || provider.user_id === authenticatedUserId) {
-    return provider;
+  provider: null,
+  authenticatedUserId: string
+): null;
+function redactProviderDetailsForNonOwner(
+  provider: ProviderResponseRow,
+  authenticatedUserId: string
+): ProviderResponseRow;
+function redactProviderDetailsForNonOwner(
+  provider: ProviderResponseRow | null,
+  authenticatedUserId: string
+): ProviderResponseRow | null;
+function redactProviderDetailsForNonOwner(
+  provider: ProviderResponseRow | null,
+  authenticatedUserId: string
+): ProviderResponseRow | null {
+  if (!provider) {
+    return null;
   }
-  const {
-    app_id: _appId,
-    app_key: _appKey,
-    garth_dump: _garthDump,
-    external_user_id: _externalUserId,
-    base_url: _baseUrl,
-    ...rest
-  } = provider;
-  return rest;
+  const sanitized = stripCredentialStorageFields(provider);
+  if (sanitized.user_id === authenticatedUserId) {
+    return sanitized.provider_type === OPEN_FOOD_FACTS_PROVIDER_TYPE ||
+      usesWriteOnlyPassword(sanitized.provider_type)
+      ? omitProviderFields(sanitized, ['app_key'])
+      : sanitized;
+  }
+  return omitProviderFields(sanitized, [
+    'app_id',
+    'app_key',
+    'garth_dump',
+    'external_user_id',
+    'base_url',
+  ]);
+}
+
+function redactGlobalProviderForBrowser(
+  provider: ProviderResponseRow
+): ProviderResponseRow {
+  return omitProviderFields(stripCredentialStorageFields(provider), [
+    'app_key',
+  ]);
 }
 
 // Keep misconfigured YAZIO rows visible in Settings while preventing clients
@@ -155,26 +216,23 @@ function applyRuntimeAvailability(provider: any) {
   return provider;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function stripCredentialSecret(provider: any) {
-  const {
-    app_key: _appKey,
-    encrypted_app_id: _eAppId,
-    app_id_iv: _iAppId,
-    app_id_tag: _tAppId,
-    encrypted_app_key: _eAppKey,
-    app_key_iv: _iAppKey,
-    app_key_tag: _tAppKey,
-    ...rest
-  } = provider;
-  return rest;
+function stripCredentialSecret(
+  provider: ProviderResponseRow
+): ProviderResponseRow {
+  return omitProviderFields(stripCredentialStorageFields(provider), [
+    'app_key',
+  ]);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getExternalDataProviders(userId: any) {
+async function getExternalDataProviders(
+  targetUserId: string,
+  authenticatedUserId: string = targetUserId
+) {
   try {
-    const providers =
-      await externalProviderRepository.getExternalDataProviders(userId);
+    const providers = await externalProviderRepository.getExternalDataProviders(
+      targetUserId,
+      authenticatedUserId
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const providersWithVisibility = providers.map((p: any) =>
       stripCredentialSecret(
@@ -184,7 +242,7 @@ async function getExternalDataProviders(userId: any) {
 
             visibility: p.is_public
               ? 'public'
-              : p.user_id === userId
+              : p.user_id === authenticatedUserId
                 ? 'private'
                 : 'family',
 
@@ -194,7 +252,7 @@ async function getExternalDataProviders(userId: any) {
               p.encrypted_access_token !== null &&
               p.encrypted_access_token !== undefined,
           }),
-          userId
+          authenticatedUserId
         )
       )
     );
@@ -203,7 +261,7 @@ async function getExternalDataProviders(userId: any) {
   } catch (error) {
     log(
       'error',
-      `Error fetching external data providers for user ${userId} in externalProviderService:`,
+      `Error fetching external data providers for target user ${targetUserId} by ${authenticatedUserId} in externalProviderService:`,
       error
     );
     throw error;
@@ -265,17 +323,11 @@ async function createExternalDataProvider(
   try {
     providerData.user_id = authenticatedUserId;
     providerData.is_public = false; // Regular users cannot create global public providers
-    if (providerData.provider_type === 'openfoodfacts') {
-      // OFF authenticated access requires a username/password pair. Reject
-      // half-configured credentials so the settings page can't land in a
-      // silently-misconfigured state where every OFF request still runs
-      // unauthenticated.
-      if (!!providerData.app_id !== !!providerData.app_key) {
-        throw badRequest(
-          'Open Food Facts credentials must include both a username and a password.'
-        );
-      }
-    }
+    const openFoodFactsCredentials = evaluateOpenFoodFactsProviderCredentials(
+      undefined,
+      providerData
+    );
+    Object.assign(providerData, openFoodFactsCredentials.credentialPatch);
     if (providerData.provider_type === 'yazio') {
       validateYazioProviderCredentials(
         providerData.app_id,
@@ -293,9 +345,8 @@ async function createExternalDataProvider(
     const newProvider =
       await externalProviderRepository.createExternalDataProvider(providerData);
     if (
-      providerData.provider_type === 'openfoodfacts' &&
-      newProvider &&
-      newProvider.id
+      providerData.provider_type === OPEN_FOOD_FACTS_PROVIDER_TYPE &&
+      newProvider?.id
     ) {
       invalidateOpenFoodFactsSession(authenticatedUserId, newProvider.id);
     }
@@ -337,44 +388,28 @@ async function updateExternalDataProvider(
     const existingProvider =
       await externalProviderRepository.getExternalDataProviderById(providerId);
 
-    // Mutual exclusion: an OFF row cannot simultaneously be shared publicly
-    // and hold credentials. Since user providers are private, they cannot be shared.
-    const isOpenFoodFacts =
-      existingProvider?.provider_type === 'openfoodfacts' ||
-      updateData.provider_type === 'openfoodfacts';
-    if (isOpenFoodFacts) {
-      // Resolve post-update credential state:
-      //   - explicit null means "clear"
-      //   - undefined means "leave as-is"
-      //   - any other value means "populated"
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const resolveField = (nextVal: any, currentVal: any) => {
-        if (nextVal === null) return null;
-        if (nextVal === undefined) return currentVal;
-        return nextVal;
-      };
-      const nextAppId = resolveField(
-        updateData.app_id,
-        existingProvider?.app_id
-      );
-      const nextAppKey = resolveField(
-        updateData.app_key,
-        existingProvider?.app_key
-      );
+    const openFoodFactsCredentials = evaluateOpenFoodFactsProviderCredentials(
+      existingProvider,
+      updateData
+    );
+    Object.assign(updateData, openFoodFactsCredentials.credentialPatch);
+    const finalProviderType = openFoodFactsCredentials.finalProviderType;
 
-      // Reject half-configured credentials: OFF authenticated access needs
-      // both username and password, so any post-update state with exactly one
-      // field populated is silently broken (every OFF request would still run
-      // unauthenticated).
-      if (!!nextAppId !== !!nextAppKey) {
-        throw badRequest(
-          'Open Food Facts credentials must include both a username and a password.'
-        );
-      }
+    // Credentials and regional endpoints belong to one connector type. When a
+    // Speediance/iGPSPORT row changes type, never let its account secret or API
+    // host silently carry into the replacement provider.
+    if (
+      usesWriteOnlyPassword(existingProvider?.provider_type) &&
+      existingProvider?.provider_type !== finalProviderType
+    ) {
+      if (updateData.app_id === undefined) updateData.app_id = null;
+      if (updateData.app_key === undefined) updateData.app_key = null;
+      if (updateData.base_url === undefined) updateData.base_url = null;
     }
-    const isYazio =
-      existingProvider?.provider_type === 'yazio' ||
-      updateData.provider_type === 'yazio';
+
+    // Credential validation follows the post-update provider type. The old
+    // type is relevant only for invalidating an existing OFF session below.
+    const isYazio = finalProviderType === 'yazio';
     if (isYazio) {
       // Only preserve stored credentials when the row is already YAZIO. When the
       // type is being changed to YAZIO from another provider, the stored
@@ -436,9 +471,7 @@ async function updateExternalDataProvider(
       }
     }
 
-    const isSpeediance =
-      existingProvider?.provider_type === 'speediance' ||
-      updateData.provider_type === 'speediance';
+    const isSpeediance = finalProviderType === 'speediance';
     if (isSpeediance) {
       const existingSpeediance =
         existingProvider?.provider_type === 'speediance'
@@ -455,9 +488,7 @@ async function updateExternalDataProvider(
       );
     }
 
-    const isIGPSport =
-      existingProvider?.provider_type === 'igpsport' ||
-      updateData.provider_type === 'igpsport';
+    const isIGPSport = finalProviderType === 'igpsport';
     if (isIGPSport) {
       const existingIGPSport =
         existingProvider?.provider_type === 'igpsport'
@@ -485,7 +516,7 @@ async function updateExternalDataProvider(
         'External data provider not found or not authorized to update.'
       );
     }
-    if (isOpenFoodFacts) {
+    if (openFoodFactsCredentials.shouldInvalidateSession) {
       invalidateOpenFoodFactsSession(authenticatedUserId, providerId);
     }
     return updatedProvider;
@@ -600,6 +631,93 @@ async function getActiveOpenFoodFactsProviderId(userId: any) {
     return null;
   }
 }
+
+interface WritableOpenFoodFactsProviderRow {
+  id: string;
+  user_id: string;
+  provider_type: string;
+  is_active: boolean | null;
+  is_public: boolean;
+  app_id: string | null;
+  app_key: string | null;
+  base_url?: string | null;
+}
+
+export interface WritableOpenFoodFactsProvider {
+  id: string;
+  scope: 'personal' | 'global';
+  configurationIdentity: string;
+}
+
+function hasWritableOpenFoodFactsCredentials(
+  provider: WritableOpenFoodFactsProviderRow
+): boolean {
+  const hasCredentials =
+    provider.provider_type === 'openfoodfacts' &&
+    provider.is_active === true &&
+    typeof provider.app_id === 'string' &&
+    provider.app_id.trim().length > 0 &&
+    typeof provider.app_key === 'string' &&
+    provider.app_key.length > 0;
+  if (!hasCredentials) return false;
+
+  try {
+    assertSecureOpenFoodFactsWriteBaseUrl(provider.base_url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getAvailableOpenFoodFactsProvider(
+  authenticatedUserId: string
+): Promise<WritableOpenFoodFactsProvider | null> {
+  const providers = (await externalProviderRepository.getExternalDataProviders(
+    authenticatedUserId
+  )) as WritableOpenFoodFactsProviderRow[];
+
+  const personal = providers.find(
+    (provider) =>
+      !provider.is_public &&
+      provider.user_id === authenticatedUserId &&
+      hasWritableOpenFoodFactsCredentials(provider)
+  );
+  if (personal) {
+    return {
+      id: personal.id,
+      scope: 'personal',
+      configurationIdentity:
+        createOpenFoodFactsProviderConfigurationIdentity(personal),
+    };
+  }
+
+  const global = providers.find(
+    (provider) =>
+      provider.is_public && hasWritableOpenFoodFactsCredentials(provider)
+  );
+  return global
+    ? {
+        id: global.id,
+        scope: 'global',
+        configurationIdentity:
+          createOpenFoodFactsProviderConfigurationIdentity(global),
+      }
+    : null;
+}
+
+async function getAutomaticOpenFoodFactsProvider(
+  authenticatedUserId: string
+): Promise<WritableOpenFoodFactsProvider | null> {
+  const [serverEnabled, preferences] = await Promise.all([
+    globalSettingsRepository.isOpenFoodFactsContributionAllowed(),
+    preferenceRepository.getOpenFoodFactsContributionPreferences(
+      authenticatedUserId
+    ),
+  ]);
+  if (!serverEnabled || !preferences.enabled) return null;
+  return getAvailableOpenFoodFactsProvider(authenticatedUserId);
+}
+
 async function getExternalProviderTypes() {
   return externalProviderRepository.getExternalProviderTypes();
 }
@@ -610,8 +728,11 @@ export { createExternalDataProvider };
 export { updateExternalDataProvider };
 export { getExternalDataProviderDetails };
 export { redactProviderDetailsForNonOwner };
+export { redactGlobalProviderForBrowser };
 export { deleteExternalDataProvider };
 export { getExternalProviderTypes };
+export { getAvailableOpenFoodFactsProvider };
+export { getAutomaticOpenFoodFactsProvider };
 export default {
   getExternalDataProviders,
   getExternalDataProvidersForUser,
@@ -619,7 +740,10 @@ export default {
   updateExternalDataProvider,
   getExternalDataProviderDetails,
   redactProviderDetailsForNonOwner,
+  redactGlobalProviderForBrowser,
   deleteExternalDataProvider,
   getActiveOpenFoodFactsProviderId,
+  getAvailableOpenFoodFactsProvider,
+  getAutomaticOpenFoodFactsProvider,
   getExternalProviderTypes,
 };
