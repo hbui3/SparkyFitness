@@ -728,7 +728,8 @@
       "newFood": "Nuevo alimento",
       "newMeal": "Nueva comida",
       "show": "Mostrar",
-      "allProviders": "Todos los proveedores"
+      "allProviders": "Todos los proveedores",
+      "allSources": "Todas las fuentes"
     },
     "accessibility": {
       "moreFiltered": "Más opciones, filtrado a {{filter}}",
@@ -745,7 +746,8 @@
       "providerExpand_one": "{{provider}}, {{count}} resultado, toca para {{action}}",
       "providerExpand_many": "",
       "providerExpand_other": "{{provider}}, {{count}} resultados, toca para {{action}}",
-      "providerChange": "Proveedor {{provider}}, toca para cambiar"
+      "providerChange": "Proveedor {{provider}}, toca para cambiar",
+      "sourceChange": "Fuente {{source}}, toca para cambiar"
     },
     "errors": {
       "detailsUnavailable": "Detalles no disponibles",
@@ -759,7 +761,8 @@
       "yourMeals": "Tus comidas",
       "topMatches": "Mejores coincidencias",
       "onlineResults": "Resultados en línea",
-      "byProvider": "Por proveedor"
+      "byProvider": "Por proveedor",
+      "bySource": "Por fuente"
     },
     "search": {
       "placeholder": "Buscar alimentos..."
