@@ -185,6 +185,24 @@ $$;
 
 
 --
+-- Name: coach_text_array_elements_within_bounds(text[], integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.coach_text_array_elements_within_bounds(values_to_check text[], minimum_length integer, maximum_length integer) RETURNS boolean
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+  SELECT COALESCE(
+    bool_and(
+      value IS NOT NULL
+      AND length(btrim(value)) BETWEEN minimum_length AND maximum_length
+    ),
+    true
+  )
+  FROM unnest(values_to_check) AS element(value);
+$$;
+
+
+--
 -- Name: create_checkin_policy(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1176,6 +1194,22 @@ $$;
 
 
 --
+-- Name: reject_coach_pantry_event_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_coach_pantry_event_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'coach_pantry_events is an append-only ledger';
+END;
+$$;
+
+
+--
 -- Name: seed_global_providers_for_first_admin(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1439,6 +1473,68 @@ COMMENT ON TABLE public.account IS 'Better Auth account table - stores credentia
 
 
 --
+-- Name: adaptive_training_recommendations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.adaptive_training_recommendations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    recommendation_date date NOT NULL,
+    kind text NOT NULL,
+    workout_preset_id integer,
+    status text DEFAULT 'planned'::text NOT NULL,
+    score numeric(5,2) NOT NULL,
+    volume_factor numeric(4,2) DEFAULT 1 NOT NULL,
+    muscle_load_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    workout_snapshot jsonb,
+    rationale jsonb DEFAULT '[]'::jsonb NOT NULL,
+    settings_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    algorithm_version text DEFAULT 'adaptive-v1'::text NOT NULL,
+    generated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT adaptive_training_recommendations_kind_check CHECK ((kind = ANY (ARRAY['workout'::text, 'recovery'::text]))),
+    CONSTRAINT adaptive_training_recommendations_score_check CHECK (((score >= (0)::numeric) AND (score <= (100)::numeric))),
+    CONSTRAINT adaptive_training_recommendations_status_check CHECK ((status = ANY (ARRAY['planned'::text, 'accepted'::text, 'skipped'::text, 'completed'::text]))),
+    CONSTRAINT adaptive_training_recommendations_volume_factor_check CHECK (((volume_factor >= 0.5) AND (volume_factor <= 1.25)))
+);
+
+
+--
+-- Name: TABLE adaptive_training_recommendations; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.adaptive_training_recommendations IS 'Persisted, explainable daily workout or recovery recommendations.';
+
+
+--
+-- Name: adaptive_training_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.adaptive_training_settings (
+    user_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    sessions_per_week smallint DEFAULT 3 NOT NULL,
+    max_duration_minutes smallint DEFAULT 45 NOT NULL,
+    recovery_window_hours smallint DEFAULT 72 NOT NULL,
+    preferred_muscles text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    candidate_workout_preset_ids integer[] DEFAULT ARRAY[]::integer[] CONSTRAINT adaptive_training_settings_candidate_workout_preset_id_not_null NOT NULL,
+    avoid_consecutive_training_days boolean DEFAULT true CONSTRAINT adaptive_training_settings_avoid_consecutive_training__not_null NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT adaptive_training_settings_max_duration_minutes_check CHECK (((max_duration_minutes >= 15) AND (max_duration_minutes <= 180))),
+    CONSTRAINT adaptive_training_settings_recovery_window_hours_check CHECK (((recovery_window_hours >= 24) AND (recovery_window_hours <= 168))),
+    CONSTRAINT adaptive_training_settings_sessions_per_week_check CHECK (((sessions_per_week >= 1) AND (sessions_per_week <= 7)))
+);
+
+
+--
+-- Name: TABLE adaptive_training_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.adaptive_training_settings IS 'Per-user settings for recovery-aware workout recommendations.';
+
+
+--
 -- Name: admin_activity_logs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1472,9 +1568,17 @@ CREATE TABLE public.ai_service_settings (
     api_key_tag text,
     is_public boolean DEFAULT false CONSTRAINT ai_service_settings_is_global_not_null NOT NULL,
     chat_tool_profile text DEFAULT 'full'::text NOT NULL,
+    planning_model_name text,
     CONSTRAINT ai_service_settings_chat_tool_profile_check CHECK ((chat_tool_profile = ANY (ARRAY['full'::text, 'core'::text]))),
     CONSTRAINT check_public_settings_user_id_null CHECK ((((is_public = true) AND (user_id IS NULL)) OR ((is_public = false) AND (user_id IS NOT NULL))))
 );
+
+
+--
+-- Name: COLUMN ai_service_settings.planning_model_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.ai_service_settings.planning_model_name IS 'Optional stronger model used for workout and multi-week training-plan turns.';
 
 
 --
@@ -1588,9 +1692,17 @@ CREATE TABLE public.check_in_measurements (
     muscle_mass_kg numeric(5,2),
     bone_mass_kg numeric(5,2),
     body_water_percentage numeric(5,2),
+    source_provenance jsonb DEFAULT '{}'::jsonb NOT NULL,
     bmr numeric(6,1),
     CONSTRAINT check_in_measurements_bmr_check CHECK (((bmr IS NULL) OR ((bmr >= (600)::numeric) AND (bmr <= (6000)::numeric))))
 );
+
+
+--
+-- Name: COLUMN check_in_measurements.source_provenance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.check_in_measurements.source_provenance IS 'Per-metric source metadata, keyed by measurement column (for example weight or steps).';
 
 
 --
@@ -1665,6 +1777,117 @@ CREATE TABLE public.coach_delivery_outbox (
 
 
 --
+-- Name: coach_meal_plan_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_meal_plan_entries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    meal_plan_id uuid NOT NULL,
+    plan_date date NOT NULL,
+    slot text NOT NULL,
+    status text DEFAULT 'planned'::text NOT NULL,
+    recipe_key text NOT NULL,
+    recipe_name text NOT NULL,
+    recipe_description text,
+    recipe_instructions text[] NOT NULL,
+    prep_minutes integer DEFAULT 0 NOT NULL,
+    servings numeric(12,3) NOT NULL,
+    calories_kcal numeric(12,3) DEFAULT 0 NOT NULL,
+    protein_g numeric(12,3) DEFAULT 0 NOT NULL,
+    carbs_g numeric(12,3) DEFAULT 0 NOT NULL,
+    fat_g numeric(12,3) DEFAULT 0 NOT NULL,
+    safety_status text NOT NULL,
+    replacement_for_id uuid,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_meal_plan_entries_instructions_check CHECK ((((cardinality(recipe_instructions) >= 1) AND (cardinality(recipe_instructions) <= 100)) AND public.coach_text_array_elements_within_bounds(recipe_instructions, 1, 1000))),
+    CONSTRAINT coach_meal_plan_entries_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 2000)))),
+    CONSTRAINT coach_meal_plan_entries_nutrition_check CHECK (((calories_kcal >= (0)::numeric) AND (protein_g >= (0)::numeric) AND (carbs_g >= (0)::numeric) AND (fat_g >= (0)::numeric))),
+    CONSTRAINT coach_meal_plan_entries_prep_check CHECK (((prep_minutes >= 0) AND (prep_minutes <= 1440))),
+    CONSTRAINT coach_meal_plan_entries_recipe_description_check CHECK (((recipe_description IS NULL) OR ((length(btrim(recipe_description)) >= 1) AND (length(btrim(recipe_description)) <= 2000)))),
+    CONSTRAINT coach_meal_plan_entries_recipe_key_check CHECK (((length(btrim(recipe_key)) >= 1) AND (length(btrim(recipe_key)) <= 200))),
+    CONSTRAINT coach_meal_plan_entries_recipe_name_check CHECK (((length(btrim(recipe_name)) >= 1) AND (length(btrim(recipe_name)) <= 300))),
+    CONSTRAINT coach_meal_plan_entries_safety_check CHECK ((safety_status = ANY (ARRAY['validated'::text, 'needs_user_input'::text]))),
+    CONSTRAINT coach_meal_plan_entries_servings_check CHECK ((servings > (0)::numeric)),
+    CONSTRAINT coach_meal_plan_entries_slot_check CHECK ((slot = ANY (ARRAY['breakfast'::text, 'lunch'::text, 'dinner'::text, 'snack'::text]))),
+    CONSTRAINT coach_meal_plan_entries_status_check CHECK ((status = ANY (ARRAY['planned'::text, 'prepared'::text, 'eaten_out'::text, 'replaced'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: TABLE coach_meal_plan_entries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_meal_plan_entries IS 'Private dated meal slots with immutable recipe snapshots, nutrition, safety, and action state.';
+
+
+--
+-- Name: coach_meal_plan_ingredients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_meal_plan_ingredients (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    meal_plan_entry_id uuid NOT NULL,
+    pantry_item_id uuid,
+    ingredient_key text NOT NULL,
+    name text NOT NULL,
+    quantity numeric(12,3) NOT NULL,
+    unit text NOT NULL,
+    category text DEFAULT 'other'::text NOT NULL,
+    shopping_required boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_meal_plan_ingredients_category_check CHECK ((category = ANY (ARRAY['chilled'::text, 'produce'::text, 'pantry'::text, 'frozen'::text, 'other'::text]))),
+    CONSTRAINT coach_meal_plan_ingredients_key_check CHECK (((length(btrim(ingredient_key)) >= 1) AND (length(btrim(ingredient_key)) <= 200))),
+    CONSTRAINT coach_meal_plan_ingredients_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 200))),
+    CONSTRAINT coach_meal_plan_ingredients_quantity_check CHECK ((quantity > (0)::numeric)),
+    CONSTRAINT coach_meal_plan_ingredients_unit_check CHECK ((unit = ANY (ARRAY['g'::text, 'ml'::text, 'piece'::text, 'tsp'::text, 'tbsp'::text])))
+);
+
+
+--
+-- Name: TABLE coach_meal_plan_ingredients; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_meal_plan_ingredients IS 'Private ingredient requirements linking meal entries to pantry and shopping state.';
+
+
+--
+-- Name: coach_meal_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_meal_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    source text NOT NULL,
+    algorithm_version text NOT NULL,
+    generation_key text NOT NULL,
+    warnings text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_meal_plans_algorithm_check CHECK (((length(btrim(algorithm_version)) >= 1) AND (length(btrim(algorithm_version)) <= 100))),
+    CONSTRAINT coach_meal_plans_dates_check CHECK ((((end_date - start_date) >= 0) AND ((end_date - start_date) <= 6))),
+    CONSTRAINT coach_meal_plans_generation_key_check CHECK (((length(btrim(generation_key)) >= 1) AND (length(btrim(generation_key)) <= 200))),
+    CONSTRAINT coach_meal_plans_source_check CHECK ((source = ANY (ARRAY['coach'::text, 'user'::text]))),
+    CONSTRAINT coach_meal_plans_status_check CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'archived'::text]))),
+    CONSTRAINT coach_meal_plans_warnings_check CHECK (public.coach_text_array_elements_within_bounds(warnings, 1, 1000))
+);
+
+
+--
+-- Name: TABLE coach_meal_plans; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_meal_plans IS 'Private idempotent one-to-seven-day meal plans generated by the AI coach or owner.';
+
+
+--
 -- Name: coach_memories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1682,6 +1905,74 @@ CREATE TABLE public.coach_memories (
     CONSTRAINT coach_memories_content_check CHECK (((length(btrim(content)) >= 1) AND (length(btrim(content)) <= 500))),
     CONSTRAINT coach_memories_source_check CHECK ((source = ANY (ARRAY['user'::text, 'coach'::text, 'import'::text])))
 );
+
+
+--
+-- Name: coach_pantry_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_pantry_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    pantry_item_id uuid NOT NULL,
+    event_type text NOT NULL,
+    delta_quantity numeric(12,3) NOT NULL,
+    unit text NOT NULL,
+    source text NOT NULL,
+    source_id uuid,
+    idempotency_key text NOT NULL,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_pantry_events_delta_check CHECK ((delta_quantity <> (0)::numeric)),
+    CONSTRAINT coach_pantry_events_idempotency_key_check CHECK (((length(btrim(idempotency_key)) >= 1) AND (length(btrim(idempotency_key)) <= 200))),
+    CONSTRAINT coach_pantry_events_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 1000)))),
+    CONSTRAINT coach_pantry_events_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'shopping'::text, 'meal_plan'::text]))),
+    CONSTRAINT coach_pantry_events_type_check CHECK ((event_type = ANY (ARRAY['adjust'::text, 'purchase'::text, 'consume'::text, 'spoil'::text]))),
+    CONSTRAINT coach_pantry_events_unit_check CHECK ((unit = ANY (ARRAY['g'::text, 'ml'::text, 'piece'::text, 'tsp'::text, 'tbsp'::text])))
+);
+
+
+--
+-- Name: TABLE coach_pantry_events; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_pantry_events IS 'Private immutable, idempotent ledger of pantry quantity changes.';
+
+
+--
+-- Name: coach_pantry_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_pantry_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    ingredient_key text NOT NULL,
+    name text NOT NULL,
+    quantity numeric(12,3) DEFAULT 0 NOT NULL,
+    minimum_quantity numeric(12,3) DEFAULT 0 NOT NULL,
+    unit text NOT NULL,
+    category text DEFAULT 'other'::text NOT NULL,
+    preferred_retailer text,
+    preferred_retailer_product_id text,
+    expires_on date,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_pantry_items_category_check CHECK ((category = ANY (ARRAY['chilled'::text, 'produce'::text, 'pantry'::text, 'frozen'::text, 'other'::text]))),
+    CONSTRAINT coach_pantry_items_key_check CHECK (((length(btrim(ingredient_key)) >= 1) AND (length(btrim(ingredient_key)) <= 200))),
+    CONSTRAINT coach_pantry_items_minimum_check CHECK ((minimum_quantity >= (0)::numeric)),
+    CONSTRAINT coach_pantry_items_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 200))),
+    CONSTRAINT coach_pantry_items_preferred_product_check CHECK ((((preferred_retailer IS NULL) AND (preferred_retailer_product_id IS NULL)) OR ((preferred_retailer IS NOT NULL) AND (preferred_retailer_product_id IS NOT NULL) AND (preferred_retailer = ANY (ARRAY['coop'::text, 'migros'::text])) AND ((length(btrim(preferred_retailer_product_id)) >= 1) AND (length(btrim(preferred_retailer_product_id)) <= 200))))),
+    CONSTRAINT coach_pantry_items_quantity_check CHECK ((quantity >= (0)::numeric)),
+    CONSTRAINT coach_pantry_items_unit_check CHECK ((unit = ANY (ARRAY['g'::text, 'ml'::text, 'piece'::text, 'tsp'::text, 'tbsp'::text])))
+);
+
+
+--
+-- Name: TABLE coach_pantry_items; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_pantry_items IS 'Private current pantry balances and replenishment preferences used by the persistent AI coach.';
 
 
 --
@@ -1810,6 +2101,82 @@ COMMENT ON COLUMN public.coach_profiles.auto_memory_enabled IS 'Whether the coac
 
 
 --
+-- Name: coach_shopping_list_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_shopping_list_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    shopping_list_id uuid NOT NULL,
+    ingredient_key text NOT NULL,
+    name text NOT NULL,
+    required_quantity numeric(12,3) NOT NULL,
+    purchased_quantity numeric(12,3) DEFAULT 0 NOT NULL,
+    unit text NOT NULL,
+    category text DEFAULT 'other'::text NOT NULL,
+    status text DEFAULT 'needed'::text NOT NULL,
+    is_manual boolean DEFAULT false NOT NULL,
+    quantity_locked boolean DEFAULT false NOT NULL,
+    notes text,
+    source_entry_ids uuid[] DEFAULT ARRAY[]::uuid[] NOT NULL,
+    selected_product_retailer text,
+    selected_product_retailer_id text,
+    selected_product_gtin text,
+    selected_product_name text,
+    selected_product_package_quantity numeric(12,3),
+    selected_product_package_unit text,
+    selected_product_direct_url text,
+    selected_product_verified_at timestamp with time zone,
+    selected_product_note text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_shopping_list_items_category_check CHECK ((category = ANY (ARRAY['chilled'::text, 'produce'::text, 'pantry'::text, 'frozen'::text, 'other'::text]))),
+    CONSTRAINT coach_shopping_list_items_key_check CHECK (((length(btrim(ingredient_key)) >= 1) AND (length(btrim(ingredient_key)) <= 200))),
+    CONSTRAINT coach_shopping_list_items_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 200))),
+    CONSTRAINT coach_shopping_list_items_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 1000)))),
+    CONSTRAINT coach_shopping_list_items_product_snapshot_check CHECK ((((selected_product_retailer IS NULL) AND (selected_product_retailer_id IS NULL) AND (selected_product_gtin IS NULL) AND (selected_product_name IS NULL) AND (selected_product_package_quantity IS NULL) AND (selected_product_package_unit IS NULL) AND (selected_product_direct_url IS NULL) AND (selected_product_verified_at IS NULL) AND (selected_product_note IS NULL)) OR ((selected_product_retailer IS NOT NULL) AND (selected_product_retailer_id IS NOT NULL) AND (selected_product_name IS NOT NULL) AND (selected_product_package_quantity IS NOT NULL) AND (selected_product_package_unit IS NOT NULL) AND (selected_product_retailer = ANY (ARRAY['coop'::text, 'migros'::text])) AND ((length(btrim(selected_product_retailer_id)) >= 1) AND (length(btrim(selected_product_retailer_id)) <= 200)) AND ((length(btrim(selected_product_name)) >= 1) AND (length(btrim(selected_product_name)) <= 300)) AND (selected_product_package_quantity > (0)::numeric) AND (selected_product_package_unit = ANY (ARRAY['g'::text, 'ml'::text, 'piece'::text, 'tsp'::text, 'tbsp'::text])) AND (selected_product_direct_url IS NOT NULL) AND (selected_product_verified_at IS NOT NULL) AND ((selected_product_gtin IS NULL) OR (selected_product_gtin ~ '^(\d{8}|\d{12}|\d{13}|\d{14})$'::text)) AND ((selected_product_note IS NULL) OR ((length(btrim(selected_product_note)) >= 1) AND (length(btrim(selected_product_note)) <= 500))) AND (((selected_product_retailer = 'coop'::text) AND (selected_product_direct_url ~* '^https://([[:alnum:]-]+\.)*coop\.ch(/|$)'::text)) OR ((selected_product_retailer = 'migros'::text) AND (selected_product_direct_url ~* '^https://([[:alnum:]-]+\.)*migros\.ch(/|$)'::text)))))),
+    CONSTRAINT coach_shopping_list_items_purchased_check CHECK ((purchased_quantity >= (0)::numeric)),
+    CONSTRAINT coach_shopping_list_items_required_check CHECK ((required_quantity > (0)::numeric)),
+    CONSTRAINT coach_shopping_list_items_status_check CHECK ((status = ANY (ARRAY['needed'::text, 'purchased'::text, 'skipped'::text]))),
+    CONSTRAINT coach_shopping_list_items_unit_check CHECK ((unit = ANY (ARRAY['g'::text, 'ml'::text, 'piece'::text, 'tsp'::text, 'tbsp'::text])))
+);
+
+
+--
+-- Name: TABLE coach_shopping_list_items; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_shopping_list_items IS 'Private consolidated shopping needs, purchase progress, and verified retailer product snapshots.';
+
+
+--
+-- Name: coach_shopping_lists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_shopping_lists (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    title text NOT NULL,
+    coverage_start date,
+    coverage_end date,
+    status text DEFAULT 'open'::text NOT NULL,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_shopping_lists_coverage_check CHECK ((((coverage_start IS NULL) AND (coverage_end IS NULL)) OR ((coverage_start IS NOT NULL) AND (coverage_end IS NOT NULL) AND (coverage_end >= coverage_start)))),
+    CONSTRAINT coach_shopping_lists_status_check CHECK ((status = ANY (ARRAY['open'::text, 'completed'::text, 'cancelled'::text]))),
+    CONSTRAINT coach_shopping_lists_title_check CHECK (((length(btrim(title)) >= 1) AND (length(btrim(title)) <= 200)))
+);
+
+
+--
+-- Name: TABLE coach_shopping_lists; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_shopping_lists IS 'Private owner-only shopping-list headers generated or maintained with the AI coach.';
+
+
+--
 -- Name: coach_telegram_connections; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1827,6 +2194,73 @@ CREATE TABLE public.coach_telegram_connections (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT coach_telegram_link_pair CHECK ((((link_token_hash IS NULL) AND (link_token_expires_at IS NULL)) OR ((link_token_hash IS NOT NULL) AND (link_token_expires_at IS NOT NULL))))
 );
+
+
+--
+-- Name: coach_training_preferences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_training_preferences (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject text NOT NULL,
+    sentiment text NOT NULL,
+    notes text,
+    source text DEFAULT 'user'::text NOT NULL,
+    source_feedback_id uuid,
+    active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_training_preferences_kind_check CHECK ((kind = ANY (ARRAY['exercise'::text, 'equipment'::text, 'training_style'::text, 'schedule'::text, 'constraint'::text]))),
+    CONSTRAINT coach_training_preferences_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 1000)))),
+    CONSTRAINT coach_training_preferences_sentiment_check CHECK ((sentiment = ANY (ARRAY['prefer'::text, 'avoid'::text, 'require'::text, 'neutral'::text]))),
+    CONSTRAINT coach_training_preferences_source_check CHECK ((source = ANY (ARRAY['user'::text, 'feedback'::text, 'coach'::text]))),
+    CONSTRAINT coach_training_preferences_subject_check CHECK (((length(btrim(subject)) >= 1) AND (length(btrim(subject)) <= 200)))
+);
+
+
+--
+-- Name: TABLE coach_training_preferences; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_training_preferences IS 'Private active exercise, equipment, schedule, style, and constraint preferences learned from explicit user feedback.';
+
+
+--
+-- Name: coach_workout_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.coach_workout_feedback (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    workout_date date NOT NULL,
+    workout_name text NOT NULL,
+    provider text DEFAULT 'speediance'::text NOT NULL,
+    overall_rating smallint,
+    difficulty text,
+    energy_rating smallint,
+    pain_level smallint,
+    notes text,
+    exercise_feedback jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT coach_workout_feedback_difficulty_check CHECK (((difficulty IS NULL) OR (difficulty = ANY (ARRAY['too_easy'::text, 'just_right'::text, 'too_hard'::text])))),
+    CONSTRAINT coach_workout_feedback_energy_check CHECK (((energy_rating IS NULL) OR ((energy_rating >= 1) AND (energy_rating <= 5)))),
+    CONSTRAINT coach_workout_feedback_exercises_check CHECK ((jsonb_typeof(exercise_feedback) = 'array'::text)),
+    CONSTRAINT coach_workout_feedback_name_check CHECK (((length(btrim(workout_name)) >= 1) AND (length(btrim(workout_name)) <= 200))),
+    CONSTRAINT coach_workout_feedback_notes_check CHECK (((notes IS NULL) OR ((length(btrim(notes)) >= 1) AND (length(btrim(notes)) <= 2000)))),
+    CONSTRAINT coach_workout_feedback_pain_check CHECK (((pain_level IS NULL) OR ((pain_level >= 0) AND (pain_level <= 10)))),
+    CONSTRAINT coach_workout_feedback_provider_check CHECK ((provider = ANY (ARRAY['speediance'::text, 'sparky'::text, 'manual'::text, 'other'::text]))),
+    CONSTRAINT coach_workout_feedback_rating_check CHECK (((overall_rating IS NULL) OR ((overall_rating >= 1) AND (overall_rating <= 5))))
+);
+
+
+--
+-- Name: TABLE coach_workout_feedback; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.coach_workout_feedback IS 'Private structured post-workout feedback used by the AI coach for future training adaptation.';
 
 
 --
@@ -4607,7 +5041,9 @@ CREATE TABLE public.workout_plan_template_assignments (
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     sort_order integer DEFAULT 0,
-    CONSTRAINT chk_workout_assignment_type CHECK ((((workout_preset_id IS NOT NULL) AND (exercise_id IS NULL)) OR ((workout_preset_id IS NULL) AND (exercise_id IS NOT NULL))))
+    week_index integer DEFAULT 0 NOT NULL,
+    CONSTRAINT chk_workout_assignment_type CHECK ((((workout_preset_id IS NOT NULL) AND (exercise_id IS NULL)) OR ((workout_preset_id IS NULL) AND (exercise_id IS NOT NULL)))),
+    CONSTRAINT workout_plan_template_assignments_week_index_check CHECK (((week_index >= 0) AND (week_index <= 7)))
 );
 
 
@@ -4644,7 +5080,9 @@ CREATE TABLE public.workout_plan_templates (
     end_date date,
     is_active boolean DEFAULT false,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    cycle_length_weeks integer DEFAULT 1 NOT NULL,
+    CONSTRAINT workout_plan_templates_cycle_length_weeks_check CHECK (((cycle_length_weeks >= 1) AND (cycle_length_weeks <= 8)))
 );
 
 
@@ -4944,6 +5382,30 @@ ALTER TABLE ONLY public.account
 
 
 --
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_user_day_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_user_day_unique UNIQUE (user_id, recommendation_date);
+
+
+--
+-- Name: adaptive_training_settings adaptive_training_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_settings
+    ADD CONSTRAINT adaptive_training_settings_pkey PRIMARY KEY (user_id);
+
+
+--
 -- Name: admin_activity_logs admin_activity_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5024,11 +5486,107 @@ ALTER TABLE ONLY public.coach_delivery_outbox
 
 
 --
+-- Name: coach_meal_plan_entries coach_meal_plan_entries_id_user_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_entries
+    ADD CONSTRAINT coach_meal_plan_entries_id_user_unique UNIQUE (id, user_id);
+
+
+--
+-- Name: coach_meal_plan_entries coach_meal_plan_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_entries
+    ADD CONSTRAINT coach_meal_plan_entries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_meal_plan_ingredients coach_meal_plan_ingredients_id_user_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_ingredients
+    ADD CONSTRAINT coach_meal_plan_ingredients_id_user_unique UNIQUE (id, user_id);
+
+
+--
+-- Name: coach_meal_plan_ingredients coach_meal_plan_ingredients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_ingredients
+    ADD CONSTRAINT coach_meal_plan_ingredients_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_meal_plans coach_meal_plans_generation_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plans
+    ADD CONSTRAINT coach_meal_plans_generation_unique UNIQUE (user_id, generation_key);
+
+
+--
+-- Name: coach_meal_plans coach_meal_plans_id_user_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plans
+    ADD CONSTRAINT coach_meal_plans_id_user_unique UNIQUE (id, user_id);
+
+
+--
+-- Name: coach_meal_plans coach_meal_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plans
+    ADD CONSTRAINT coach_meal_plans_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: coach_memories coach_memories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.coach_memories
     ADD CONSTRAINT coach_memories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_pantry_events coach_pantry_events_idempotency_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_events
+    ADD CONSTRAINT coach_pantry_events_idempotency_unique UNIQUE (user_id, idempotency_key);
+
+
+--
+-- Name: coach_pantry_events coach_pantry_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_events
+    ADD CONSTRAINT coach_pantry_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_pantry_items coach_pantry_items_id_user_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_items
+    ADD CONSTRAINT coach_pantry_items_id_user_unique UNIQUE (id, user_id);
+
+
+--
+-- Name: coach_pantry_items coach_pantry_items_identity_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_items
+    ADD CONSTRAINT coach_pantry_items_identity_unique UNIQUE (user_id, ingredient_key, unit);
+
+
+--
+-- Name: coach_pantry_items coach_pantry_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_items
+    ADD CONSTRAINT coach_pantry_items_pkey PRIMARY KEY (id);
 
 
 --
@@ -5045,6 +5603,38 @@ ALTER TABLE ONLY public.coach_profiles
 
 ALTER TABLE ONLY public.coach_profiles
     ADD CONSTRAINT coach_profiles_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: coach_shopping_list_items coach_shopping_list_items_id_user_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_list_items
+    ADD CONSTRAINT coach_shopping_list_items_id_user_unique UNIQUE (id, user_id);
+
+
+--
+-- Name: coach_shopping_list_items coach_shopping_list_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_list_items
+    ADD CONSTRAINT coach_shopping_list_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_shopping_lists coach_shopping_lists_id_user_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_lists
+    ADD CONSTRAINT coach_shopping_lists_id_user_unique UNIQUE (id, user_id);
+
+
+--
+-- Name: coach_shopping_lists coach_shopping_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_lists
+    ADD CONSTRAINT coach_shopping_lists_pkey PRIMARY KEY (id);
 
 
 --
@@ -5077,6 +5667,22 @@ ALTER TABLE ONLY public.coach_telegram_connections
 
 ALTER TABLE ONLY public.coach_telegram_connections
     ADD CONSTRAINT coach_telegram_connections_user_id_key UNIQUE (user_id);
+
+
+--
+-- Name: coach_training_preferences coach_training_preferences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_training_preferences
+    ADD CONSTRAINT coach_training_preferences_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coach_workout_feedback coach_workout_feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_workout_feedback
+    ADD CONSTRAINT coach_workout_feedback_pkey PRIMARY KEY (id);
 
 
 --
@@ -6127,6 +6733,13 @@ CREATE INDEX idx_magic_link_token ON auth.users USING btree (magic_link_token);
 
 
 --
+-- Name: adaptive_training_recommendations_user_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX adaptive_training_recommendations_user_date_idx ON public.adaptive_training_recommendations USING btree (user_id, recommendation_date DESC);
+
+
+--
 -- Name: check_in_measurements_user_date_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6155,6 +6768,34 @@ CREATE INDEX coach_delivery_outbox_user_idx ON public.coach_delivery_outbox USIN
 
 
 --
+-- Name: coach_meal_plan_entries_plan_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_meal_plan_entries_plan_date_idx ON public.coach_meal_plan_entries USING btree (user_id, meal_plan_id, plan_date, slot);
+
+
+--
+-- Name: coach_meal_plan_entries_planned_slot_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX coach_meal_plan_entries_planned_slot_idx ON public.coach_meal_plan_entries USING btree (user_id, plan_date, slot) WHERE (status = 'planned'::text);
+
+
+--
+-- Name: coach_meal_plan_ingredients_entry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_meal_plan_ingredients_entry_idx ON public.coach_meal_plan_ingredients USING btree (user_id, meal_plan_entry_id, shopping_required);
+
+
+--
+-- Name: coach_meal_plans_user_dates_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_meal_plans_user_dates_idx ON public.coach_meal_plans USING btree (user_id, start_date DESC, end_date DESC);
+
+
+--
 -- Name: coach_memories_user_active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6162,10 +6803,52 @@ CREATE INDEX coach_memories_user_active_idx ON public.coach_memories USING btree
 
 
 --
+-- Name: coach_shopping_list_items_identity_unique_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX coach_shopping_list_items_identity_unique_idx ON public.coach_shopping_list_items USING btree (shopping_list_id, ingredient_key, unit);
+
+
+--
+-- Name: coach_shopping_list_items_list_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_shopping_list_items_list_status_idx ON public.coach_shopping_list_items USING btree (user_id, shopping_list_id, status, category, created_at);
+
+
+--
+-- Name: coach_shopping_lists_one_open_per_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX coach_shopping_lists_one_open_per_user_idx ON public.coach_shopping_lists USING btree (user_id) WHERE (status = 'open'::text);
+
+
+--
 -- Name: coach_telegram_connections_user_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX coach_telegram_connections_user_id_idx ON public.coach_telegram_connections USING btree (user_id);
+
+
+--
+-- Name: coach_training_preferences_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX coach_training_preferences_identity_idx ON public.coach_training_preferences USING btree (user_id, kind, lower(subject));
+
+
+--
+-- Name: coach_training_preferences_user_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_training_preferences_user_active_idx ON public.coach_training_preferences USING btree (user_id, active, updated_at DESC);
+
+
+--
+-- Name: coach_workout_feedback_user_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX coach_workout_feedback_user_date_idx ON public.coach_workout_feedback USING btree (user_id, workout_date DESC, created_at DESC);
 
 
 --
@@ -6876,6 +7559,13 @@ CREATE UNIQUE INDEX idx_water_intake_entries_user_source_source_id ON public.wat
 
 
 --
+-- Name: idx_workout_plan_assignments_cycle_day; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_workout_plan_assignments_cycle_day ON public.workout_plan_template_assignments USING btree (template_id, week_index, day_of_week);
+
+
+--
 -- Name: idx_workout_preset_exercise_sets_preset_exercise_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6964,6 +7654,13 @@ CREATE TRIGGER on_public_user_created AFTER INSERT ON public."user" FOR EACH ROW
 --
 
 COMMENT ON TRIGGER on_public_user_created ON public."user" IS 'Initializes onboarding status and default external providers for new users created via Better Auth.';
+
+
+--
+-- Name: coach_pantry_events reject_coach_pantry_event_mutation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER reject_coach_pantry_event_mutation BEFORE DELETE OR UPDATE ON public.coach_pantry_events FOR EACH ROW EXECUTE FUNCTION public.reject_coach_pantry_event_mutation();
 
 
 --
@@ -7170,6 +7867,76 @@ CREATE TRIGGER trg_sync_user_mfa_global BEFORE UPDATE OF two_factor_enabled ON p
 
 
 --
+-- Name: adaptive_training_recommendations update_adaptive_training_recommendations_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_adaptive_training_recommendations_timestamp BEFORE UPDATE ON public.adaptive_training_recommendations FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: adaptive_training_settings update_adaptive_training_settings_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_adaptive_training_settings_timestamp BEFORE UPDATE ON public.adaptive_training_settings FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_meal_plan_entries update_coach_meal_plan_entries_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_meal_plan_entries_timestamp BEFORE UPDATE ON public.coach_meal_plan_entries FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_meal_plan_ingredients update_coach_meal_plan_ingredients_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_meal_plan_ingredients_timestamp BEFORE UPDATE ON public.coach_meal_plan_ingredients FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_meal_plans update_coach_meal_plans_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_meal_plans_timestamp BEFORE UPDATE ON public.coach_meal_plans FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_pantry_items update_coach_pantry_items_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_pantry_items_timestamp BEFORE UPDATE ON public.coach_pantry_items FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_shopping_list_items update_coach_shopping_list_items_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_shopping_list_items_timestamp BEFORE UPDATE ON public.coach_shopping_list_items FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_shopping_lists update_coach_shopping_lists_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_shopping_lists_timestamp BEFORE UPDATE ON public.coach_shopping_lists FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_training_preferences update_coach_training_preferences_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_training_preferences_timestamp BEFORE UPDATE ON public.coach_training_preferences FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
+-- Name: coach_workout_feedback update_coach_workout_feedback_timestamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_coach_workout_feedback_timestamp BEFORE UPDATE ON public.coach_workout_feedback FOR EACH ROW EXECUTE FUNCTION public.update_timestamp();
+
+
+--
 -- Name: daily_health_metrics update_daily_health_metrics_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7318,6 +8085,30 @@ ALTER TABLE ONLY public.account
 
 
 --
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: adaptive_training_recommendations adaptive_training_recommendations_workout_preset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_recommendations
+    ADD CONSTRAINT adaptive_training_recommendations_workout_preset_id_fkey FOREIGN KEY (workout_preset_id) REFERENCES public.workout_presets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: adaptive_training_settings adaptive_training_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.adaptive_training_settings
+    ADD CONSTRAINT adaptive_training_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: admin_activity_logs admin_activity_logs_admin_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7390,11 +8181,91 @@ ALTER TABLE ONLY public.coach_delivery_outbox
 
 
 --
+-- Name: coach_meal_plan_entries coach_meal_plan_entries_plan_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_entries
+    ADD CONSTRAINT coach_meal_plan_entries_plan_owner_fkey FOREIGN KEY (meal_plan_id, user_id) REFERENCES public.coach_meal_plans(id, user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_meal_plan_entries coach_meal_plan_entries_replacement_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_entries
+    ADD CONSTRAINT coach_meal_plan_entries_replacement_owner_fkey FOREIGN KEY (replacement_for_id, user_id) REFERENCES public.coach_meal_plan_entries(id, user_id);
+
+
+--
+-- Name: coach_meal_plan_entries coach_meal_plan_entries_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_entries
+    ADD CONSTRAINT coach_meal_plan_entries_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_meal_plan_ingredients coach_meal_plan_ingredients_entry_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_ingredients
+    ADD CONSTRAINT coach_meal_plan_ingredients_entry_owner_fkey FOREIGN KEY (meal_plan_entry_id, user_id) REFERENCES public.coach_meal_plan_entries(id, user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_meal_plan_ingredients coach_meal_plan_ingredients_pantry_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_ingredients
+    ADD CONSTRAINT coach_meal_plan_ingredients_pantry_owner_fkey FOREIGN KEY (pantry_item_id, user_id) REFERENCES public.coach_pantry_items(id, user_id);
+
+
+--
+-- Name: coach_meal_plan_ingredients coach_meal_plan_ingredients_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plan_ingredients
+    ADD CONSTRAINT coach_meal_plan_ingredients_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_meal_plans coach_meal_plans_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_meal_plans
+    ADD CONSTRAINT coach_meal_plans_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: coach_memories coach_memories_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.coach_memories
     ADD CONSTRAINT coach_memories_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_pantry_events coach_pantry_events_item_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_events
+    ADD CONSTRAINT coach_pantry_events_item_owner_fkey FOREIGN KEY (pantry_item_id, user_id) REFERENCES public.coach_pantry_items(id, user_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: coach_pantry_events coach_pantry_events_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_events
+    ADD CONSTRAINT coach_pantry_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_pantry_items coach_pantry_items_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_pantry_items
+    ADD CONSTRAINT coach_pantry_items_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
 
 
 --
@@ -7406,11 +8277,59 @@ ALTER TABLE ONLY public.coach_profiles
 
 
 --
+-- Name: coach_shopping_list_items coach_shopping_list_items_list_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_list_items
+    ADD CONSTRAINT coach_shopping_list_items_list_owner_fkey FOREIGN KEY (shopping_list_id, user_id) REFERENCES public.coach_shopping_lists(id, user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_shopping_list_items coach_shopping_list_items_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_list_items
+    ADD CONSTRAINT coach_shopping_list_items_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_shopping_lists coach_shopping_lists_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_shopping_lists
+    ADD CONSTRAINT coach_shopping_lists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
 -- Name: coach_telegram_connections coach_telegram_connections_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.coach_telegram_connections
     ADD CONSTRAINT coach_telegram_connections_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_training_preferences coach_training_preferences_source_feedback_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_training_preferences
+    ADD CONSTRAINT coach_training_preferences_source_feedback_id_fkey FOREIGN KEY (source_feedback_id) REFERENCES public.coach_workout_feedback(id) ON DELETE SET NULL;
+
+
+--
+-- Name: coach_training_preferences coach_training_preferences_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_training_preferences
+    ADD CONSTRAINT coach_training_preferences_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+
+
+--
+-- Name: coach_workout_feedback coach_workout_feedback_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.coach_workout_feedback
+    ADD CONSTRAINT coach_workout_feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
 
 
 --
@@ -8742,6 +9661,18 @@ ALTER TABLE ONLY public.workout_presets
 
 
 --
+-- Name: adaptive_training_recommendations; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.adaptive_training_recommendations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: adaptive_training_settings; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.adaptive_training_settings ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: admin_activity_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -8826,10 +9757,40 @@ ALTER TABLE public.coach_action_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.coach_delivery_outbox ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: coach_meal_plan_entries; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_meal_plan_entries ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_meal_plan_ingredients; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_meal_plan_ingredients ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_meal_plans; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_meal_plans ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: coach_memories; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.coach_memories ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_pantry_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_pantry_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_pantry_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_pantry_items ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: coach_profiles; Type: ROW SECURITY; Schema: public; Owner: -
@@ -8838,10 +9799,34 @@ ALTER TABLE public.coach_memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.coach_profiles ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: coach_shopping_list_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_shopping_list_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_shopping_lists; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_shopping_lists ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: coach_telegram_connections; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.coach_telegram_connections ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_training_preferences; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_training_preferences ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: coach_workout_feedback; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.coach_workout_feedback ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: custom_categories; Type: ROW SECURITY; Schema: public; Owner: -
@@ -9135,6 +10120,20 @@ ALTER TABLE public.medication_titration_steps ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.medications ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: adaptive_training_recommendations modify_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY modify_policy ON public.adaptive_training_recommendations USING (public.has_diary_access(user_id)) WITH CHECK (public.has_diary_access(user_id));
+
+
+--
+-- Name: adaptive_training_settings modify_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY modify_policy ON public.adaptive_training_settings USING (public.has_diary_access(user_id)) WITH CHECK (public.has_diary_access(user_id));
+
 
 --
 -- Name: check_in_measurements modify_policy; Type: POLICY; Schema: public; Owner: -
@@ -9663,10 +10662,45 @@ CREATE POLICY owner_policy ON public.coach_delivery_outbox USING ((user_id = pub
 
 
 --
+-- Name: coach_meal_plan_entries owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_meal_plan_entries USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_meal_plan_ingredients owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_meal_plan_ingredients USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_meal_plans owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_meal_plans USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
 -- Name: coach_memories owner_policy; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY owner_policy ON public.coach_memories USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_pantry_events owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_pantry_events USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_pantry_items owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_pantry_items USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
 
 
 --
@@ -9677,10 +10711,38 @@ CREATE POLICY owner_policy ON public.coach_profiles USING ((user_id = public.aut
 
 
 --
+-- Name: coach_shopping_list_items owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_shopping_list_items USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_shopping_lists owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_shopping_lists USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
 -- Name: coach_telegram_connections owner_policy; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY owner_policy ON public.coach_telegram_connections USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_training_preferences owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_training_preferences USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
+
+
+--
+-- Name: coach_workout_feedback owner_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_policy ON public.coach_workout_feedback USING ((user_id = public.authenticated_user_id())) WITH CHECK ((user_id = public.authenticated_user_id()));
 
 
 --
@@ -9892,6 +10954,20 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY select_exercise_preset_entry_linked_policy ON public.exercise_entries FOR SELECT USING (((exercise_preset_entry_id IS NOT NULL) AND (EXISTS ( SELECT 1
    FROM public.exercise_preset_entries epe
   WHERE ((epe.id = exercise_entries.exercise_preset_entry_id) AND public.has_diary_read_access(epe.user_id))))));
+
+
+--
+-- Name: adaptive_training_recommendations select_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY select_policy ON public.adaptive_training_recommendations FOR SELECT USING (public.has_diary_read_access(user_id));
+
+
+--
+-- Name: adaptive_training_settings select_policy; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY select_policy ON public.adaptive_training_settings FOR SELECT USING (public.has_diary_read_access(user_id));
 
 
 --
@@ -10654,6 +11730,13 @@ GRANT ALL ON FUNCTION public.clear_old_chat_history() TO sparky_app;
 
 
 --
+-- Name: FUNCTION coach_text_array_elements_within_bounds(values_to_check text[], minimum_length integer, maximum_length integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.coach_text_array_elements_within_bounds(values_to_check text[], minimum_length integer, maximum_length integer) TO sparky_app;
+
+
+--
 -- Name: FUNCTION create_checkin_policy(table_name text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -10920,6 +12003,13 @@ GRANT ALL ON FUNCTION public.refresh_openfoodfacts_sync_queue(changed_food_ids u
 
 
 --
+-- Name: FUNCTION reject_coach_pantry_event_mutation(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.reject_coach_pantry_event_mutation() TO sparky_app;
+
+
+--
 -- Name: FUNCTION seed_global_providers_for_first_admin(); Type: ACL; Schema: public; Owner: -
 --
 
@@ -11025,6 +12115,20 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.account TO sparky_app;
 
 
 --
+-- Name: TABLE adaptive_training_recommendations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.adaptive_training_recommendations TO sparky_app;
+
+
+--
+-- Name: TABLE adaptive_training_settings; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.adaptive_training_settings TO sparky_app;
+
+
+--
 -- Name: TABLE admin_activity_logs; Type: ACL; Schema: public; Owner: -
 --
 
@@ -11088,10 +12192,45 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_delivery_outbox TO spark
 
 
 --
+-- Name: TABLE coach_meal_plan_entries; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_meal_plan_entries TO sparky_app;
+
+
+--
+-- Name: TABLE coach_meal_plan_ingredients; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_meal_plan_ingredients TO sparky_app;
+
+
+--
+-- Name: TABLE coach_meal_plans; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_meal_plans TO sparky_app;
+
+
+--
 -- Name: TABLE coach_memories; Type: ACL; Schema: public; Owner: -
 --
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_memories TO sparky_app;
+
+
+--
+-- Name: TABLE coach_pantry_events; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_pantry_events TO sparky_app;
+
+
+--
+-- Name: TABLE coach_pantry_items; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_pantry_items TO sparky_app;
 
 
 --
@@ -11102,10 +12241,38 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_profiles TO sparky_app;
 
 
 --
+-- Name: TABLE coach_shopping_list_items; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_shopping_list_items TO sparky_app;
+
+
+--
+-- Name: TABLE coach_shopping_lists; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_shopping_lists TO sparky_app;
+
+
+--
 -- Name: TABLE coach_telegram_connections; Type: ACL; Schema: public; Owner: -
 --
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_telegram_connections TO sparky_app;
+
+
+--
+-- Name: TABLE coach_training_preferences; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_training_preferences TO sparky_app;
+
+
+--
+-- Name: TABLE coach_workout_feedback; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.coach_workout_feedback TO sparky_app;
 
 
 --
