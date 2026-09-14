@@ -34,17 +34,23 @@ export function useCycleSettings() {
           cycleSettingsQueryKey
         );
 
-      // Optimistically update to new value immediately
+      // Optimistically update to new value immediately. mark_onboarded and
+      // reset_onboarding are request-only flags, so keep them out of the
+      // cached settings object.
       if (previousSettings) {
+        const { mark_onboarded, reset_onboarding, ...settingsPatch } = newVars;
+        const optimistic: SharedCycleSettings = {
+          ...previousSettings,
+          ...settingsPatch,
+          onboarded_at: mark_onboarded
+            ? new Date().toISOString()
+            : reset_onboarding
+              ? null
+              : previousSettings.onboarded_at,
+        };
         queryClient.setQueryData<SharedCycleSettings | null>(
           cycleSettingsQueryKey,
-          {
-            ...previousSettings,
-            ...newVars,
-            onboarded_at: newVars.mark_onboarded
-              ? new Date().toISOString()
-              : previousSettings.onboarded_at,
-          }
+          optimistic
         );
       }
 

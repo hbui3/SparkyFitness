@@ -3,6 +3,7 @@ import { buildWorkoutPlanTools } from '../ai/tools/workoutPlanTools.js';
 import workoutPlanTemplateService from '../services/workoutPlanTemplateService.js';
 import workoutPresetRepository from '../models/workoutPresetRepository.js';
 import plannedWorkoutScheduleService from '../services/plannedWorkoutScheduleService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/workoutPlanTemplateService.js', () => ({
   default: {
@@ -24,7 +25,7 @@ vi.mock('../services/plannedWorkoutScheduleService.js', () => ({
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
-const toolOptions = { toolCallId: 'workout-plan-call-1', messages: [] };
+const toolOptions = { ...toolOpts, toolCallId: 'workout-plan-call-1' };
 
 const existingPlan = {
   id: 9,

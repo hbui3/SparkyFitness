@@ -4,8 +4,8 @@ import type {
   ExerciseEntrySetResponse,
   ExerciseModality,
   ExerciseRecentSessionSet,
+  EntryExerciseSnapshotResponse,
   ExerciseSessionResponse,
-  ExerciseSnapshotResponse,
   PresetSessionExerciseRequest,
   PresetSessionResponse,
 } from '@workspace/shared';
@@ -41,6 +41,22 @@ import { formatLocalizedNumber } from '../localization';
 // The superset/reorder algebra lives in its own module; re-exported here so
 // the many existing import sites keep working.
 export * from './workoutSupersets';
+
+/**
+ * Reads a record keyed by library exercise id, tolerating an entry whose
+ * exercise has been deleted (`exercise_id` is then null).
+ *
+ * Such an entry has no library-scoped history to look up -- no PREVIOUS column,
+ * no PR baseline -- so the lookup simply yields nothing. Centralising it here
+ * keeps the null out of a dozen call sites that would otherwise each need a
+ * guard, and makes "deleted exercise means no history" a single decision.
+ */
+export function historyForExercise<T>(
+  record: Record<string, T>,
+  exerciseId: string | null
+): T | undefined {
+  return exerciseId == null ? undefined : record[exerciseId];
+}
 
 export const CATEGORY_ICON_MAP: Record<string, IconName> = {
   Strength: 'exercise-weights',
@@ -601,7 +617,13 @@ export interface WorkoutCardSet {
 export interface WorkoutCardExercise {
   /** Entry id or `WorkoutDraftExercise.clientId`. */
   id: string;
-  exercise_id: string;
+  /**
+   * Null once the library exercise has been deleted. Nothing the card renders
+   * needs it -- name, category, modality and images all come from
+   * `exercise_snapshot` -- it is only used to look up library-scoped history
+   * (stats, PREVIOUS column, PR baseline), which a deleted exercise has none of.
+   */
+  exercise_id: string | null;
   superset_group?: number | null;
   /** Per-exercise note. Present on live/session entries and workout drafts; absent on preset sources. */
   notes?: string | null;
@@ -895,7 +917,7 @@ export function describeActiveSetAssumed(
     }
     const assumed = resolveAssumedSetValues(
       exercise.sets,
-      previousSetsByExerciseId[exercise.exercise_id],
+      historyForExercise(previousSetsByExerciseId, exercise.exercise_id),
       plannedBySetId
     )[setIndex];
     // Only the fields the modality renders are backfilled, so a duration set
@@ -1301,7 +1323,9 @@ export function isPrSet(
   prBaseline: Record<string, PrBaselineEntry | null>
 ): boolean {
   let candidate: ExerciseEntrySetResponse | undefined;
-  let exerciseId: string | undefined;
+  // Null for a preserved entry whose exercise is gone; the `== null` guard
+  // below then short-circuits, so a deleted exercise never earns a PR.
+  let exerciseId: string | null | undefined;
   for (const exercise of session.exercises) {
     const found = exercise.sets.find((s) => String(s.id) === candidateSetId);
     if (found) {
@@ -1646,12 +1670,16 @@ export function stripPlannedSetValues(
  * missing ones fall back to empty so the detail screen still renders cleanly.
  */
 export function exerciseFromSnapshot(
-  snapshot: ExerciseSnapshotResponse | null,
-  exerciseId: string,
+  snapshot: EntryExerciseSnapshotResponse | null,
+  exerciseId: string | null,
   t: TFunction
 ): Exercise {
   return {
-    id: snapshot?.id ?? exerciseId,
+    // Empty when the library exercise has been deleted and the entry is running
+    // on its snapshot alone. ExerciseDetailScreen gates every library-backed
+    // feature on `UUID_REGEX.test(item.id)`, so an empty id renders the page
+    // from the snapshot and quietly drops the History tab and detail refetch.
+    id: snapshot?.id ?? exerciseId ?? '',
     name: snapshot?.name ?? t('workout.exercise', { defaultValue: 'Exercise' }),
     category: snapshot?.category ?? null,
     modality: snapshot?.modality ?? null,
@@ -1680,7 +1708,8 @@ export function exerciseFromSnapshot(
  */
 export function makeSparseExercise(
   params: {
-    id: string;
+    /** Empty/null when the library exercise has been deleted; see exerciseFromSnapshot. */
+    id: string | null;
     name?: string | null;
     category?: string | null;
     modality?: string | null;
@@ -1689,7 +1718,7 @@ export function makeSparseExercise(
   t: TFunction
 ): Exercise {
   return {
-    id: params.id,
+    id: params.id ?? '',
     name: params.name ?? t('workout.exercise', { defaultValue: 'Exercise' }),
     category: params.category ?? null,
     modality: isExerciseModality(params.modality) ? params.modality : null,
@@ -1875,41 +1904,51 @@ export function buildPresetExercisesPayload(
   // Preset exercises with zero sets are valid on the server and render as
   // "No sets" in the detail view. Do NOT filter them out — saving an unrelated
   // edit would silently delete the user's zero-set rows from the preset.
-  return exercises.map((exercise, index) => {
-    const modality = resolveSnapshotModality({
-      modality: exercise.exerciseModality,
-      category: exercise.exerciseCategory,
-    });
-    return {
-      exercise_id: exercise.exerciseId,
-      image_url: exercise.images[0] ?? null,
-      sort_order: index,
-      superset_group: exercise.supersetGroup ?? null,
-      sets: exercise.sets.map((set, setIndex) => {
-        const weight = parseDecimalInput(set.weight);
-        const reps = parseInt(set.reps, 10);
-        const distance = parseDecimalInput(set.distance ?? '');
-        return {
-          set_number: setIndex + 1,
-          set_type: set.setType ?? 'normal',
-          reps: isNaN(reps) ? null : reps,
-          weight: isNaN(weight) ? null : weightToKg(weight, weightUnit),
-          // Modality-gated like the live builders: a session's junk duration
-          // on a weights exercise must not become preset structure, and
-          // distance is only meaningful on cardio sets.
-          duration: isDurationModality(modality)
-            ? (set.duration ?? null)
-            : null,
-          distance:
-            isCardioModality(modality) && !isNaN(distance)
-              ? distanceToKm(distance, distanceUnit)
+  //
+  // An exercise with no library id IS dropped, though, and that is a different
+  // case: workout_preset_exercises.exercise_id still cascades from the library
+  // row, so a deleted exercise cannot live in a template at all. Keeping it
+  // would mean writing a row the database immediately rejects.
+  return exercises
+    .filter(
+      (exercise): exercise is WorkoutDraftExercise & { exerciseId: string } =>
+        exercise.exerciseId != null
+    )
+    .map((exercise, index) => {
+      const modality = resolveSnapshotModality({
+        modality: exercise.exerciseModality,
+        category: exercise.exerciseCategory,
+      });
+      return {
+        exercise_id: exercise.exerciseId,
+        image_url: exercise.images[0] ?? null,
+        sort_order: index,
+        superset_group: exercise.supersetGroup ?? null,
+        sets: exercise.sets.map((set, setIndex) => {
+          const weight = parseDecimalInput(set.weight);
+          const reps = parseInt(set.reps, 10);
+          const distance = parseDecimalInput(set.distance ?? '');
+          return {
+            set_number: setIndex + 1,
+            set_type: set.setType ?? 'normal',
+            reps: isNaN(reps) ? null : reps,
+            weight: isNaN(weight) ? null : weightToKg(weight, weightUnit),
+            // Modality-gated like the live builders: a session's junk duration
+            // on a weights exercise must not become preset structure, and
+            // distance is only meaningful on cardio sets.
+            duration: isDurationModality(modality)
+              ? (set.duration ?? null)
               : null,
-          rest_time: set.restTime ?? null,
-          notes: set.notes ?? null,
-        };
-      }),
-    };
-  });
+            distance:
+              isCardioModality(modality) && !isNaN(distance)
+                ? distanceToKm(distance, distanceUnit)
+                : null,
+            rest_time: set.restTime ?? null,
+            notes: set.notes ?? null,
+          };
+        }),
+      };
+    });
 }
 
 // --- Update-preset canonicalization (completion-screen prompt) ---
@@ -2048,13 +2087,27 @@ export function buildPresetUpdateExercises(
     plannedSetValues: Record<string, AssumedSetValues>;
   }
 ): WorkoutPresetExercisePayload[] | null {
+  // An exercise whose library row has been deleted cannot go into a preset at
+  // all — workout_preset_exercises.exercise_id still cascades from the library,
+  // so the row would be rejected. Drop those up front rather than letting a
+  // null reach the pairing below, where it would also match every OTHER
+  // deleted exercise and pair them with each other. Every index in this
+  // function is relative to this filtered list, so it has to happen first.
+  const sessionExercises = session.exercises.filter(
+    (
+      exercise
+    ): exercise is (typeof session.exercises)[number] & {
+      exercise_id: string;
+    } => exercise.exercise_id != null
+  );
+
   // Pair each session exercise with the first unconsumed preset exercise of
   // the same exercise_id (duplicates pair in order; unmatched = added). The
   // pair supplies the preset's image_url, the zero-set detection, and the
   // preset side's modality — the session snapshot beats the preset row,
   // which old servers leave without a modality.
   const consumed = new Set<number>();
-  const matchedPresetIndex = session.exercises.map((exercise) => {
+  const matchedPresetIndex = sessionExercises.map((exercise) => {
     const index = preset.exercises.findIndex(
       (candidate, i) =>
         !consumed.has(i) && candidate.exercise_id === exercise.exercise_id
@@ -2063,7 +2116,7 @@ export function buildPresetUpdateExercises(
     return index >= 0 ? index : null;
   });
 
-  const fromSession: CanonicalPresetExercise[] = session.exercises.map(
+  const fromSession: CanonicalPresetExercise[] = sessionExercises.map(
     (exercise, index) => {
       const modality = resolveSnapshotModality(exercise.exercise_snapshot);
       const matchedIdx = matchedPresetIndex[index];
@@ -2113,7 +2166,7 @@ export function buildPresetUpdateExercises(
     if (presetIdx != null) {
       sessionModalityByPresetIndex.set(
         presetIdx,
-        resolveSnapshotModality(session.exercises[sessionIdx].exercise_snapshot)
+        resolveSnapshotModality(sessionExercises[sessionIdx].exercise_snapshot)
       );
     }
   });

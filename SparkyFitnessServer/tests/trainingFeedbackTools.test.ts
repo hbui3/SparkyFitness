@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTrainingFeedbackTools } from '../ai/tools/trainingFeedbackTools.js';
 import trainingFeedbackService from '../services/trainingFeedbackService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/trainingFeedbackService.js', () => ({
   default: {
@@ -13,7 +14,7 @@ vi.mock('../services/trainingFeedbackService.js', () => ({
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
-const toolOptions = { toolCallId: 'feedback-call-1', messages: [] };
+const toolOptions = { ...toolOpts, toolCallId: 'feedback-call-1' };
 
 describe('sparky_manage_training_feedback', () => {
   beforeEach(() => vi.clearAllMocks());

@@ -18,7 +18,10 @@ import {
 } from '../../src/hooks';
 import { useExerciseStats } from '../../src/hooks/useExerciseStats';
 import { useExerciseHistory } from '../../src/hooks/useExerciseHistory';
-import { fetchExerciseById } from '../../src/services/api/exerciseApi';
+import {
+  fetchExerciseById,
+  getExerciseDeletionImpact,
+} from '../../src/services/api/exerciseApi';
 import { importExercise } from '../../src/services/api/externalExerciseSearchApi';
 import {
   useExerciseImageSource,
@@ -48,6 +51,7 @@ jest.mock('../../src/hooks/useExerciseHistory', () => ({
 
 jest.mock('../../src/services/api/exerciseApi', () => ({
   fetchExerciseById: jest.fn(),
+  getExerciseDeletionImpact: jest.fn(),
 }));
 
 jest.mock('../../src/services/api/externalExerciseSearchApi', () => ({
@@ -75,6 +79,8 @@ jest.mock('../../src/hooks/useStartLiveWorkout', () => ({
 jest.mock('uniwind', () => ({
   useCSSVariable: (keys: string | string[]) =>
     Array.isArray(keys) ? keys.map(() => '#111827') : '#111827',
+  // The delete ActionSheet's backdrop reads the theme through useUniwind.
+  useUniwind: () => ({ theme: 'light', hasAdaptiveThemes: false }),
 }));
 
 jest.mock('../../src/components/Icon', () => {
@@ -127,7 +133,15 @@ const mockUseImagePairAspectMatch =
   useImagePairAspectMatch as jest.MockedFunction<
     typeof useImagePairAspectMatch
   >;
-const mockConfirmAndDelete = jest.fn();
+const mockBuildDeleteOptions = jest.fn(() => [
+  {
+    mode: 'hide' as const,
+    label: 'Hide from search',
+    description: 'Keeps everything as it is.',
+    destructive: false,
+    onSelect: jest.fn(),
+  },
+]);
 
 const insets = { top: 0, bottom: 0, left: 0, right: 0 };
 const frame = { x: 0, y: 0, width: 390, height: 844 };
@@ -214,8 +228,19 @@ describe('ExerciseDetailScreen', () => {
       hasMore: false,
     });
     mockUseDeleteExerciseLibrary.mockReturnValue({
-      confirmAndDelete: mockConfirmAndDelete,
+      buildDeleteOptions: mockBuildDeleteOptions,
       isPending: false,
+    });
+    (
+      getExerciseDeletionImpact as jest.MockedFunction<
+        typeof getExerciseDeletionImpact
+      >
+    ).mockResolvedValue({
+      exerciseEntriesCount: 0,
+      workoutPlansCount: 0,
+      workoutPresetsCount: 0,
+      totalReferences: 0,
+      otherUserReferences: 0,
     });
   });
 
@@ -341,12 +366,14 @@ describe('ExerciseDetailScreen', () => {
     );
   });
 
-  it('shows Delete and triggers confirmAndDelete', () => {
+  it('opens the delete options sheet instead of deleting outright', () => {
     const screen = renderScreen(ownedCustomExercise);
 
     fireEvent.press(screen.getByText('Delete Exercise'));
 
-    expect(mockConfirmAndDelete).toHaveBeenCalledTimes(1);
+    // The button presents Hide / Delete / Delete-including-history; it must
+    // never delete on a single tap the way the old confirm dialog did.
+    expect(screen.getByText('Delete exercise')).toBeTruthy();
   });
 
   it('reflects updatedItem when route params change', () => {

@@ -4,6 +4,7 @@ import type {
   Food,
   FoodDataForBackend,
   FoodDeletionImpact,
+  FoodDeleteMode,
 } from '@/types/food';
 import { MealFilter } from '@/types/meal';
 
@@ -36,6 +37,10 @@ interface FoodPayload {
   vitamin_c?: number;
   calcium?: number;
   iron?: number;
+  caffeine_mg?: number;
+  water_ml?: number;
+  alcohol_g?: number;
+  abv_percent?: number;
   custom_nutrients?: Record<string, string | number>;
 }
 
@@ -82,14 +87,13 @@ export const togglePublicSharing = async (
 
 export const deleteFood = async (
   foodId: string,
-  forceDelete: boolean = false,
-  userId?: string
+  mode: FoodDeleteMode = 'delete',
+  userId?: string,
+  currentClientDate?: string
 ): Promise<{ message: string; status: string }> => {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ mode });
   if (userId) params.append('userId', userId);
-  if (forceDelete) {
-    params.append('forceDelete', 'true');
-  }
+  if (currentClientDate) params.append('currentClientDate', currentClientDate);
   return apiCall(`/foods/${foodId}?${params.toString()}`, {
     method: 'DELETE',
   });

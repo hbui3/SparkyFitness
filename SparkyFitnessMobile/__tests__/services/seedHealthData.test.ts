@@ -1,4 +1,8 @@
-import { insertRecords, requestPermission } from 'react-native-health-connect';
+import {
+  initialize,
+  insertRecords,
+  requestPermission,
+} from 'react-native-health-connect';
 import { addLog } from '../../src/services/LogService';
 
 interface SeedResult {
@@ -8,6 +12,7 @@ interface SeedResult {
 }
 
 jest.mock('react-native-health-connect', () => ({
+  initialize: jest.fn(),
   insertRecords: jest.fn(),
   requestPermission: jest.fn(),
 }));
@@ -16,6 +21,7 @@ jest.mock('../../src/services/LogService', () => ({
   addLog: jest.fn(),
 }));
 
+const mockInitialize = initialize as jest.Mock;
 const mockInsertRecords = insertRecords as jest.Mock;
 const mockRequestPermission = requestPermission as jest.Mock;
 const mockAddLog = addLog as jest.Mock;
@@ -27,7 +33,8 @@ const seedService = require('../../src/services/seedHealthData.ts') as {
 describe('seedHealthData.ts (Android)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Default: permissions granted, insertions succeed
+    // Default: Health Connect initialized, permissions granted, insertions succeed
+    mockInitialize.mockResolvedValue(true);
     mockRequestPermission.mockImplementation((requested) =>
       Promise.resolve(requested)
     );
@@ -47,6 +54,7 @@ describe('seedHealthData.ts (Android)', () => {
     test('record count scales with days parameter', async () => {
       const result1 = await seedService.seedHealthData(1);
       jest.clearAllMocks();
+      mockInitialize.mockResolvedValue(true);
       mockRequestPermission.mockImplementation((requested) =>
         Promise.resolve(requested)
       );
@@ -217,6 +225,7 @@ describe('seedOldHealthData (Android)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockInitialize.mockResolvedValue(true);
     mockRequestPermission.mockImplementation((requested) =>
       Promise.resolve(requested)
     );

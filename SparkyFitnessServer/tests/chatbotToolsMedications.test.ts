@@ -1,6 +1,7 @@
 import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { buildMedicationTools } from '../ai/tools/medicationTools.js';
 import medicationRepository from '../models/medicationRepository.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../models/medicationRepository', () => ({
   default: {
@@ -31,7 +32,7 @@ vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const MED_ID = '123e4567-e89b-12d3-a456-426614174000';
 const SCHEDULE_ID = '223e4567-e89b-12d3-a456-426614174000';
 const DB_ERROR_TEXT =

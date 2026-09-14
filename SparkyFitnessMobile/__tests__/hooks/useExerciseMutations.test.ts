@@ -456,25 +456,62 @@ describe('useExerciseMutations', () => {
   });
 
   describe('useDeleteExerciseLibrary', () => {
-    it('shows confirmation dialog with exercise-specific text', () => {
+    const impact = {
+      exerciseEntriesCount: 3,
+      workoutPlansCount: 0,
+      workoutPresetsCount: 1,
+      totalReferences: 4,
+      otherUserReferences: 0,
+    };
+
+    it('offers hide, delete and delete-with-history when only this user uses it', () => {
       const { result } = renderHook(
         () => useDeleteExerciseLibrary({ exerciseId: 'ex-1' }),
         { wrapper }
       );
 
-      act(() => {
-        result.current.confirmAndDelete();
-      });
+      const options = result.current.buildDeleteOptions(impact);
 
-      expect(Alert.alert).toHaveBeenCalledWith(
-        'Delete Exercise?',
-        expect.stringContaining('removed from your library'),
-        expect.any(Array)
-      );
+      expect(options.map((o) => o.mode)).toEqual([
+        'hide',
+        'delete',
+        'delete_with_history',
+      ]);
+      // Only the history-destroying option is styled as destructive.
+      expect(options.map((o) => o.destructive)).toEqual([false, false, true]);
     });
 
-    it('calls deleteExerciseFromLibrary and fires onSuccess on confirm', async () => {
-      mockDeleteExerciseFromLibrary.mockResolvedValue(undefined);
+    it('offers hide only when other users reference the exercise', () => {
+      const { result } = renderHook(
+        () => useDeleteExerciseLibrary({ exerciseId: 'ex-1' }),
+        { wrapper }
+      );
+
+      const options = result.current.buildDeleteOptions({
+        ...impact,
+        otherUserReferences: 2,
+      });
+
+      // Presets and plans cascade globally, so deleting would reach into other
+      // people's data. Hiding is the only choice that leaves them alone.
+      expect(options.map((o) => o.mode)).toEqual(['hide']);
+    });
+
+    it('offers hide only while the impact is still unknown', () => {
+      const { result } = renderHook(
+        () => useDeleteExerciseLibrary({ exerciseId: 'ex-1' }),
+        { wrapper }
+      );
+
+      // Guessing "nobody else uses it" is the one wrong guess that damages
+      // another person's data, so an unresolved impact must not offer delete.
+      expect(
+        result.current.buildDeleteOptions(null).map((o) => o.mode)
+      ).toEqual(['hide']);
+    });
+
+    it('deletes without confirmation but keeps history', async () => {
+      mockDeleteExerciseFromLibrary.mockResolvedValue({ status: 'deleted' });
       const onSuccess = jest.fn();
 
       const { result } = renderHook(
@@ -482,20 +519,78 @@ describe('useExerciseMutations', () => {
         { wrapper }
       );
 
-      act(() => {
-        result.current.confirmAndDelete();
-      });
-
-      const alertButtons = (Alert.alert as jest.Mock).mock.calls[0][2];
-      const deleteButton = alertButtons.find((b: any) => b.text === 'Delete');
-
+      const options = result.current.buildDeleteOptions(impact);
       await act(async () => {
-        deleteButton.onPress();
+        options.find((o) => o.mode === 'delete')!.onSelect();
       });
 
       await waitFor(() => {
-        expect(mockDeleteExerciseFromLibrary).toHaveBeenCalledWith('ex-1');
+        expect(mockDeleteExerciseFromLibrary).toHaveBeenCalledWith(
+          'ex-1',
+          'delete'
+        );
         expect(onSuccess).toHaveBeenCalled();
+      });
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it('confirms separately before deleting logged workouts', async () => {
+      mockDeleteExerciseFromLibrary.mockResolvedValue({
+        status: 'deleted_with_history',
+      });
+
+      const { result } = renderHook(
+        () => useDeleteExerciseLibrary({ exerciseId: 'ex-1' }),
+        { wrapper }
+      );
+
+      const options = result.current.buildDeleteOptions(impact);
+      act(() => {
+        options.find((o) => o.mode === 'delete_with_history')!.onSelect();
+      });
+
+      // Picking it must not fire the request on its own.
+      expect(mockDeleteExerciseFromLibrary).not.toHaveBeenCalled();
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Delete workouts too?',
+        expect.stringContaining('cannot be undone'),
+        expect.any(Array)
+      );
+
+      const alertButtons = (Alert.alert as jest.Mock).mock.calls[0][2];
+      await act(async () => {
+        alertButtons
+          .find((b: { text: string }) => b.text === 'Delete')
+          .onPress();
+      });
+
+      await waitFor(() => {
+        expect(mockDeleteExerciseFromLibrary).toHaveBeenCalledWith(
+          'ex-1',
+          'delete_with_history'
+        );
+      });
+    });
+
+    it('reports a server-side downgrade to hidden', async () => {
+      mockDeleteExerciseFromLibrary.mockResolvedValue({ status: 'hidden' });
+
+      const { result } = renderHook(
+        () => useDeleteExerciseLibrary({ exerciseId: 'ex-1' }),
+        { wrapper }
+      );
+
+      const options = result.current.buildDeleteOptions(impact);
+      await act(async () => {
+        options.find((o) => o.mode === 'delete')!.onSelect();
+      });
+
+      // The server hides instead of deleting when someone else still uses it;
+      // saying "deleted" would be a lie the user could act on.
+      await waitFor(() => {
+        expect(Toast.show).toHaveBeenCalledWith(
+          expect.objectContaining({ text1: 'Exercise hidden' })
+        );
       });
     });
 
@@ -509,15 +604,9 @@ describe('useExerciseMutations', () => {
         { wrapper }
       );
 
-      act(() => {
-        result.current.confirmAndDelete();
-      });
-
-      const alertButtons = (Alert.alert as jest.Mock).mock.calls[0][2];
-      const deleteButton = alertButtons.find((b: any) => b.text === 'Delete');
-
+      const options = result.current.buildDeleteOptions(impact);
       await act(async () => {
-        deleteButton.onPress();
+        options.find((o) => o.mode === 'delete')!.onSelect();
       });
 
       await waitFor(() => {

@@ -320,7 +320,7 @@ describe('foodsApi', () => {
       apiKey: 'test-api-key-12345',
     };
 
-    test('sends DELETE request to /api/foods/:id', async () => {
+    test('defaults to mode=delete, which keeps the diary', async () => {
       mockGetActiveServerConfig.mockResolvedValue(testConfig);
       mockFetch.mockResolvedValue({
         ok: true,
@@ -329,8 +329,10 @@ describe('foodsApi', () => {
 
       await deleteFood('food-abc');
 
+      // The default must never be delete_with_history: a caller that forgets to
+      // pass a mode should remove the library row, not destroy logged entries.
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://example.com/api/foods/food-abc',
+        'https://example.com/api/foods/food-abc?mode=delete',
         expect.objectContaining({
           method: 'DELETE',
           headers: {
@@ -341,6 +343,24 @@ describe('foodsApi', () => {
         })
       );
     });
+
+    test.each(['hide', 'delete', 'delete_with_history'] as const)(
+      'sends mode=%s when asked for it',
+      async (mode) => {
+        mockGetActiveServerConfig.mockResolvedValue(testConfig);
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ message: 'ok' }),
+        });
+
+        await deleteFood('food-abc', mode);
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          `https://example.com/api/foods/food-abc?mode=${mode}`,
+          expect.objectContaining({ method: 'DELETE' })
+        );
+      }
+    );
 
     test('returns parsed JSON response on success', async () => {
       const responseData = { message: 'Food deleted permanently.' };

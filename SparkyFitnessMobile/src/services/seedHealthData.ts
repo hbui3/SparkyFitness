@@ -1,6 +1,11 @@
 import { insertRecords, requestPermission } from 'react-native-health-connect';
 import { addLog } from './LogService';
 import { initHealthConnect } from './healthconnect/index';
+import {
+  requestHealthPermissions,
+  loadAllEnabledPermissions,
+} from './healthConnectService';
+import type { PermissionRequest } from '../types/healthRecords';
 
 // ============================================================================
 // Types
@@ -512,8 +517,13 @@ export const seedRichWorkout = async (): Promise<SeedResult> => {
       };
     }
 
-    await requestPermission([
+    await requestHealthPermissions([
+      ...(await loadAllEnabledPermissions()),
       { accessType: 'write', recordType: 'ExerciseSession' },
+      // Read too, so the very next sync can pull this seeded session back in —
+      // write-only access left seeded data invisible to sync even after a
+      // successful seed.
+      { accessType: 'read', recordType: 'ExerciseSession' },
       // Distinct from ExerciseSession write access — writing a route on the
       // session throws a SecurityException without this too.
       { accessType: 'write', recordType: 'ExerciseRoute' },
@@ -521,7 +531,7 @@ export const seedRichWorkout = async (): Promise<SeedResult> => {
       { accessType: 'write', recordType: 'Speed' },
       { accessType: 'write', recordType: 'Distance' },
       { accessType: 'write', recordType: 'ActiveCaloriesBurned' },
-    ] as Parameters<typeof requestPermission>[0]);
+    ]);
 
     const durationMinutes = 12;
     const sampleCount = 40; // ~1 sample every 18s, well above the downsampler's cap
@@ -702,11 +712,13 @@ export const seedRichStrengthWorkout = async (): Promise<SeedResult> => {
       };
     }
 
-    await requestPermission([
+    await requestHealthPermissions([
+      ...(await loadAllEnabledPermissions()),
       { accessType: 'write', recordType: 'ExerciseSession' },
+      { accessType: 'read', recordType: 'ExerciseSession' },
       { accessType: 'write', recordType: 'HeartRate' },
       { accessType: 'write', recordType: 'ActiveCaloriesBurned' },
-    ] as Parameters<typeof requestPermission>[0]);
+    ]);
 
     const durationMinutes = 35;
     const setCount = 8; // e.g. 4 exercises x 2 sets, alternating work/rest
@@ -1154,19 +1166,38 @@ const SEED_CONFIGS: SeedConfig[] = [
 // Permissions
 // ============================================================================
 
-const getWritePermissions = () => {
+const getWritePermissions = (): PermissionRequest[] => {
   return SEED_CONFIGS.map((config) => ({
     accessType: 'write' as const,
     recordType: config.recordType,
   }));
 };
 
+// Unioned with loadAllEnabledPermissions() so seeding never looks like it revoked a
+// permission the user already granted elsewhere (see healthPermissionSets.ts), while
+// keeping the original per-type granted/denied check: Health Connect can return a
+// partial grant, and seeding proceeds as long as at least one of this seed's own
+// permissions came back — individual record insertions fail gracefully for the rest.
 const requestWritePermissions = async (): Promise<boolean> => {
   try {
+    // On a fresh launch nothing has called initialize() yet, and the native
+    // requestPermission() throws "Health Connect client is not initialized"
+    // rather than initializing itself — same reason seedRichWorkout/
+    // seedRichStrengthWorkout below call this first.
+    const initialized = await initHealthConnect();
+    if (!initialized) {
+      addLog(
+        '[SeedHealthData] Health Connect is not available on this device.',
+        'ERROR'
+      );
+      return false;
+    }
     const permissionsToRequest = getWritePermissions();
-    const permissions = await requestPermission(
-      permissionsToRequest as unknown as Parameters<typeof requestPermission>[0]
-    );
+    const existing = await loadAllEnabledPermissions();
+    const permissions = await requestPermission([
+      ...existing,
+      ...permissionsToRequest,
+    ] as unknown as Parameters<typeof requestPermission>[0]);
 
     const granted = permissionsToRequest.filter((requested) =>
       permissions.some(
@@ -1224,11 +1255,21 @@ export const seedHistoricalSteps = async (): Promise<SeedResult> => {
   );
 
   try {
-    // Request only Steps write permission
+    const initialized = await initHealthConnect();
+    if (!initialized) {
+      return {
+        success: false,
+        recordsInserted: 0,
+        error: 'Health Connect is not available on this device.',
+      };
+    }
+
+    // Request Steps write permission, unioned with everything already enabled.
     try {
-      await requestPermission([
+      await requestHealthPermissions([
+        ...(await loadAllEnabledPermissions()),
         { accessType: 'write' as const, recordType: 'Steps' },
-      ] as unknown as Parameters<typeof requestPermission>[0]);
+      ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       addLog(

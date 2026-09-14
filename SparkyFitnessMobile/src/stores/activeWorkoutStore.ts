@@ -18,6 +18,7 @@ import {
   formatDurationSeconds,
   getDefaultRestSec,
   getSupersetRuns,
+  historyForExercise,
   isCardioModality,
   isDropSetType,
   isDurationModality,
@@ -216,7 +217,7 @@ export interface ActiveWorkoutState {
    * excluded) or `null` when the exercise has no history.
    */
   capturePrBaseline: (
-    exerciseId: string,
+    exerciseId: string | null,
     baseline: PrBaselineEntry | null
   ) => void;
   /**
@@ -226,7 +227,7 @@ export interface ActiveWorkoutState {
    * with no history — that still marks it captured.
    */
   capturePreviousSessionSets: (
-    exerciseId: string,
+    exerciseId: string | null,
     sets: ExerciseRecentSessionSet[]
   ) => void;
   clearWorkout: () => void;
@@ -662,7 +663,7 @@ function adoptAssumedSetValues(
 
   const assumed = resolveAssumedSetValues(
     exercise.sets,
-    state.previousSessionSets[exercise.exercise_id],
+    historyForExercise(state.previousSessionSets, exercise.exercise_id),
     state.plannedSetValues
   )[setIndex];
   const patch: ActiveSetPatch = cardio
@@ -1086,6 +1087,9 @@ export const useActiveWorkoutStore = create<ActiveWorkoutState>()(
         // the store owns idempotency so view/edit card renders can't clobber
         // it and a re-resolved stats query is a no-op. Not a session edit:
         // no revision bump, no dirty flag.
+        // A deleted library exercise has no history to baseline against, so
+        // there is nothing to capture and it can never earn a PR.
+        if (exerciseId == null) return;
         if (state.sessionId == null) return;
         if (exerciseId in state.prBaseline) return;
         set({ prBaseline: { ...state.prBaseline, [exerciseId]: baseline } });
@@ -1095,6 +1099,8 @@ export const useActiveWorkoutStore = create<ActiveWorkoutState>()(
         const state = get();
         // Same gating as capturePrBaseline: live workout only, once per
         // exercise, not a session edit.
+        // As above: no library row, no previous session to show.
+        if (exerciseId == null) return;
         if (state.sessionId == null) return;
         if (exerciseId in state.previousSessionSets) return;
         set({

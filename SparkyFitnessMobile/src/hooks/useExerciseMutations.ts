@@ -20,17 +20,25 @@ import {
   createExercise,
   updateExercise,
   deleteExerciseFromLibrary,
+  type ExerciseDeleteMode,
+  type ExerciseDeletionImpact,
   type CreateExerciseEntryPayload,
   type UpdateExercisePayload,
 } from '../services/api/exerciseApi';
 import { normalizeDate } from '../utils/dateUtils';
 import { invalidateExerciseCache } from './invalidateExerciseCache';
 import { syncExerciseSessionInCache } from './syncExerciseSessionInCache';
-import { suggestedExercisesQueryKey } from './queryKeys';
+import {
+  suggestedExercisesQueryKey,
+  dailySummaryRootQueryKey,
+  workoutPresetsQueryKey,
+  exerciseHistoryQueryKey,
+  exerciseStatsQueryKeyRoot,
+} from './queryKeys';
 
 // Library/catalog mutations don't have an `entryDate`, so they cannot reuse
 // `invalidateExerciseCache` (which is keyed to a date). Use this helper to
-// invalidate the library/search/recents/count caches after create/update/delete.
+// invalidate the library/search/recents/count/diary/preset caches after create/update/delete.
 function invalidateExerciseLibraryCaches(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: suggestedExercisesQueryKey });
   void qc.invalidateQueries({ queryKey: ['exercises', 'count'] });
@@ -39,6 +47,12 @@ function invalidateExerciseLibraryCaches(qc: QueryClient) {
   // ExerciseDetail's hydration cache would otherwise outrank the fresh item
   // passed by upstream screens after an edit (staleTime is Infinity).
   void qc.invalidateQueries({ queryKey: ['exerciseDetail'] });
+  void qc.invalidateQueries({ queryKey: workoutPresetsQueryKey });
+  void qc.invalidateQueries({ queryKey: ['workoutPresetsLibrary'] });
+  void qc.invalidateQueries({ queryKey: ['workoutPresetSearch'] });
+  void qc.invalidateQueries({ queryKey: dailySummaryRootQueryKey });
+  void qc.invalidateQueries({ queryKey: exerciseHistoryQueryKey });
+  void qc.invalidateQueries({ queryKey: exerciseStatsQueryKeyRoot });
 }
 
 function translateExerciseError(key: string, fallback: string): string {
@@ -377,7 +391,16 @@ export function useDeleteExerciseEntry({
 
 interface UseDeleteExerciseLibraryOptions {
   exerciseId: string;
-  onSuccess?: () => void;
+  onSuccess?: (result?: { message?: string; status?: string }) => void;
+}
+
+/** One row of the delete ActionSheet. */
+export interface ExerciseDeleteOption {
+  mode: ExerciseDeleteMode;
+  label: string;
+  description: string;
+  destructive: boolean;
+  onSelect: () => void;
 }
 
 export function useDeleteExerciseLibrary({
@@ -386,10 +409,26 @@ export function useDeleteExerciseLibrary({
 }: UseDeleteExerciseLibraryOptions) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: () => deleteExerciseFromLibrary(exerciseId),
-    onSuccess: () => {
+    mutationFn: (mode: ExerciseDeleteMode) =>
+      deleteExerciseFromLibrary(exerciseId, mode),
+    onSuccess: (result) => {
       invalidateExerciseLibraryCaches(queryClient);
-      onSuccess?.();
+      // The server downgrades a delete to a hide when another user still
+      // references the exercise, so report what actually happened rather than
+      // what was asked for.
+      if (result?.status === 'hidden') {
+        Toast.show({
+          type: 'info',
+          text1: i18n.t('exerciseMutations.hidden.title', {
+            defaultValue: 'Exercise hidden',
+          }),
+          text2: i18n.t('exerciseMutations.hidden.usedByOthers', {
+            defaultValue:
+              'It is used by other people, so it was hidden instead of deleted. Their history is unaffected.',
+          }),
+        });
+      }
+      onSuccess?.(result);
     },
     onError: (error) => {
       const message = isAuthzError(error)
@@ -407,14 +446,19 @@ export function useDeleteExerciseLibrary({
     },
   });
 
-  const confirmAndDelete = () => {
+  /**
+   * Second step of the flow: once the user has picked `delete_with_history`,
+   * confirm it separately. It is the only mode that destroys anything the user
+   * cannot get back, so it never happens on a single tap.
+   */
+  const confirmDestructive = () => {
     Alert.alert(
-      i18n.t('exerciseMutations.confirm.deleteExerciseTitle', {
-        defaultValue: 'Delete Exercise?',
+      i18n.t('exerciseMutations.confirm.deleteWithHistoryTitle', {
+        defaultValue: 'Delete workouts too?',
       }),
-      i18n.t('exerciseMutations.confirm.deleteExerciseMessage', {
+      i18n.t('exerciseMutations.confirm.deleteWithHistoryMessage', {
         defaultValue:
-          'This exercise will be removed from your library. Past logged sessions are preserved.',
+          'This also permanently deletes your logged workouts for this exercise. This cannot be undone.',
       }),
       [
         {
@@ -424,11 +468,73 @@ export function useDeleteExerciseLibrary({
         {
           text: i18n.t('common.delete', { defaultValue: 'Delete' }),
           style: 'destructive',
-          onPress: () => mutation.mutate(),
+          onPress: () => mutation.mutate('delete_with_history'),
         },
       ]
     );
   };
 
-  return { confirmAndDelete, isPending: mutation.isPending };
+  /**
+   * Builds the Hide / Delete / Delete-including-history choices for an
+   * ActionSheet. `impact` decides which are offered: when anybody else
+   * references the exercise, presets and plans would cascade out of THEIR data
+   * too, so hiding is the only option that leaves them alone.
+   *
+   * Pass the impact from `getExerciseDeletionImpact`; while it is still loading
+   * (null) only Hide is offered, because assuming nobody else uses it is the
+   * one guess that can damage another person's data.
+   */
+  const buildDeleteOptions = (
+    impact: ExerciseDeletionImpact | null
+  ): ExerciseDeleteOption[] => {
+    const hide: ExerciseDeleteOption = {
+      mode: 'hide',
+      label: i18n.t('exerciseMutations.options.hide', {
+        defaultValue: 'Hide from search',
+      }),
+      description: i18n.t('exerciseMutations.options.hideDescription', {
+        defaultValue:
+          'Keeps everything as it is. The exercise just stops showing up when you search.',
+      }),
+      destructive: false,
+      onSelect: () => mutation.mutate('hide'),
+    };
+    if (impact == null || impact.otherUserReferences > 0) return [hide];
+
+    return [
+      hide,
+      {
+        mode: 'delete',
+        label: i18n.t('exerciseMutations.options.delete', {
+          defaultValue: 'Delete',
+        }),
+        description: i18n.t('exerciseMutations.options.deleteDescription', {
+          defaultValue:
+            'Removes it from your library, presets and plans. Your logged workouts are kept.',
+        }),
+        destructive: false,
+        onSelect: () => mutation.mutate('delete'),
+      },
+      {
+        mode: 'delete_with_history',
+        label: i18n.t('exerciseMutations.options.deleteWithHistory', {
+          defaultValue: 'Delete including history',
+        }),
+        description: i18n.t(
+          'exerciseMutations.options.deleteWithHistoryDescription',
+          {
+            defaultValue:
+              'Also permanently deletes your logged workouts for this exercise.',
+          }
+        ),
+        destructive: true,
+        onSelect: confirmDestructive,
+      },
+    ];
+  };
+
+  return {
+    buildDeleteOptions,
+    isPending: mutation.isPending,
+  };
 }

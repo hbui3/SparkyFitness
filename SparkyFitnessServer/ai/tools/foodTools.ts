@@ -793,7 +793,7 @@ Actions:
 - log_meal(meal_type_id?|meal_type?, entry_date, meal_id?, meal_name?, quantity?)
 - list_diary(entry_date?)
 - delete_entry(entry_id?|food_name?, entry_type?, entry_date?, meal_type?|meal_type_id?) — deletes one diary entry. Provide entry_id when you have it; otherwise food_name is resolved against the diary for entry_date (defaults to today), with meal_type narrowing when the same food appears in several meals. Ambiguous names return the candidates with their ids instead of deleting.
-- delete_food(food_id?|food_name?) — deletes food + variants + all diary entries referencing it
+- delete_food(food_id?|food_name?) — deletes food + variants from library; logged diary entries are preserved
 - update_entry(entry_id?|food_name?, entry_type?, entry_date?, quantity?, unit?, meal_type_id?, meal_type?) — changes quantity/unit and/or moves the entry to another meal type (meal_type/meal_type_id is the NEW meal). Provide entry_id when you have it; otherwise food_name is resolved against the diary for entry_date (defaults to today). Ambiguous names return the candidates with their ids instead of updating.
 - update_food_variant(food_id?|variant_id?, serving_size?, serving_unit?, calories?, protein?, carbs?, fat?, saturated_fat?, fiber?, sugar?, sodium?, ..., update_existing_entries?) — updates an existing food variant without deleting the food. Defaults to leaving existing diary entries unchanged.
 - copy_from_yesterday(target_date?, source_date?, meal_type_id?|meal_type?)
@@ -1987,10 +1987,13 @@ Actions:
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               let result: any;
               try {
+                // 'delete' deliberately, never 'delete_with_history': the
+                // assistant removes the food from the library, it does not get
+                // to destroy logged history on a casual "delete this food".
                 result = await foodCoreService.deleteFood(
                   userId,
                   String(foodId),
-                  true
+                  'delete'
                 );
               } catch (error) {
                 if (
@@ -2014,7 +2017,7 @@ Actions:
                 );
               }
               return formatConfirmation(
-                `Food "${name}" deleted (including variants and diary entries).`
+                `Food "${name}" deleted (including variants). Your logged diary entries are preserved.`
               );
             }
 

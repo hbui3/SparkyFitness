@@ -14,10 +14,14 @@ import {
   HealthMetricStates,
   type MetricConfig,
   type TransformedRecord,
+  type PermissionRequest,
 } from '../types/healthRecords';
 import { SyncDuration } from './healthconnect/preferences';
 import { migrateEnabledMetricPermissionsIfNeeded } from './shared/healthPermissionMigration';
-import { enabledWritebackPermissions } from './shared/healthPermissionSets';
+import {
+  enabledWritebackPermissions,
+  loadAllEnabledPermissions as loadAllEnabledPermissionsShared,
+} from './shared/healthPermissionSets';
 import * as Application from 'expo-application';
 
 // Tell the read transformers which package is "us" so they skip Health Connect
@@ -114,6 +118,10 @@ export const refreshEnabledMetricPermissions = async (
     requestHealthPermissions,
     logTag: '[HealthConnectService]',
   });
+
+/** Every permission currently enabled (read metrics + writeback), read from storage. */
+export const loadAllEnabledPermissions = (): Promise<PermissionRequest[]> =>
+  loadAllEnabledPermissionsShared(loadHealthPreference);
 
 // Locked-device detection stubs for Android (iOS-only feature)
 export const resetDatabaseInaccessibleCount = (): void => {};

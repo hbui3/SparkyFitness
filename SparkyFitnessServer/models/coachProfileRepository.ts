@@ -1,7 +1,8 @@
-import type {
-  CoachProfiles,
-  ProactiveCoachCategory,
-  UpdateCoachProfileRequest,
+import {
+  DEFAULT_LANGUAGE,
+  type CoachProfiles,
+  type ProactiveCoachCategory,
+  type UpdateCoachProfileRequest,
 } from '@workspace/shared';
 import { getClient, getSystemClient } from '../db/poolManager.js';
 import {
@@ -181,7 +182,7 @@ async function listProactiveCoachCandidates(): Promise<
       `SELECT
          cp.user_id,
          COALESCE(up.timezone, 'UTC') AS timezone,
-         COALESCE(up.language, 'en') AS language,
+         COALESCE(up.language, '${DEFAULT_LANGUAGE}') AS language,
          cp.adaptive_check_ins_enabled,
          cp.adaptive_last_sent_slot,
          cp.adaptive_start_time,
@@ -236,7 +237,7 @@ async function listProactiveCoachCandidates(): Promise<
     return rows.map((row: Record<string, unknown>) => ({
       userId: String(row.user_id),
       timezone: String(row.timezone || 'UTC'),
-      language: String(row.language || 'en'),
+      language: String(row.language || DEFAULT_LANGUAGE),
       adaptiveCheckInsEnabled: row.adaptive_check_ins_enabled === true,
       adaptiveLastObservedSlot:
         typeof row.adaptive_last_sent_slot === 'string'
@@ -335,12 +336,12 @@ async function getCoachLanguage(userId: string): Promise<string> {
   const client = await getClient(userId, userId);
   try {
     const { rows } = await client.query(
-      `SELECT COALESCE(language, 'en') AS language
+      `SELECT COALESCE(language, '${DEFAULT_LANGUAGE}') AS language
        FROM user_preferences
        WHERE user_id = $1`,
       [userId]
     );
-    return String(rows[0]?.language || 'en');
+    return String(rows[0]?.language || DEFAULT_LANGUAGE);
   } finally {
     client.release();
   }

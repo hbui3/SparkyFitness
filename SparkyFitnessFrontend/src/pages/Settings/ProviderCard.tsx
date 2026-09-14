@@ -68,8 +68,8 @@ const PROVIDER_PORTALS: Record<string, { label: string; url: string }> = {
     url: 'https://developer.ouraring.com/applications',
   },
   withings: {
-    label: 'Withings Partner Dashboard',
-    url: 'https://partner.withings.com/',
+    label: 'Withings Developer Dashboard',
+    url: 'https://developer.withings.com/dashboard/',
   },
   polar: {
     label: 'Polar Flow Applications',

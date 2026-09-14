@@ -1,6 +1,7 @@
 import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { buildMealPlanTools } from '../ai/tools/mealPlansTools.js';
 import mealPlanTemplateService from '../services/mealPlanTemplateService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/mealPlanTemplateService', () => ({
   default: {
@@ -13,7 +14,7 @@ vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const PLAN_ID = '123e4567-e89b-12d3-a456-426614174000';
 const OTHER_ID = '223e4567-e89b-12d3-a456-426614174000';
 const DB_ERROR_TEXT =

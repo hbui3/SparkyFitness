@@ -78,6 +78,7 @@ import {
   RowSelectionState,
   CellContext,
 } from '@tanstack/react-table';
+import { type DataTableFeatures } from '@/components/ui/dataTableFeatures';
 
 // This component is now a standalone library for managing meal templates.
 // Interactions with the meal plan calendar are handled by the calendar itself.
@@ -348,7 +349,7 @@ const MealManagement: React.FC = () => {
     [queryClient, updateMeal, loggingLevel]
   );
 
-  const columns = React.useMemo<ColumnDef<Meal>[]>(
+  const columns = React.useMemo<ColumnDef<DataTableFeatures, Meal>[]>(
     () => [
       {
         id: 'select',
@@ -463,7 +464,7 @@ const MealManagement: React.FC = () => {
             ? Math.round(convertEnergy(total, 'kcal', energyUnit))
             : total;
         },
-        cell: (info: CellContext<Meal, unknown>) => {
+        cell: (info: CellContext<DataTableFeatures, Meal, unknown>) => {
           const meta = getNutrientMetadata(nutrient, customNutrients);
           return (
             <span className={`font-medium ${meta.color}`}>

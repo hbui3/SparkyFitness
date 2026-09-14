@@ -73,7 +73,7 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           </Text>
         </View>
         <Text className="text-sm text-text-muted">
-          ({itemCount}{' '}
+          (
           {t('common.itemCount', {
             count: itemCount,
             defaultValue: '{{count}} items',

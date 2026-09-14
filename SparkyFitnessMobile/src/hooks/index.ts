@@ -12,6 +12,13 @@ export { useSyncHealthData } from './useSyncHealthData';
 export { useDailySummary } from './useDailySummary';
 export { useFamilyUsers, useFamilyDailySummary } from './useFamilyDiary';
 export { useMeasurements } from './useMeasurements';
+
+// Only `useWatchCheckInBridge` is re-exported here: App.tsx mounts it through
+// this barrel. `useUpsertCheckIn` and `useWatchConnectivity` are imported by
+// their own paths at every call site, so adding them here created exports
+// nothing consumes — which `knip` fails the build over.
+export { useWatchCheckInBridge } from './useWatchCheckInBridge';
+
 export { usePreferences } from './usePreferences';
 export { useRefetchOnFocus } from './useRefetchOnFocus';
 export { useWaterIntakeMutation } from './useWaterIntakeMutation';
@@ -39,12 +46,23 @@ export {
 } from './useMealPlans';
 export { useMealPlanNutrition } from './useMealPlanNutrition';
 export { useMealSearch } from './useMealSearch';
+export {
+  useWaterContainersQuery,
+  useDrinkPresetCatalogQuery,
+  useCreateWaterContainerMutation,
+  useUpdateWaterContainerMutation,
+  useDeleteWaterContainerMutation,
+  useSetPrimaryWaterContainerMutation,
+  useReorderWaterContainersMutation,
+  useAddDrinkPresetMutation,
+} from './useWaterContainers';
 export { useExternalProviders } from './useExternalProviders';
 export { useExternalFoodSearch } from './useExternalFoodSearch';
 export { useAllProvidersSearch } from './useAllProvidersSearch';
 export type { ProviderSearchResult } from './useAllProvidersSearch';
 export { useMealTypes } from './useMealTypes';
 export { useDeleteFood } from './useDeleteFood';
+export { useCaffeineKinetics } from './useCaffeineKinetics';
 export { useFoodVariants } from './useFoodVariants';
 export type { StepsDataPoint, WeightDataPoint } from './useMeasurementsRange';
 export { useHealthTrends } from './useHealthTrends';

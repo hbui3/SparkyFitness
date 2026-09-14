@@ -44,6 +44,12 @@ vi.mock('../models/genericHealthRepository.js', () => ({
   getHealthConnectTotalCaloriesByDateRange: vi.fn(),
 }));
 
+vi.mock('../services/nutrientGoalPreferenceService.js', () => ({
+  default: {
+    getEffectiveGoalTypes: vi.fn().mockResolvedValue({}),
+  },
+}));
+
 vi.mock('../services/bmrService.js', () => ({
   default: {
     calculateBmr: vi.fn().mockReturnValue(1800),
@@ -289,4 +295,24 @@ describe('getDashboardStats calorie arithmetic', () => {
     // Ate 3000 against a 2000 goal with nothing burned.
     expect(result.progress).toBe(150);
   });
+});
+
+test('dashboard step calories use weight and height known on the requested date', async () => {
+  vi.mocked(measurementRepository.getLatestWeightHeight).mockImplementation(
+    async (_user, date) =>
+      date === '2026-06-13'
+        ? { weightKg: 80, heightCm: 180 }
+        : { weightKg: 120, heightCm: 200 }
+  );
+  vi.mocked(
+    measurementRepository.getCheckInMeasurementsByDate
+  ).mockResolvedValue({ steps: 10000 });
+
+  const result = await getDashboardStats('user1', '2026-06-13', true);
+
+  expect(result.stepCalories).toBe(316);
+  expect(measurementRepository.getLatestWeightHeight).toHaveBeenCalledWith(
+    'user1',
+    '2026-06-13'
+  );
 });

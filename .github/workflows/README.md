@@ -30,7 +30,7 @@ upstream review workflow
 
 **Purpose**: Validate that PR submissions follow contribution guidelines and required checkboxes are checked.
 
-**Triggers**: Pull requests (opened, edited, synchronize, reopened)
+**Triggers**: Pull request activity, submitted/dismissed reviews, and created/deleted review comments
 
 **What it does**:
 
@@ -44,6 +44,8 @@ upstream review workflow
 - Posts validation results as a comment on the PR
 - Fails the check if required checkboxes are missing
 - Updates the same comment on subsequent edits (no spam)
+
+Review events from forks have read-only tokens. They still validate the checklist and unresolved review conversations, with results in the job summary. Labels, checklist restoration, and the PR validation comment are updated only on `pull_request_target` events. Review runs cannot cancel those updates, and policy rules are always loaded from the PR base.
 
 **Change Detection Logic**:
 
@@ -263,6 +265,8 @@ Only locales listed in `SparkyFitnessMobile/src/localization/localeRegistry.json
 ## Development Notes
 
 ### Testing Workflows Locally
+
+Run the PR validation regression tests with `pnpm install --filter . --frozen-lockfile --ignore-scripts` and `node --test .github/scripts/pr-validation.test.cjs`. The tests execute the workflow script with read-only review-event API fixtures and run in `pr-validation-tests.yml`.
 
 You can test GitHub Actions locally using [act](https://github.com/nektos/act):
 

@@ -20,6 +20,75 @@ import {
   evaluateOpenFoodFactsProviderCredentials,
   OPEN_FOOD_FACTS_PROVIDER_TYPE,
 } from './openFoodFactsProviderCredentials.js';
+import {
+  assertOutboundUrlShapeAndLiteralAllowed,
+  deriveFoodProviderNetworkPolicy,
+  resolveHostnameForOutboundConnection,
+  isOutboundUrlBlockedError,
+  OutboundUrlShapeError,
+} from '../utils/outboundUrlPolicy.js';
+import { resolveIsAdminByUserId } from '../utils/adminCheck.js';
+
+// Provider types whose stored base_url is fetched server-side, making it an
+// SSRF surface. Their base_url is validated against the food-provider network
+// policy at save time.
+const BASE_URL_FETCHING_PROVIDER_TYPES = new Set([
+  'mealie',
+  'tandoor',
+  'norish',
+]);
+
+// Reject a private/internal base_url for the self-hosted recipe providers.
+// Admins may point at a private/LAN address (a single-user self-host is an
+// admin, so no config is needed); a non-admin on a multi-user server is
+// blocked unless the operator sets ALLOW_PRIVATE_NETWORK_FOOD_PROVIDERS=true.
+// Reuses the same guard the AI-service URLs use, but surfaces a food-specific
+// message so the user isn't told about "AI service URL".
+async function validateFoodProviderBaseUrl(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  providerType: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  baseUrl: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  authenticatedUserId: any
+) {
+  if (!BASE_URL_FETCHING_PROVIDER_TYPES.has(providerType)) return;
+  if (baseUrl === undefined || baseUrl === null || baseUrl === '') return;
+  // The provider services accept a scheme-less base_url and default it to
+  // https:// (e.g. "mealie.example.com"). Normalize the same way before
+  // validating so a bare host/IP isn't rejected as a malformed URL.
+  let normalized = String(baseUrl).trim();
+  if (
+    normalized &&
+    !normalized.startsWith('http://') &&
+    !normalized.startsWith('https://')
+  ) {
+    normalized = `https://${normalized}`;
+  }
+  const isAdmin = await resolveIsAdminByUserId(authenticatedUserId);
+  const policy = deriveFoodProviderNetworkPolicy(isAdmin);
+  try {
+    const url = assertOutboundUrlShapeAndLiteralAllowed(normalized, policy);
+    // Resolve the hostname too, not just literal-IP shape: a non-admin could
+    // otherwise point at a hostname whose A record is a private/internal
+    // address (e.g. 10.0.0.1, 169.254.169.254). For admins the policy allows
+    // private, so this returns without a DNS block and split-horizon
+    // (public + LAN) hostnames keep working.
+    await resolveHostnameForOutboundConnection(url.hostname, policy);
+  } catch (error) {
+    if (isOutboundUrlBlockedError(error)) {
+      throw badRequest(
+        'Provider base URL resolves to a private or internal address. Only admins can use a local/self-hosted address by default; to allow all users, set ALLOW_PRIVATE_NETWORK_FOOD_PROVIDERS=true in your server environment configuration.'
+      );
+    }
+    if (error instanceof OutboundUrlShapeError) {
+      throw badRequest(
+        'Provider base URL is invalid: it must be a well-formed http(s) URL without embedded credentials.'
+      );
+    }
+    throw error;
+  }
+}
 
 function validateSpeedianceCredentials(
   email: unknown,
@@ -323,6 +392,11 @@ async function createExternalDataProvider(
   try {
     providerData.user_id = authenticatedUserId;
     providerData.is_public = false; // Regular users cannot create global public providers
+    await validateFoodProviderBaseUrl(
+      providerData.provider_type,
+      providerData.base_url,
+      authenticatedUserId
+    );
     const openFoodFactsCredentials = evaluateOpenFoodFactsProviderCredentials(
       undefined,
       providerData
@@ -387,6 +461,15 @@ async function updateExternalDataProvider(
     // we need to invalidate the OFF session cache after the update.
     const existingProvider =
       await externalProviderRepository.getExternalDataProviderById(providerId);
+
+    // Validate against the effective (post-update) provider type and base_url so
+    // switching a provider to mealie/tandoor/norish, or repointing its base_url,
+    // is guarded the same as a fresh create.
+    await validateFoodProviderBaseUrl(
+      updateData.provider_type ?? existingProvider?.provider_type,
+      updateData.base_url ?? existingProvider?.base_url,
+      authenticatedUserId
+    );
 
     const openFoodFactsCredentials = evaluateOpenFoodFactsProviderCredentials(
       existingProvider,

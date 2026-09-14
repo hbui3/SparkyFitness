@@ -82,6 +82,67 @@ describe('measurementRepository.getLatestCheckInMeasurementsOnOrBeforeDate', () 
   });
 });
 
+describe('measurementRepository.getLatestManualCustomEntriesOnOrBeforeDate', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockClient: any;
+
+  beforeEach(() => {
+    mockClient = {
+      query: vi.fn(),
+      release: vi.fn(),
+    };
+    vi.mocked(getClient).mockResolvedValue(mockClient);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const runQuery = async () => {
+    mockClient.query.mockResolvedValue({ rows: [] });
+    await measurementRepository.getLatestManualCustomEntriesOnOrBeforeDate(
+      'user-1',
+      '2026-05-10'
+    );
+    return mockClient.query.mock.calls[0][0] as string;
+  };
+
+  it('binds the user and the day in order and scopes the client to the user', async () => {
+    // A swap of the two parameters would keep every other assertion green while
+    // returning another user's rows, so the binding order is asserted directly.
+    await runQuery();
+
+    expect(mockClient.query.mock.calls[0][1]).toEqual(['user-1', '2026-05-10']);
+    expect(vi.mocked(getClient)).toHaveBeenCalledWith('user-1');
+  });
+
+  it('resolves one row per category in a single query', async () => {
+    const sql = await runQuery();
+    expect(sql).toContain('DISTINCT ON (cm.category_id)');
+    expect(mockClient.query).toHaveBeenCalledTimes(1);
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds the lookup to on-or-before the requested day', async () => {
+    const sql = await runQuery();
+    expect(sql).toContain('cm.entry_date <= $2');
+    expect(sql).not.toContain('cm.entry_date = $2');
+  });
+
+  it('restricts suggestions to manual sources so a sync sample is never offered', async () => {
+    const sql = await runQuery();
+    expect(sql).toContain("cm.source = 'manual'");
+    expect(sql).toContain('cm.value IS NOT NULL');
+  });
+
+  it('orders by day then timestamp so the newest manual value wins', async () => {
+    const sql = await runQuery();
+    expect(sql).toContain(
+      'ORDER BY cm.category_id, cm.entry_date DESC, cm.entry_timestamp DESC, cm.id DESC'
+    );
+  });
+});
+
 describe('measurementRepository.upsertStepData', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockClient: any;
@@ -168,5 +229,38 @@ describe('measurementRepository.upsertStepData', () => {
       'acting-1',
       JSON.stringify({ steps: { source: 'manual' } }),
     ]);
+  });
+});
+
+describe('measurementRepository.getLatestWeightHeight', () => {
+  it('prefers prior measurements and falls back to the earliest later value for each field', async () => {
+    const client = {
+      query: vi
+        .fn()
+        .mockResolvedValue({ rows: [{ weight: '80', height: '180' }] }),
+      release: vi.fn(),
+    };
+    vi.mocked(getClient).mockResolvedValue(client);
+
+    const result = await measurementRepository.getLatestWeightHeight(
+      'user-1',
+      '2026-08-08'
+    );
+
+    expect(result).toEqual({ weightKg: 80, heightCm: 180 });
+    const [sql, params] = client.query.mock.calls[0];
+    expect(params).toEqual(['user-1', '2026-08-08']);
+    for (const field of ['weight', 'height']) {
+      expect(sql).toContain(
+        `WHERE user_id = $1 AND entry_date <= $2 AND ${field} IS NOT NULL AND ${field} > 0`
+      );
+      expect(sql).toContain(
+        `WHERE user_id = $1 AND entry_date > $2 AND ${field} IS NOT NULL AND ${field} > 0`
+      );
+    }
+    expect(sql).toContain('COALESCE((SELECT weight');
+    expect(sql).toContain('COALESCE((SELECT height');
+    expect(sql).toContain('ORDER BY entry_date ASC, updated_at DESC LIMIT 1');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 });

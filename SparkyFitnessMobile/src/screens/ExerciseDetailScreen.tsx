@@ -21,11 +21,19 @@ import Icon from '../components/Icon';
 import SafeImage from '../components/SafeImage';
 import SegmentedControl, { type Segment } from '../components/SegmentedControl';
 import ExerciseHistoryList from '../components/ExerciseHistoryList';
+import ActionSheet, {
+  type ActionSheetItem,
+  type ActionSheetRef,
+} from '../components/ActionSheet';
 import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
-import { fetchExerciseById } from '../services/api/exerciseApi';
+import {
+  fetchExerciseById,
+  getExerciseDeletionImpact,
+} from '../services/api/exerciseApi';
 import { importExercise } from '../services/api/externalExerciseSearchApi';
 import { getApiErrorMessage } from '../services/api/errors';
 import {
+  exerciseDeletionImpactQueryKey,
   exerciseDetailQueryKey,
   suggestedExercisesQueryKey,
 } from '../hooks/queryKeys';
@@ -212,19 +220,47 @@ const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
     }
   }, [exercise.id, isPublic, updateExerciseAsync, navigation, t]);
 
-  const { confirmAndDelete, isPending: isDeletePending } =
+  const { buildDeleteOptions, isPending: isDeletePending } =
     useDeleteExerciseLibrary({
       exerciseId: exercise.id,
-      onSuccess: () => {
-        Toast.show({
-          type: 'success',
-          text1: t('exerciseDetail.deleted', {
-            defaultValue: 'Exercise deleted',
-          }),
-        });
+      onSuccess: (result) => {
+        if (result?.status !== 'hidden') {
+          Toast.show({
+            type: 'success',
+            text1: t('exerciseDetail.deleted', {
+              defaultValue: 'Exercise deleted',
+            }),
+          });
+        }
         navigation.goBack();
       },
     });
+
+  // Prefetched rather than fetched on tap: ActionSheet owners must have the
+  // items ready before present(), and this decides which options exist at all.
+  // Until it resolves, buildDeleteOptions offers Hide only — assuming nobody
+  // else uses the exercise is the one guess that could damage another person's
+  // presets and plans.
+  const { data: deletionImpact } = useQuery({
+    queryKey: exerciseDeletionImpactQueryKey(exercise.id),
+    queryFn: () => getExerciseDeletionImpact(exercise.id),
+    enabled: canManageExercise && UUID_REGEX.test(exercise.id),
+  });
+
+  const deleteSheetRef = useRef<ActionSheetRef>(null);
+  const deleteSheetItems = useMemo<ActionSheetItem[]>(
+    () =>
+      buildDeleteOptions(deletionImpact ?? null).map((option) => ({
+        key: option.mode,
+        label: `${option.label}\n${option.description}`,
+        destructive: option.destructive,
+        onPress: option.onSelect,
+      })),
+    [buildDeleteOptions, deletionImpact]
+  );
+  const handlePressDelete = useCallback(() => {
+    deleteSheetRef.current?.present();
+  }, []);
 
   const { startLiveWorkout, isStarting } = useStartLiveWorkout(navigation);
   const handleStartWorkout = () => {
@@ -892,7 +928,7 @@ const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
               {canManageExercise && (
                 <Button
                   variant="destructive"
-                  onPress={confirmAndDelete}
+                  onPress={handlePressDelete}
                   disabled={isDeletePending}
                 >
                   {isDeletePending
@@ -907,6 +943,14 @@ const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
             </>
           )}
         </ScrollView>
+
+        <ActionSheet
+          ref={deleteSheetRef}
+          title={t('exerciseDetail.deleteSheetTitle', {
+            defaultValue: 'Delete exercise',
+          })}
+          items={deleteSheetItems}
+        />
       </View>
     </GestureDetector>
   );

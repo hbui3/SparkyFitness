@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMemoryTools } from '../ai/tools/memoryTools.js';
 import coachMemoryService from '../services/coachMemoryService.js';
 import coachProfileService from '../services/coachProfileService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/coachMemoryService.js', () => ({
   default: {
@@ -18,7 +19,7 @@ vi.mock('../services/coachProfileService.js', () => ({
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 
-const toolOptions = { toolCallId: 'memory-call-1', messages: [] };
+const toolOptions = { ...toolOpts, toolCallId: 'memory-call-1' };
 const savedMemory = {
   id: '11111111-1111-4111-8111-111111111111',
   category: 'routine' as const,

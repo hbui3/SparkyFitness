@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { diaryReportKeys } from '@/api/keys/diary';
 import { MealFilter } from '@/types/meal';
+import type { FoodDeleteMode } from '@/types/food';
 import { FoodDataForBackend } from '@/types/food';
 import { useFoodEntryInvalidation } from '../useInvalidateKeys';
 
@@ -108,13 +109,8 @@ export const foodViewOptions = (foodId: string) => ({
   queryKey: foodKeys.one(foodId),
   queryFn: () => getFoodById(foodId),
   staleTime: 1000 * 10,
+  retry: false,
   enabled: !!foodId,
-  meta: {
-    errorMessage: i18n.t(
-      'foodDatabaseManager.failedToLoadFoodDetails',
-      'Failed to load food details.'
-    ),
-  },
 });
 export const useFoodView = (foodId: string, isEnabled: boolean = true) => {
   return useQuery({
@@ -124,20 +120,22 @@ export const useFoodView = (foodId: string, isEnabled: boolean = true) => {
 };
 
 export const useDeleteFoodMutation = () => {
-  const queryClient = useQueryClient();
+  const invalidateFoodEntries = useFoodEntryInvalidation();
   const { t } = useTranslation();
   return useMutation({
     mutationFn: ({
       foodId,
-      force = false,
+      mode = 'delete',
     }: {
       foodId: string;
-      force?: boolean;
-    }) => deleteFood(foodId, force),
+      mode?: FoodDeleteMode;
+    }) => deleteFood(foodId, mode),
+    // Every mode can change what the diary shows — delete_with_history removes
+    // entries outright, and a plain delete nulls their food_id — so the diary
+    // is invalidated alongside the food list. Without this the diary kept
+    // rendering rows for a food that no longer exists and opening one 404'd.
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: foodKeys.all,
-      });
+      invalidateFoodEntries();
     },
     meta: {
       errorMessage: t(

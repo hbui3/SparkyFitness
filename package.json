@@ -7,8 +7,8 @@
     "reset-dev": "./scripts/reset-dev.sh"
   },
   "devDependencies": {
-    "husky": "^9.0.0",
-    "lint-staged": "^16.4.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.0",
     "prettier": "3.9.6"
   },
   "lint-staged": {
@@ -22,37 +22,7 @@
       "npx prettier --write --ignore-path SparkyFitnessMobile/.prettierignore"
     ]
   },
-  "pnpm": {
-    "supportedArchitectures": {
-      "os": [
-        "current",
-        "linux"
-      ],
-      "cpu": [
-        "current",
-        "x64",
-        "arm64"
-      ]
-    },
-    "overrides": {
-      "side-channel": "1.0.6",
-      "tailwindcss": "4.2.1",
-      "assistant-cloud": "0.1.33",
-      "zustand": "5.0.14"
-    },
-    "onlyBuiltDependencies": [
-      "@scarf/scarf",
-      "@shopify/react-native-skia",
-      "@swc/core",
-      "@parcel/watcher",
-      "bcrypt",
-      "sharp",
-      "esbuild",
-      "unrs-resolver",
-      "vue-demi"
-    ]
-  },
   "dependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^5.4.1"
   }
 }

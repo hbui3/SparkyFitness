@@ -5,6 +5,7 @@ import coachRepository from '../models/coachRepository.js';
 import coachProfileService from '../services/coachProfileService.js';
 import workoutDeduplicationService from '../services/workoutDeduplicationService.js';
 import { getResolvedExerciseCaloriesTotal } from '../services/exerciseCalorieRangeService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../models/coachRepository', () => ({
   default: {
@@ -47,7 +48,7 @@ vi.mock('../services/workoutDeduplicationService', () => ({
   default: { getCanonicalWorkoutAggregates: vi.fn() },
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';
 

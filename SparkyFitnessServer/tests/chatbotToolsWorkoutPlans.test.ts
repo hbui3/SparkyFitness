@@ -14,8 +14,9 @@ vi.mock('../config/logging.js', () => ({
 
 import workoutPlanTemplateService from '../services/workoutPlanTemplateService.js';
 import { buildWorkoutPlanTools } from '../ai/tools/workoutPlanTools.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 
 const PLAN_ID = 42;
 

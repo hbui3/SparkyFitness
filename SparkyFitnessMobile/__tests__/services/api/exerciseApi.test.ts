@@ -474,7 +474,7 @@ describe('exerciseApi - createExerciseEntry / updateExerciseEntry', () => {
   });
 
   describe('deleteExerciseFromLibrary', () => {
-    it('sends DELETE to /api/exercises/:id', async () => {
+    it('defaults to mode=delete, which keeps the diary', async () => {
       mockGetActiveServerConfig.mockResolvedValue(testConfig);
       mockFetch.mockResolvedValue({
         ok: true,
@@ -483,11 +483,31 @@ describe('exerciseApi - createExerciseEntry / updateExerciseEntry', () => {
 
       await deleteExerciseFromLibrary('ex-1');
 
+      // The default must never be delete_with_history: a caller that forgets to
+      // pass a mode should remove the library row, not destroy logged workouts.
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://example.com/api/exercises/ex-1',
+        'https://example.com/api/exercises/ex-1?mode=delete',
         expect.objectContaining({ method: 'DELETE' })
       );
     });
+
+    it.each(['hide', 'delete', 'delete_with_history'] as const)(
+      'sends mode=%s when asked for it',
+      async (mode) => {
+        mockGetActiveServerConfig.mockResolvedValue(testConfig);
+        mockFetch.mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve(undefined),
+        });
+
+        await deleteExerciseFromLibrary('ex-1', mode);
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          `https://example.com/api/exercises/ex-1?mode=${mode}`,
+          expect.objectContaining({ method: 'DELETE' })
+        );
+      }
+    );
 
     it('throws on 403', async () => {
       mockGetActiveServerConfig.mockResolvedValue(testConfig);

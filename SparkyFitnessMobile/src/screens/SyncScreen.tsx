@@ -30,10 +30,7 @@ import {
   type WritebackMetric,
   type WritebackDateRange,
 } from '../WritebackMetrics';
-import {
-  enabledWritebackPermissions,
-  enabledReadPermissionsForRecordType,
-} from '../services/shared/healthPermissionSets';
+import { enabledWritebackPermissions } from '../services/shared/healthPermissionSets';
 import HealthSourceLabel from '../components/HealthSourceLabel';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
@@ -45,6 +42,7 @@ import {
   saveHealthPreference,
   requestHealthPermissions,
   refreshEnabledMetricPermissions,
+  loadAllEnabledPermissions,
   enableBackgroundDeliveryForMetric,
   disableBackgroundDeliveryForMetric,
   setupBackgroundDeliveryForEnabledMetrics,
@@ -90,7 +88,7 @@ import type {
   HealthMetricStates,
   HealthDataDisplayState,
 } from '../types/healthRecords';
-import { useSyncHealthData } from '../hooks';
+import { useSyncHealthData, usePreferences } from '../hooks';
 import type { RootStackScreenProps } from '../types/navigation';
 import { fetchHealthDisplayData } from '../services/healthDataDisplay';
 import { shareHealthDiagnosticReport } from '../services/healthDiagnosticService';
@@ -104,6 +102,7 @@ interface TimeRangeOption {
 
 const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
+  const { preferences } = usePreferences();
   const appLocale = useAppLocale();
   const dateLocale = appLocale;
   const timeRangeOptions = useMemo<TimeRangeOption[]>(
@@ -379,14 +378,12 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
     }
     if (newValue) {
       try {
-        // Carry the write direction too when writeback for this record type is already
-        // on, so the sheet cannot commit it back to off. See healthPermissionSets.ts.
+        // Carry every already-enabled permission too (both directions, every metric),
+        // so this narrow toggle can never look like it revoked something else — see
+        // loadAllEnabledPermissions in healthPermissionSets.ts.
         const granted = await requestHealthPermissions([
+          ...(await loadAllEnabledPermissions()),
           ...metric.permissions,
-          ...enabledWritebackPermissions(
-            writebackStates,
-            new Set([metric.recordType])
-          ),
         ]);
         if (!granted) {
           Alert.alert(
@@ -452,14 +449,13 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
     if (!newValue) {
       return;
     }
-    // Enabling: request the write permission; revert the toggle if denied.
+    // Enabling: request the write permission plus everything else already enabled
+    // (both directions, every metric), so this toggle can never look like it revoked
+    // something else. Revert the toggle if denied.
     try {
       const granted = await requestHealthPermissions([
+        ...(await loadAllEnabledPermissions()),
         metric.permission,
-        ...enabledReadPermissionsForRecordType(
-          healthMetricStates,
-          metric.permission.recordType
-        ),
       ]);
       if (!granted) {
         Alert.alert(
@@ -832,10 +828,20 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
                       defaultValue: 'Last synced:',
                     })}
                   </Text>{' '}
-                  {formatRelativeTime(new Date(lastSyncedTime), t, dateLocale)}
+                  {formatRelativeTime(
+                    new Date(lastSyncedTime),
+                    t,
+                    dateLocale,
+                    preferences?.time_format
+                  )}
                 </>
               ) : (
-                formatRelativeTime(null, t, dateLocale)
+                formatRelativeTime(
+                  null,
+                  t,
+                  dateLocale,
+                  preferences?.time_format
+                )
               )
             ) : (
               ' '

@@ -41,3 +41,34 @@ export const enabledReadPermissionsForRecordType = (
       metric.recordType === recordType &&
       healthMetricStates[metric.stateKey] === true
   ).flatMap((metric) => metric.permissions);
+
+/**
+ * Every permission the user currently has enabled, across both read metrics and
+ * writeback metrics, read directly from persisted preferences.
+ *
+ * Unlike the two helpers above, this does not take React state — it is meant for
+ * callers with no component state to read from (e.g. a dev seed action), and for
+ * toggle handlers to fold into their own request so enabling or seeding one thing
+ * always re-affirms everything else already granted, instead of asking narrowly and
+ * risking the authorization sheet committing an omitted-but-enabled direction back to
+ * off (see the module comment above).
+ */
+export const loadAllEnabledPermissions = async (
+  loadHealthPreference: <T>(key: string) => Promise<T | null>
+): Promise<PermissionRequest[]> => {
+  const read: PermissionRequest[] = [];
+  for (const metric of HEALTH_METRICS) {
+    if ((await loadHealthPreference<boolean>(metric.preferenceKey)) === true) {
+      read.push(...metric.permissions);
+    }
+  }
+
+  const write: PermissionRequest[] = [];
+  for (const metric of WRITEBACK_METRICS) {
+    if ((await loadHealthPreference<boolean>(metric.preferenceKey)) === true) {
+      write.push(metric.permission);
+    }
+  }
+
+  return [...read, ...write];
+};

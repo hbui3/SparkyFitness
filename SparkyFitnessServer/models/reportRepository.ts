@@ -14,7 +14,7 @@ export interface ReportExerciseEntryRow {
   duration_minutes: number | string;
   calories_burned: number | string;
   notes: string | null;
-  exercise_id: string;
+  exercise_id: string | null;
   exercise_name: string;
   exercise_category: string | null;
   exercise_calories_per_hour: number | string | null;
@@ -40,16 +40,20 @@ export interface ReportExerciseEntryRow {
   [key: string]: unknown;
 }
 async function getNutritionData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any,
+  userId: string,
+  startDate: string,
+  endDate: string,
   customNutrients: Array<{ name: string }> = []
 ) {
   const client = await getClient(userId); // User-specific operation
   try {
+    const params: (string | number)[] = [userId, startDate, endDate];
+    const customNutrientParamIndexes: number[] = [];
+    customNutrients.forEach((cn) => {
+      params.push(cn.name);
+      customNutrientParamIndexes.push(params.length);
+    });
+
     const standardNutrientsSelectOuter = FOOD_VARIANT_NUTRIENT_FIELDS.map(
       (nutrient) =>
         `SUM(${nutrient}) AS ${nutrient},\n         COALESCE(SUM(${nutrient}) FILTER (WHERE nutrient_source = 'food'), 0) AS food_${nutrient},\n         COALESCE(SUM(${nutrient}) FILTER (WHERE nutrient_source = 'supplement'), 0) AS supplement_${nutrient}`
@@ -66,10 +70,10 @@ async function getNutritionData(
         `(COALESCE(fe.${nutrient}, 0) * fe.quantity / fe.serving_size) AS ${nutrient}`
     ).join(',\n           ');
     const customNutrientsSelectInner1 = customNutrients
-      .map((cn) => {
+      .map((cn, idx) => {
         const ident = cn.name.replace(/"/g, '""');
-        const lit = cn.name.replace(/'/g, "''");
-        return `(COALESCE(NULLIF(fe.custom_nutrients->>'${lit}', '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${ident}"`;
+        const paramIdx = customNutrientParamIndexes[idx];
+        return `(COALESCE(NULLIF(fe.custom_nutrients->>$${paramIdx}, '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${ident}"`;
       })
       .join(',\n           ');
     // Note: fe_meal.quantity is already scaled, so do NOT multiply by fem.quantity
@@ -78,10 +82,10 @@ async function getNutritionData(
         `SUM(COALESCE(fe_meal.${nutrient}, 0) * fe_meal.quantity / fe_meal.serving_size) AS ${nutrient}`
     ).join(',\n           ');
     const customNutrientsSelectInner2 = customNutrients
-      .map((cn) => {
+      .map((cn, idx) => {
         const ident = cn.name.replace(/"/g, '""');
-        const lit = cn.name.replace(/'/g, "''");
-        return `SUM(COALESCE(NULLIF(fe_meal.custom_nutrients->>'${lit}', '')::numeric, 0) * fe_meal.quantity / fe_meal.serving_size) AS "${ident}"`;
+        const paramIdx = customNutrientParamIndexes[idx];
+        return `SUM(COALESCE(NULLIF(fe_meal.custom_nutrients->>$${paramIdx}, '')::numeric, 0) * fe_meal.quantity / fe_meal.serving_size) AS "${ident}"`;
       })
       .join(',\n           ');
     // Each snapshot holds ONE dose's payload; multiply by the dose count taken in this
@@ -98,10 +102,10 @@ async function getNutritionData(
         `(COALESCE(public.sf_try_numeric(me.nutrients_snapshot->>'${nutrient}'), 0) * ${doseScale('me')}) AS ${nutrient}`
     ).join(',\n           ');
     const customNutrientsSelectSupplement = customNutrients
-      .map((cn) => {
+      .map((cn, idx) => {
         const ident = cn.name.replace(/"/g, '""');
-        const lit = cn.name.replace(/'/g, "''");
-        return `(COALESCE(public.sf_try_numeric(me.nutrients_snapshot->'custom_nutrients'->>'${lit}'), 0) * ${doseScale('me')}) AS "${ident}"`;
+        const paramIdx = customNutrientParamIndexes[idx];
+        return `(COALESCE(public.sf_try_numeric(me.nutrients_snapshot->'custom_nutrients'->>$${paramIdx}), 0) * ${doseScale('me')}) AS "${ident}"`;
       })
       .join(',\n           ');
     const result = await client.query(
@@ -154,7 +158,7 @@ async function getNutritionData(
        ) AS combined_nutrition
        GROUP BY entry_date
        ORDER BY entry_date`,
-      [userId, startDate, endDate]
+      params
     );
     return result.rows;
   } finally {
@@ -169,19 +173,28 @@ async function getTabularFoodData(
 ) {
   const client = await getClient(userId); // User-specific operation
   try {
+    const params: (string | number)[] = [userId, startDate, endDate];
     // Generate dynamic SQL parts for custom nutrients
     const customNutrientsSelectCTE = customNutrients
-      .map(
-        (cn) =>
-          `(COALESCE(NULLIF(fe.custom_nutrients->>'${cn.name}', '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${cn.name}"`
-      )
+      .map((cn) => {
+        const ident = cn.name.replace(/"/g, '""');
+        params.push(cn.name);
+        const paramIdx = params.length;
+        return `(COALESCE(NULLIF(fe.custom_nutrients->>$${paramIdx}, '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${ident}"`;
+      })
       .join(',\n          ');
     const customNutrientsSelectOuter = customNutrients
-      .map((cn) => `cfe."${cn.name}"`)
+      .map((cn) => {
+        const ident = cn.name.replace(/"/g, '""');
+        return `cfe."${ident}"`;
+      })
       .join(',\n        ');
     // Note: cfe_meal values already include scaled quantity, so do NOT multiply by fem.quantity
     const customNutrientsSelectMealAgg = customNutrients
-      .map((cn) => `SUM(cfe_meal."${cn.name}") AS "${cn.name}"`)
+      .map((cn) => {
+        const ident = cn.name.replace(/"/g, '""');
+        return `SUM(cfe_meal."${ident}") AS "${ident}"`;
+      })
       .join(',\n        ');
     const result = await client.query(
       `WITH CalculatedFoodEntries AS (
@@ -217,6 +230,9 @@ async function getTabularFoodData(
           (COALESCE(fe.vitamin_c, 0) * fe.quantity / fe.serving_size) AS vitamin_c,
           (COALESCE(fe.calcium, 0) * fe.quantity / fe.serving_size) AS calcium,
           (COALESCE(fe.iron, 0) * fe.quantity / fe.serving_size) AS iron,
+          (COALESCE(fe.caffeine_mg, 0) * fe.quantity / fe.serving_size) AS caffeine_mg,
+          (COALESCE(fe.water_ml, 0) * fe.quantity / fe.serving_size) AS water_ml,
+          (COALESCE(fe.alcohol_g, 0) * fe.quantity / fe.serving_size) AS alcohol_g,
           fe.serving_size,
           fe.serving_unit,
           fe.food_entry_meal_id${
@@ -259,6 +275,9 @@ async function getTabularFoodData(
         cfe.vitamin_c,
         cfe.calcium,
         cfe.iron,
+        cfe.caffeine_mg,
+        cfe.water_ml,
+        cfe.alcohol_g,
         cfe.serving_size,
         cfe.serving_unit,
         cfe.food_entry_meal_id${
@@ -354,6 +373,9 @@ async function getTabularFoodData(
         SUM(cfe_meal.vitamin_c) AS vitamin_c,
         SUM(cfe_meal.calcium) AS calcium,
         SUM(cfe_meal.iron) AS iron,
+        SUM(cfe_meal.caffeine_mg) AS caffeine_mg,
+        SUM(cfe_meal.water_ml) AS water_ml,
+        SUM(cfe_meal.alcohol_g) AS alcohol_g,
         1 AS serving_size, -- Treat meal as single serving unit for calculations
         'serving' AS serving_unit,
         fem.id AS food_entry_meal_id${
@@ -375,7 +397,7 @@ async function getTabularFoodData(
         fem.user_id, 
         fem.quantity
       ORDER BY entry_date, sort_order ASC, food_name ASC`,
-      [userId, startDate, endDate]
+      params
     );
     return result.rows;
   } finally {
@@ -439,37 +461,43 @@ async function getCustomMeasurementsData(
   }
 }
 async function getMiniNutritionTrends(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any,
-  customNutrients = []
+  userId: string,
+  startDate: string,
+  endDate: string,
+  customNutrients: Array<{ name: string }> = []
 ) {
   const client = await getClient(userId); // User-specific operation
   try {
+    const params: (string | number)[] = [userId, startDate, endDate];
+    const customNutrientParamIndexes: number[] = [];
+    customNutrients.forEach((cn) => {
+      params.push(cn.name);
+      customNutrientParamIndexes.push(params.length);
+    });
+
     // Generate dynamic SQL parts for custom nutrients
     // Note: Standard nutrients use "total_" prefix in the outer select of the existing query.
     // For custom nutrients, I will use their name directly to match the service mapping.
     const customNutrientsSelectOuter = customNutrients
-      // @ts-expect-error TS(2339): Property 'name' does not exist on type 'never'.
-      .map((cn) => `SUM("${cn.name}") AS "${cn.name}"`)
+      .map((cn) => {
+        const ident = cn.name.replace(/"/g, '""');
+        return `SUM("${ident}") AS "${ident}"`;
+      })
       .join(',\n         ');
     const customNutrientsSelectInner1 = customNutrients
-      .map(
-        (cn) =>
-          // @ts-expect-error TS(2339): Property 'name' does not exist on type 'never'.
-          `(COALESCE(NULLIF(fe.custom_nutrients->>'${cn.name}', '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${cn.name}"`
-      )
+      .map((cn, idx) => {
+        const ident = cn.name.replace(/"/g, '""');
+        const paramIdx = customNutrientParamIndexes[idx];
+        return `(COALESCE(NULLIF(fe.custom_nutrients->>$${paramIdx}, '')::numeric, 0) * fe.quantity / fe.serving_size) AS "${ident}"`;
+      })
       .join(',\n           ');
     // Note: fe_meal.quantity is already scaled, so do NOT multiply by fem.quantity
     const customNutrientsSelectInner2 = customNutrients
-      .map(
-        (cn) =>
-          // @ts-expect-error TS(2339): Property 'name' does not exist on type 'never'.
-          `SUM(COALESCE(NULLIF(fe_meal.custom_nutrients->>'${cn.name}', '')::numeric, 0) * fe_meal.quantity / fe_meal.serving_size) AS "${cn.name}"`
-      )
+      .map((cn, idx) => {
+        const ident = cn.name.replace(/"/g, '""');
+        const paramIdx = customNutrientParamIndexes[idx];
+        return `SUM(COALESCE(NULLIF(fe_meal.custom_nutrients->>$${paramIdx}, '')::numeric, 0) * fe_meal.quantity / fe_meal.serving_size) AS "${ident}"`;
+      })
       .join(',\n           ');
     const result = await client.query(
       `SELECT
@@ -490,7 +518,9 @@ async function getMiniNutritionTrends(
          SUM(vitamin_a) AS total_vitamin_a,
          SUM(vitamin_c) AS total_vitamin_c,
          SUM(calcium) AS total_calcium,
-         SUM(iron) AS total_iron${
+         SUM(iron) AS total_iron,
+         SUM(caffeine_mg) AS total_caffeine_mg,
+         SUM(alcohol_g) AS total_alcohol_g${
            customNutrientsSelectOuter
              ? ',\n         ' + customNutrientsSelectOuter
              : ''
@@ -514,7 +544,9 @@ async function getMiniNutritionTrends(
            (COALESCE(fe.vitamin_a, 0) * fe.quantity / fe.serving_size) AS vitamin_a,
            (COALESCE(fe.vitamin_c, 0) * fe.quantity / fe.serving_size) AS vitamin_c,
            (COALESCE(fe.calcium, 0) * fe.quantity / fe.serving_size) AS calcium,
-           (COALESCE(fe.iron, 0) * fe.quantity / fe.serving_size) AS iron${
+           (COALESCE(fe.iron, 0) * fe.quantity / fe.serving_size) AS iron,
+           (COALESCE(fe.caffeine_mg, 0) * fe.quantity / fe.serving_size) AS caffeine_mg,
+           (COALESCE(fe.alcohol_g, 0) * fe.quantity / fe.serving_size) AS alcohol_g${
              customNutrientsSelectInner1
                ? ',\n           ' + customNutrientsSelectInner1
                : ''
@@ -542,7 +574,9 @@ async function getMiniNutritionTrends(
            SUM(COALESCE(fe_meal.vitamin_a, 0) * fe_meal.quantity / fe_meal.serving_size) AS vitamin_a,
            SUM(COALESCE(fe_meal.vitamin_c, 0) * fe_meal.quantity / fe_meal.serving_size) AS vitamin_c,
            SUM(COALESCE(fe_meal.calcium, 0) * fe_meal.quantity / fe_meal.serving_size) AS calcium,
-           SUM(COALESCE(fe_meal.iron, 0) * fe_meal.quantity / fe_meal.serving_size) AS iron${
+           SUM(COALESCE(fe_meal.iron, 0) * fe_meal.quantity / fe_meal.serving_size) AS iron,
+           SUM(COALESCE(fe_meal.caffeine_mg, 0) * fe_meal.quantity / fe_meal.serving_size) AS caffeine_mg,
+           SUM(COALESCE(fe_meal.alcohol_g, 0) * fe_meal.quantity / fe_meal.serving_size) AS alcohol_g${
              customNutrientsSelectInner2
                ? ',\n           ' + customNutrientsSelectInner2
                : ''
@@ -554,7 +588,7 @@ async function getMiniNutritionTrends(
        ) AS combined_nutrition
        GROUP BY entry_date
        ORDER BY entry_date`,
-      [userId, startDate, endDate]
+      params
     );
     return result.rows;
   } finally {
@@ -644,7 +678,7 @@ async function getExerciseEntries(
          WHERE detail.exercise_entry_id = ee.id
        ) activity_window ON TRUE
        WHERE ee.user_id = $1 AND ee.entry_date BETWEEN $2 AND $3`;
-    const params = [userId, startDate, endDate];
+    const params: (string | number)[] = [userId, startDate, endDate];
     let paramIndex = 4;
     if (equipment) {
       query += ` AND ee.equipment ILIKE $${paramIndex}`;
@@ -668,8 +702,11 @@ async function getExerciseEntries(
     client.release();
   }
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getExerciseNames(userId: any, muscle: any, equipment: any) {
+async function getExerciseNames(
+  userId: string,
+  muscle?: string | null,
+  equipment?: string | null
+) {
   const client = await getClient(userId); // User-specific operation
   try {
     // Exclude synced device calorie summaries (e.g. Apple Health "Active
@@ -677,7 +714,7 @@ async function getExerciseNames(userId: any, muscle: any, equipment: any) {
     // and the Exercise Reports dashboard filters them out of its aggregates.
     let query =
       "SELECT DISTINCT exercise_id as id, exercise_name as name FROM exercise_entries WHERE user_id = $1 AND exercise_name <> 'Active Calories'";
-    const params = [userId];
+    const params: string[] = [userId];
     let paramIndex = 2;
     if (muscle) {
       query += ` AND primary_muscles ILIKE $${paramIndex}`;

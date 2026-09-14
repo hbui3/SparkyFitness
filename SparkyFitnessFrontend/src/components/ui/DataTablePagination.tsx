@@ -1,4 +1,5 @@
-import { type Table } from '@tanstack/react-table';
+import { type ReactTable, type RowData } from '@tanstack/react-table';
+import { type DataTableFeatures } from '@/components/ui/dataTableFeatures';
 import {
   ChevronLeft,
   ChevronRight,
@@ -17,11 +18,11 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useTranslation } from 'react-i18next';
 
-interface DataTablePaginationProps<TData> {
-  table: Table<TData>;
+interface DataTablePaginationProps<TData extends RowData> {
+  table: ReactTable<DataTableFeatures, TData>;
 }
 
-export function DataTablePagination<TData>({
+export function DataTablePagination<TData extends RowData>({
   table,
 }: DataTablePaginationProps<TData>) {
   const isMobile = useIsMobile();
@@ -41,13 +42,13 @@ export function DataTablePagination<TData>({
             {t('dataTable.rowsPerPage', 'Rows per page')}
           </p>
           <Select
-            value={`${table.getState().pagination.pageSize}`}
+            value={`${table.state.pagination.pageSize}`}
             onValueChange={(value) => {
               table.setPageSize(Number(value));
             }}
           >
             <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue placeholder={table.getState().pagination.pageSize} />
+              <SelectValue placeholder={table.state.pagination.pageSize} />
             </SelectTrigger>
             <SelectContent side="top">
               {[5, 10, 20, 25, 30, 40, 50, 100].map((pageSize) => (
@@ -61,15 +62,14 @@ export function DataTablePagination<TData>({
         <div className="flex w-[80px] sm:w-[100px] items-center justify-center text-sm font-medium">
           {isMobile ? (
             <span>
-              {table.getState().pagination.pageIndex + 1} /{' '}
-              {table.getPageCount()}
+              {table.state.pagination.pageIndex + 1} / {table.getPageCount()}
             </span>
           ) : (
             <span>
               {t('dataTable.pageOf', {
-                page: table.getState().pagination.pageIndex + 1,
+                page: table.state.pagination.pageIndex + 1,
                 total: table.getPageCount(),
-                defaultValue: `Page ${table.getState().pagination.pageIndex + 1} of ${table.getPageCount()}`,
+                defaultValue: `Page ${table.state.pagination.pageIndex + 1} of ${table.getPageCount()}`,
               })}
             </span>
           )}

@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react';
 import {
-  ColumnDef,
   flexRender,
-  getCoreRowModel,
-  useReactTable,
-  getPaginationRowModel,
-  SortingState,
-  getSortedRowModel,
-  ColumnFiltersState,
-  getFilteredRowModel,
-  RowSelectionState,
+  useTable,
+  type ColumnDef,
+  type ColumnFiltersState,
+  type RowData,
+  type RowSelectionState,
+  type SortingState,
 } from '@tanstack/react-table';
+import {
+  dataTableFeatures,
+  type DataTableFeatures,
+} from '@/components/ui/dataTableFeatures';
 
 import {
   Table,
@@ -27,8 +28,8 @@ import { cn } from '@/lib/utils';
 import { DataTablePagination } from './DataTablePagination';
 import { useTranslation } from 'react-i18next';
 
-interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[];
+interface DataTableProps<TData extends RowData> {
+  columns: ColumnDef<DataTableFeatures, TData>[];
   data: TData[];
   pageCount?: number;
   onPaginationChange?: (pageIndex: number, pageSize: number) => void;
@@ -63,7 +64,7 @@ interface DataTableProps<TData, TValue> {
   titleColumnId?: string;
 }
 
-export function DataTable<TData, TValue>({
+export function DataTable<TData extends RowData>({
   columns,
   data,
   pageCount,
@@ -82,7 +83,7 @@ export function DataTable<TData, TValue>({
   searchPlaceholder,
   onSearchChange,
   titleColumnId,
-}: DataTableProps<TData, TValue>) {
+}: DataTableProps<TData>) {
   const { t } = useTranslation();
   const [internalSorting, setInternalSorting] = useState<SortingState>(
     initialState?.sorting || []
@@ -101,21 +102,17 @@ export function DataTable<TData, TValue>({
   const sorting = externalSorting ?? internalSorting;
   const pagination = externalPagination ?? internalPagination;
 
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns,
     getRowId,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: (updater) => {
       const next = typeof updater === 'function' ? updater(sorting) : updater;
       if (externalSorting === undefined) setInternalSorting(next);
       onSortingChange?.(next);
     },
-    getSortedRowModel: getSortedRowModel(),
     onColumnFiltersChange: setColumnFilters,
-    getFilteredRowModel: getFilteredRowModel(),
     onRowSelectionChange: (updater) => {
       const next =
         typeof updater === 'function' ? updater(rowSelection) : updater;
@@ -371,7 +368,10 @@ export function DataTable<TData, TValue>({
                   <div className="px-4 pb-2 grid grid-cols-4 gap-2">
                     {row.getVisibleCells().map((cell) => {
                       const isHiddenOnMobile = (
-                        cell.column.columnDef as ColumnDef<TData, TValue> & {
+                        cell.column.columnDef as ColumnDef<
+                          DataTableFeatures,
+                          TData
+                        > & {
                           meta?: { hideOnMobile?: boolean };
                         }
                       ).meta?.hideOnMobile;
@@ -397,24 +397,24 @@ export function DataTable<TData, TValue>({
                             'flex flex-col gap-0.5',
                             (
                               cell.column.columnDef as ColumnDef<
-                                TData,
-                                TValue
+                                DataTableFeatures,
+                                TData
                               > & {
                                 meta?: { colSpan?: number };
                               }
                             ).meta?.colSpan === 2 && 'col-span-2',
                             (
                               cell.column.columnDef as ColumnDef<
-                                TData,
-                                TValue
+                                DataTableFeatures,
+                                TData
                               > & {
                                 meta?: { colSpan?: number };
                               }
                             ).meta?.colSpan === 3 && 'col-span-3',
                             (
                               cell.column.columnDef as ColumnDef<
-                                TData,
-                                TValue
+                                DataTableFeatures,
+                                TData
                               > & {
                                 meta?: { colSpan?: number };
                               }

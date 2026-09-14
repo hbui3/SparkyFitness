@@ -2,10 +2,15 @@ import {
   saveQuantitySample,
   saveCategorySample,
   saveWorkoutSample,
-  requestAuthorization,
 } from '@kingstinct/react-native-healthkit';
 import { addLog } from './LogService';
 import { getErrorMessage } from '../utils/errors';
+import {
+  initHealthConnect,
+  requestHealthPermissions,
+  loadAllEnabledPermissions,
+} from './healthConnectService';
+import type { PermissionRequest } from '../types/healthRecords';
 
 // ============================================================================
 // Types
@@ -107,31 +112,38 @@ const getPastDates = (days: number): Date[] => {
 // Permissions
 // ============================================================================
 
-const WRITE_PERMISSIONS = [
-  'HKQuantityTypeIdentifierStepCount',
-  'HKQuantityTypeIdentifierActiveEnergyBurned',
-  'HKQuantityTypeIdentifierBasalEnergyBurned',
-  'HKQuantityTypeIdentifierDistanceWalkingRunning',
-  'HKQuantityTypeIdentifierFlightsClimbed',
-  'HKQuantityTypeIdentifierDietaryWater',
-  'HKQuantityTypeIdentifierBodyTemperature',
-  'HKQuantityTypeIdentifierHeartRate',
-  'HKQuantityTypeIdentifierBodyMass',
-  'HKQuantityTypeIdentifierHeight',
-  'HKCategoryTypeIdentifierSleepAnalysis',
-  'HKWorkoutTypeIdentifier',
-  'HKQuantityTypeIdentifierRunningSpeed',
-  'HKQuantityTypeIdentifierRunningPower',
-] as const;
+const SEED_WRITE_PERMISSIONS: PermissionRequest[] = [
+  { recordType: 'Steps', accessType: 'write' },
+  { recordType: 'ActiveCaloriesBurned', accessType: 'write' },
+  { recordType: 'TotalCaloriesBurned', accessType: 'write' },
+  { recordType: 'Distance', accessType: 'write' },
+  { recordType: 'FloorsClimbed', accessType: 'write' },
+  { recordType: 'Hydration', accessType: 'write' },
+  { recordType: 'BodyTemperature', accessType: 'write' },
+  { recordType: 'HeartRate', accessType: 'write' },
+  { recordType: 'Weight', accessType: 'write' },
+  { recordType: 'Height', accessType: 'write' },
+  { recordType: 'SleepSession', accessType: 'write' },
+  { recordType: 'Workout', accessType: 'write' },
+  { recordType: 'RunningSpeed', accessType: 'write' },
+  { recordType: 'RunningPower', accessType: 'write' },
+];
 
+// Routed through the app's own requestHealthPermissions (not the raw HealthKit call)
+// and unioned with loadAllEnabledPermissions() so seeding never looks like it revoked
+// a permission the user already granted elsewhere. See healthPermissionSets.ts.
 const requestWritePermissions = async (): Promise<boolean> => {
   try {
-    const granted = await requestAuthorization({
-      toShare: WRITE_PERMISSIONS as unknown as Parameters<
-        typeof requestAuthorization
-      >[0]['toShare'],
-      toRead: [],
-    });
+    // requestHealthPermissions no-ops (and would silently return true without ever
+    // asking HealthKit) until HealthKit availability has been checked once — normally
+    // already true by the time a user reaches Dev Tools, but a direct entry point
+    // (or a test) may not have triggered that yet.
+    await initHealthConnect();
+    const existing = await loadAllEnabledPermissions();
+    const granted = await requestHealthPermissions([
+      ...existing,
+      ...SEED_WRITE_PERMISSIONS,
+    ]);
     if (!granted) {
       addLog(
         `[SeedHealthData] Write permissions were denied by user`,

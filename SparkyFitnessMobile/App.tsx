@@ -19,7 +19,7 @@ import { FoodImageSourceProvider } from './src/components/FoodImageSourceProvide
 import { LightboxProvider } from './src/components/LightboxProvider';
 import { Uniwind, useUniwind, useCSSVariable } from 'uniwind';
 
-import { queryClient, serverConnectionQueryKey, serverConfigsQueryKey, useSyncHealthData, useCycleMode } from './src/hooks';
+import { queryClient, serverConnectionQueryKey, serverConfigsQueryKey, useSyncHealthData, useCycleMode, useServerConnection, useWatchCheckInBridge } from './src/hooks';
 import { useAppStartup } from './src/hooks/useAppStartup';
 import { useAppBootstrap } from './src/hooks/useAppBootstrap';
 import { useAppLanguageForegroundSync } from './src/hooks/useAppLanguageForegroundSync';
@@ -34,6 +34,8 @@ import {
   SafeMealsLibrary,
   SafeMealPlans,
   SafeMealPlanForm,
+  SafeWaterContainers,
+  SafeWaterContainerEdit,
   SafeExercisesLibrary,
   SafeWorkoutPresetsLibrary,
   SafeFoodDetail,
@@ -131,6 +133,26 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const androidModalAnimation =
   Platform.OS === 'android' ? ({ animation: 'slide_from_bottom' } as const) : {};
 
+/**
+ * Renders inside <NavigationContainer> so useServerConnection's
+ * refetch-on-focus (which needs useNavigation) has a navigation context to
+ * attach to. AppContent can't call this directly — it's the component that
+ * creates NavigationContainer, so its own hook calls run before that
+ * context exists, which is what was throwing "Couldn't find a navigation
+ * object" on every render.
+ *
+ * Apple Watch companion: the watch captures weight / body fat locally and
+ * hands them over via WatchConnectivity, because it cannot reach the server
+ * itself (auth lives here). Gated on an active server connection so a
+ * check-in is not rejected and acked as failed while offline — the watch
+ * keeps it queued and retries when the phone is reachable again.
+ */
+function WatchCheckInGate() {
+  const { isConnected: isServerConnected } = useServerConnection();
+  useWatchCheckInBridge(isServerConnected);
+  return null;
+}
+
 function AppContent() {
   const { t } = useTranslation();
   const { theme } = useUniwind();
@@ -163,6 +185,7 @@ function AppContent() {
   const syncMutation = useSyncHealthData();
   const { shouldYieldObserverSync } = useAutoSyncOnOpen({ initialRoute, syncMutation });
   useAppStartup({ shouldYieldObserverSync });
+
   const {
     rememberActiveTab,
     getLastActiveTab,
@@ -295,6 +318,7 @@ function AppContent() {
         }
       }}
     >
+      <WatchCheckInGate />
       <SafeAreaProvider>
         {/* Inside SafeAreaProvider on purpose: the viewer positions its close
             button against the insets, so mounting it at the app root crashes
@@ -396,6 +420,16 @@ function AppContent() {
             name="MealPlanForm"
             component={SafeMealPlanForm}
             options={createStackScreenOptions(t('mealPlans.title', { defaultValue: 'Meal plans' }), { headerBackTitle: t('common.back', { defaultValue: 'Back' }) })}
+          />
+          <Stack.Screen
+            name="WaterContainers"
+            component={SafeWaterContainers}
+            options={createStackScreenOptions(t('waterContainers.title', { defaultValue: 'Water containers' }), { headerBackTitle: t('navigation.library', { defaultValue: 'Library' }) })}
+          />
+          <Stack.Screen
+            name="WaterContainerEdit"
+            component={SafeWaterContainerEdit}
+            options={createStackScreenOptions(t('waterContainerEdit.editTitle', { defaultValue: 'Edit container' }), { headerBackTitle: t('common.back', { defaultValue: 'Back' }) })}
           />
           <Stack.Screen
             name="ExercisesLibrary"

@@ -27,12 +27,6 @@ import {
 } from '@workspace/shared';
 
 // Respiration metric names as they come from Garmin sync
-const RESPIRATION_METRICS = [
-  'Average Respiration Rate',
-  'Sleep Respiration Avg',
-  'Awake Respiration Avg',
-];
-
 interface RespirationCardProps {
   categories: CustomCategoriesResponse[];
   measurementsData: CustomMeasurementsResponse[];
@@ -453,6 +447,4 @@ const RespirationCard: React.FC<RespirationCardProps> = ({
   );
 };
 
-// Export the metric names for filtering in Reports.tsx
-export { RESPIRATION_METRICS };
 export default RespirationCard;

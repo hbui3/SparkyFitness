@@ -218,14 +218,20 @@ export function useWorkoutPresetForm() {
       weightUnit: 'kg' | 'lbs',
       distanceUnit: 'km' | 'miles'
     ) => {
-      const clientIds: PresetClientIds = session.exercises.map((e) => ({
+      const validExercises = (session.exercises ?? []).filter(
+        (e) => e.exercise_id != null && e.exercise_id !== ''
+      );
+      const clientIds: PresetClientIds = validExercises.map((e) => ({
         exerciseClientId: generateClientId(),
-        setClientIds: e.sets.map(() => generateClientId()),
+        setClientIds: (e.sets ?? []).map(() => generateClientId()),
       }));
       exercisesModifiedRef.current = false;
       dispatch({
         type: 'POPULATE_FROM_SESSION',
-        session,
+        session: {
+          ...session,
+          exercises: validExercises,
+        },
         weightUnit,
         distanceUnit,
         clientIds,
