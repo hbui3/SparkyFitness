@@ -13,8 +13,9 @@ vi.mock('../config/logging.js', () => ({
 
 import externalProviderService from '../services/externalProviderService.js';
 import { buildIntegrationsTools } from '../ai/tools/integrationsTools.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';

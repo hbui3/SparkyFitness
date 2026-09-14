@@ -142,55 +142,99 @@ const EditFoodEntryDialog = ({
     }
   }, [open, loading]);
 
+  const isFoodFound = !!foodData;
+
+  const snapshotVariant = useMemo((): FoodVariant | null => {
+    if (!entry) return null;
+    return {
+      id: entry.variant_id || 'snapshot-variant',
+      serving_size: entry.serving_size || 100,
+      serving_unit: entry.unit || 'g',
+      calories: entry.calories ?? 0,
+      protein: entry.protein ?? 0,
+      carbs: entry.carbs ?? 0,
+      fat: entry.fat ?? 0,
+      saturated_fat: entry.saturated_fat ?? 0,
+      polyunsaturated_fat: entry.polyunsaturated_fat ?? 0,
+      monounsaturated_fat: entry.monounsaturated_fat ?? 0,
+      trans_fat: entry.trans_fat ?? 0,
+      cholesterol: entry.cholesterol ?? 0,
+      sodium: entry.sodium ?? 0,
+      potassium: entry.potassium ?? 0,
+      dietary_fiber: entry.dietary_fiber ?? 0,
+      sugars: entry.sugars ?? 0,
+      vitamin_a: entry.vitamin_a ?? 0,
+      vitamin_c: entry.vitamin_c ?? 0,
+      calcium: entry.calcium ?? 0,
+      iron: entry.iron ?? 0,
+      caffeine_mg: entry.caffeine_mg ?? 0,
+      water_ml: entry.water_ml ?? undefined,
+      alcohol_g: entry.alcohol_g ?? 0,
+      glycemic_index: entry.glycemic_index,
+      custom_nutrients:
+        (entry.custom_nutrients as Record<string, string | number>) || {},
+    };
+  }, [entry]);
+
   const variants = useMemo(() => {
-    if (!isEditingAllowed || !foodData || !variantsData || !entry) return [];
+    if (!isEditingAllowed || !entry) return [];
 
-    const defaultVariant =
-      foodData.default_variant || variantsData.find((v) => v.is_default);
+    if (foodData && variantsData) {
+      const defaultVariant =
+        foodData.default_variant || variantsData.find((v) => v.is_default);
 
-    const primaryUnit: FoodVariant = defaultVariant
-      ? {
-          ...defaultVariant,
-          calories: defaultVariant.calories || 0,
-          protein: defaultVariant.protein || 0,
-          carbs: defaultVariant.carbs || 0,
-          fat: defaultVariant.fat || 0,
-          custom_nutrients: defaultVariant.custom_nutrients || {},
-        }
-      : ({
-          id: entry.food_id,
-          serving_size: 100,
-          serving_unit: 'g',
-          calories: 0,
-          protein: 0,
-          carbs: 0,
-          fat: 0,
-          custom_nutrients: {},
-        } as FoodVariant);
+      const primaryUnit: FoodVariant = defaultVariant
+        ? {
+            ...defaultVariant,
+            calories: defaultVariant.calories || 0,
+            protein: defaultVariant.protein || 0,
+            carbs: defaultVariant.carbs || 0,
+            fat: defaultVariant.fat || 0,
+            custom_nutrients: defaultVariant.custom_nutrients || {},
+          }
+        : ({
+            id: entry.food_id,
+            serving_size: 100,
+            serving_unit: 'g',
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fat: 0,
+            custom_nutrients: {},
+          } as FoodVariant);
 
-    const variantsFromDb = variantsData
-      .filter((v) => v.id !== primaryUnit.id)
-      .map((variant) => ({
-        ...variant,
-        calories: variant.calories || 0,
-        protein: variant.protein || 0,
-        carbs: variant.carbs || 0,
-        fat: variant.fat || 0,
-        custom_nutrients: variant.custom_nutrients || {},
-      }));
+      const variantsFromDb = variantsData
+        .filter((v) => v.id !== primaryUnit.id)
+        .map((variant) => ({
+          ...variant,
+          calories: variant.calories || 0,
+          protein: variant.protein || 0,
+          carbs: variant.carbs || 0,
+          fat: variant.fat || 0,
+          custom_nutrients: variant.custom_nutrients || {},
+        }));
 
-    return [primaryUnit, ...variantsFromDb];
-  }, [foodData, variantsData, entry, isEditingAllowed]);
+      return [primaryUnit, ...variantsFromDb];
+    }
+
+    if (snapshotVariant) {
+      return [snapshotVariant];
+    }
+
+    return [];
+  }, [foodData, variantsData, entry, isEditingAllowed, snapshotVariant]);
 
   const selectedVariant = useMemo((): FoodVariant | null => {
-    if (!variants.length) return null;
+    if (!variants.length) return snapshotVariant;
     if (selectedVariantId) {
       return (
-        variants.find((v) => v.id === selectedVariantId) || variants[0] || null
+        variants.find((v) => v.id === selectedVariantId) ||
+        variants[0] ||
+        snapshotVariant
       );
     }
-    return variants[0] || null;
-  }, [variants, selectedVariantId]);
+    return variants[0] || snapshotVariant;
+  }, [variants, selectedVariantId, snapshotVariant]);
 
   const {
     pendingUnit,
@@ -249,18 +293,25 @@ const EditFoodEntryDialog = ({
       }
       setConversionError('');
       try {
-        const savedVariant = await createFoodVariantMutation.mutateAsync({
-          foodId: entry.food_id ?? '',
-          variant: convertedVariant,
-        });
-        const variantWithId: FoodVariant = {
-          ...convertedVariant,
-          ...savedVariant,
-        };
+        let variantWithId: FoodVariant = convertedVariant;
+        if (isFoodFound && entry.food_id) {
+          const savedVariant = await createFoodVariantMutation.mutateAsync({
+            foodId: entry.food_id,
+            variant: convertedVariant,
+          });
+          variantWithId = {
+            ...convertedVariant,
+            ...savedVariant,
+          };
+        }
         const data: FoodEntryUpdateData = {
           quantity,
           unit: variantWithId.serving_unit,
-          variant_id: variantWithId.id || null,
+          variant_id:
+            variantWithId.id === 'default-variant' ||
+            variantWithId.id === 'snapshot-variant'
+              ? null
+              : variantWithId.id || null,
           meal_type_id: mealId,
           entry_time: entryTime || null,
           notes: entryNotes.trim() || null,
@@ -296,7 +347,10 @@ const EditFoodEntryDialog = ({
         unit: selectedVariant.serving_unit,
         meal_type_id: mealId,
         variant_id:
-          selectedVariant.id === 'default-variant' ? null : selectedVariant.id,
+          selectedVariant.id === 'default-variant' ||
+          selectedVariant.id === 'snapshot-variant'
+            ? entry.variant_id || null
+            : selectedVariant.id,
         entry_time: entryTime || null,
         notes: entryNotes.trim() || null,
       };
@@ -337,12 +391,21 @@ const EditFoodEntryDialog = ({
               'Edit the quantity and serving unit for your food entry.'
             )}
           </DialogDescription>
-          <p className="text-sm text-red-500 mt-2">
-            {t(
-              'editFoodEntry.latestVariantNote',
-              'Note: Updating this entry will use the latest available variant details for the food, not the original snapshot.'
-            )}
-          </p>
+          {isFoodFound ? (
+            <p className="text-sm text-red-500 mt-2">
+              {t(
+                'editFoodEntry.latestVariantNote',
+                'Note: Updating this entry will use the latest available variant details for the food, not the original snapshot.'
+              )}
+            </p>
+          ) : (
+            <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
+              {t(
+                'editFoodEntry.deletedFoodNote',
+                'This food is no longer in your food database. Showing details saved in this diary entry.'
+              )}
+            </p>
+          )}
         </DialogHeader>
 
         {loading ? (

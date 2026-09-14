@@ -5,6 +5,7 @@ jest.mock('react-native-health-connect', () => ({
 jest.mock('../../src/services/LogService', () => ({ addLog: jest.fn() }));
 
 import { readFileSync } from 'fs';
+import { dirname, join } from 'node:path';
 
 // Android-specific module: on macOS Jest resolves .ios.ts by default, so this
 // path is required explicitly to be sure we are not testing the iOS provider.
@@ -66,20 +67,27 @@ describe('routeNeedsConsent', () => {
     expect(routeNeedsConsent(undefined)).toBe(false);
   });
 
-  it('keeps the library enum string-valued', () => {
-    // Guards patches/react-native-health-connect@3.5.3.patch, which makes this
-    // enum string-valued to match what the native module actually sends. If an
-    // upgrade drops the patch the enum reverts to numeric and comparing against
-    // it stops matching — a silent failure: no consent prompt, so no GPS.
+  it('still receives the consent string the native module sends', () => {
+    // routeNeedsConsent matches on the literal "CONSENT_REQUIRED" that the
+    // Android bridge puts on the wire. The library's own TypeScript declares a
+    // numeric enum instead, which is why comparing against
+    // ExerciseRouteResultType never matches (upstream fix in flight:
+    // matinzd/react-native-health-connect#274). We depend on neither
+    // declaration — only on what actually arrives — so this guards the wire
+    // format rather than the types. If an upgrade ever changes the emitted
+    // string, the consent prompt silently stops firing and GPS goes missing.
     //
-    // Asserted by reading the shipped source rather than importing it: the
-    // package is mocked above, and its untranspiled .ts is not in Jest's
-    // transform scope.
+    // Asserted by reading the shipped Kotlin rather than importing anything:
+    // the package is mocked above.
     const source = readFileSync(
-      require.resolve('react-native-health-connect/src/types/base.types.ts'),
+      join(
+        dirname(require.resolve('react-native-health-connect/package.json')),
+        'android/src/main/java/dev/matinzd/healthconnect/records',
+        'ReactExerciseSessionRecord.kt'
+      ),
       'utf8'
     );
-    expect(source).toContain("CONSENT_REQUIRED = 'CONSENT_REQUIRED'");
+    expect(source).toContain('putString("type", "CONSENT_REQUIRED")');
   });
 });
 

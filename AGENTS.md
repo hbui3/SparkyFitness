@@ -34,7 +34,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 
 - `SparkyFitnessFrontend/` - React 19 + Vite web app.
 - `SparkyFitnessServer/` - Express 5 + PostgreSQL backend API.
-- `SparkyFitnessMobile/` - Expo SDK 56 / React Native 0.85 app.
+- `SparkyFitnessMobile/` - Expo SDK 57 / React Native 0.86 app.
 - `shared/` - source-first TypeScript workspace package for `@workspace/shared` schemas, constants, and timezone/day helpers.
 - `docs/` - Nuxt / Docus docs site.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
@@ -91,6 +91,8 @@ Cheap ways to learn things:
 - Server runtime secrets are usually sourced from repo-root `.env`, commonly created from `docker/.env.example`. The server can also load secret files via `SparkyFitnessServer/utils/secretLoader.ts`.
 - Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract _behavior_, not coincidental shape. See `agent-docs/anti-patterns.md`.
 - **Strict TypeScript Typing:** Never use `any` or `// eslint-disable-next-line @typescript-eslint/no-explicit-any` when creating new functions or editing existing code. Always define explicit TypeScript interfaces, types, or import schemas from `@workspace/shared`. Do NOT copy legacy `any` parameter signatures when refactoring or extending legacy service/repository files.
+- **Library Deletes vs Diary Snapshots:** `exercise_entries` and `food_entries` are self-contained snapshots, not pointers (`exercise_id` and `food_id` are `ON DELETE SET NULL`). Deleting an exercise or food from the library (`mode: 'delete'`) preserves past and current diary history, cascades from presets and plan templates, cleans up future scheduled workout plan entries (`entry_date >= today`), and cleans up empty parent preset entries. Only explicit `delete_with_history` (force delete) purges diary logs for that user. If an item is referenced by other users (`otherUserReferences > 0`), the backend falls back to hiding (`is_quick_exercise` / `is_quick_food`).
+- **Comprehensive Cache Invalidation:** When mutating library items (foods, exercises, presets, meals, plans), always invalidate the entire family of dependent query keys across library search, counts, templates, and daily diary summaries (`dailySummary` / `dailyProgress` / `exerciseEntries`) in both web and mobile.
 
 ## Commit & PR Conventions
 

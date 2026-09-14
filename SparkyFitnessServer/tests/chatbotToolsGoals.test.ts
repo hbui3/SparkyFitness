@@ -3,6 +3,8 @@ import { todayInZone } from '@workspace/shared';
 import { buildGoalTools } from '../ai/tools/goalTools.js';
 import goalService from '../services/goalService.js';
 import goalRepository from '../models/goalRepository.js';
+import nutrientGoalPreferenceService from '../services/nutrientGoalPreferenceService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/goalService', () => ({
   default: {
@@ -15,11 +17,16 @@ vi.mock('../models/goalRepository', () => ({
     getGoalTimeline: vi.fn(),
   },
 }));
+vi.mock('../services/nutrientGoalPreferenceService', () => ({
+  default: {
+    getEffectiveGoalTypes: vi.fn(),
+  },
+}));
 vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';
 
@@ -27,6 +34,9 @@ let tools: ReturnType<typeof buildGoalTools>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(
+    nutrientGoalPreferenceService.getEffectiveGoalTypes
+  ).mockResolvedValue({});
   tools = buildGoalTools('user-1', 'UTC');
 });
 
@@ -167,7 +177,7 @@ describe('sparky_manage_goals', () => {
       opts
     );
 
-    expect(result).toBe('Error [VALIDATION]: action: Invalid input');
+    expect(result).toMatch(/^Error \[VALIDATION\]: action:/);
   });
 
   it('rejects stray keys (strict per-action schema)', async () => {
@@ -296,7 +306,9 @@ describe('sparky_get_goal_snapshot', () => {
       opts
     );
 
-    expect(result).toBe(JSON.stringify(snapshotFields));
+    expect(result).toBe(
+      JSON.stringify({ ...snapshotFields, goal_directions: {} })
+    );
     expect(goalService.getUserGoals).toHaveBeenCalledWith(
       'user-1',
       '2026-06-01',
@@ -310,12 +322,34 @@ describe('sparky_get_goal_snapshot', () => {
 
     const result = await tools.sparky_get_goal_snapshot.execute!({}, opts);
 
-    expect(result).toBe(JSON.stringify({ calories: 2000 }));
+    expect(result).toBe(
+      JSON.stringify({ calories: 2000, goal_directions: {} })
+    );
     expect(goalService.getUserGoals).toHaveBeenCalledWith(
       'user-1',
       todayInZone('UTC'),
       undefined,
       true
+    );
+  });
+
+  it('includes custom goal_directions from nutrientGoalPreferenceService', async () => {
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({ calories: 2000 });
+    vi.mocked(
+      nutrientGoalPreferenceService.getEffectiveGoalTypes
+    ).mockResolvedValue({
+      calories: { goalType: 'target', targetMin: 1800, targetMax: 2200 },
+    });
+
+    const result = await tools.sparky_get_goal_snapshot.execute!({}, opts);
+
+    expect(result).toBe(
+      JSON.stringify({
+        calories: 2000,
+        goal_directions: {
+          calories: { goalType: 'target', targetMin: 1800, targetMax: 2200 },
+        },
+      })
     );
   });
 

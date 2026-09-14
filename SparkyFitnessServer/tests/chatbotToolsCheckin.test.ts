@@ -6,6 +6,7 @@ import preferenceService from '../services/preferenceService.js';
 import moodRepository from '../models/moodRepository.js';
 import fastingRepository from '../models/fastingRepository.js';
 import sleepRepository from '../models/sleepRepository.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/measurementService', () => ({
   default: {
@@ -47,7 +48,7 @@ vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';
 

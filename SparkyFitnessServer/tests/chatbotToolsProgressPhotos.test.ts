@@ -2,6 +2,7 @@ import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { todayInZone } from '@workspace/shared';
 import { buildProgressPhotoTools } from '../ai/tools/progressPhotoTools.js';
 import checkInPhotoService from '../services/checkInPhotoService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/checkInPhotoService', () => ({
   default: {
@@ -20,7 +21,7 @@ const svc = checkInPhotoService as unknown as {
   deletePhoto: ReturnType<typeof vi.fn>;
 };
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const PHOTO_ID = '123e4567-e89b-12d3-a456-426614174000';
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';

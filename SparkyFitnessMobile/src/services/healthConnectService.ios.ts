@@ -6,10 +6,17 @@ import * as HealthKitPreferences from './healthkit/preferences';
 import { HEALTH_METRICS } from '../HealthMetrics';
 import { healthReadProvider, readCumulativeByDay } from './healthkit/provider';
 import { runForegroundSync } from './shared/healthSyncEngine';
-import { SyncResult, HealthMetricStates } from '../types/healthRecords';
+import {
+  SyncResult,
+  HealthMetricStates,
+  type PermissionRequest,
+} from '../types/healthRecords';
 import { SyncDuration } from './healthkit/preferences';
 import { migrateEnabledMetricPermissionsIfNeeded } from './shared/healthPermissionMigration';
-import { enabledWritebackPermissions } from './shared/healthPermissionSets';
+import {
+  enabledWritebackPermissions,
+  loadAllEnabledPermissions as loadAllEnabledPermissionsShared,
+} from './shared/healthPermissionSets';
 
 // Tell the read transformers which bundle id is "us" so they skip HealthKit records
 // this app wrote (hydration writeback feedback-loop guard). Parallels Android's
@@ -103,6 +110,10 @@ export const refreshEnabledMetricPermissions = async (
     requestHealthPermissions,
     logTag: '[HealthKitService]',
   });
+
+/** Every permission currently enabled (read metrics + writeback), read from storage. */
+export const loadAllEnabledPermissions = (): Promise<PermissionRequest[]> =>
+  loadAllEnabledPermissionsShared(loadHealthPreference);
 
 // Background delivery (iOS only)
 export {

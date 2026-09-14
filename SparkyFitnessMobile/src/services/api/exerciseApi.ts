@@ -474,9 +474,50 @@ export async function updateExercise(
   return transformExerciseRow(raw);
 }
 
-export const deleteExerciseFromLibrary = async (id: string): Promise<void> => {
-  return apiFetch<void>({
-    endpoint: `/api/exercises/${id}`,
+/**
+ * What a delete should do to everything pointing at the exercise.
+ *
+ * - `hide` stops it appearing in search and changes nothing else.
+ * - `delete` removes it from the library and from presets/plans, keeping diary
+ *   history (entries carry their own snapshot).
+ * - `delete_with_history` also removes this user's own diary entries.
+ *
+ * Another user's diary is never affected; if anyone else still references the
+ * exercise the server hides it instead and reports `status: 'hidden'`.
+ */
+export type ExerciseDeleteMode = 'hide' | 'delete' | 'delete_with_history';
+
+export interface ExerciseDeletionImpact {
+  exerciseEntriesCount: number;
+  workoutPlansCount: number;
+  workoutPresetsCount: number;
+  totalReferences: number;
+  otherUserReferences: number;
+}
+
+export const getExerciseDeletionImpact = async (
+  id: string
+): Promise<ExerciseDeletionImpact> => {
+  const raw = await apiFetch<Partial<ExerciseDeletionImpact>>({
+    endpoint: `/api/exercises/${id}/deletion-impact`,
+    serviceName: 'Exercise API',
+    operation: 'get exercise deletion impact',
+  });
+  return {
+    exerciseEntriesCount: raw.exerciseEntriesCount ?? 0,
+    workoutPlansCount: raw.workoutPlansCount ?? 0,
+    workoutPresetsCount: raw.workoutPresetsCount ?? 0,
+    totalReferences: raw.totalReferences ?? 0,
+    otherUserReferences: raw.otherUserReferences ?? 0,
+  };
+};
+
+export const deleteExerciseFromLibrary = async (
+  id: string,
+  mode: ExerciseDeleteMode = 'delete'
+): Promise<{ message?: string; status?: string }> => {
+  return apiFetch<{ message?: string; status?: string }>({
+    endpoint: `/api/exercises/${id}?mode=${mode}`,
     serviceName: 'Exercise API',
     operation: 'delete exercise',
     method: 'DELETE',

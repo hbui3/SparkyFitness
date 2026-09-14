@@ -16,9 +16,10 @@ vi.mock('../config/logging.js', () => ({
 
 import customNutrientService from '../services/customNutrientService.js';
 import { buildCustomNutrientTools } from '../ai/tools/customNutrientTools.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 const NUTRIENT_ID = '123e4567-e89b-12d3-a456-426614174000';
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';

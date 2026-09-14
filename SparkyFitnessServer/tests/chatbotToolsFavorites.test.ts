@@ -1,6 +1,7 @@
 import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { buildFavoritesTools } from '../ai/tools/favoritesTools.js';
 import favoritesService from '../services/favoritesService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/favoritesService', () => ({
   default: {
@@ -13,7 +14,7 @@ vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const FOOD_ID = '123e4567-e89b-12d3-a456-426614174000';
 const MEAL_ID = '223e4567-e89b-12d3-a456-426614174000';
 const DB_ERROR_TEXT =

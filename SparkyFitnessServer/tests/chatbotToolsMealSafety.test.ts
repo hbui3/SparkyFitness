@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMealSafetyTools } from '../ai/tools/mealSafetyTools.js';
 import coachProfileService from '../services/coachProfileService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/coachProfileService.js', () => ({
   default: { validateMealSuggestion: vi.fn() },
@@ -27,7 +28,7 @@ describe('sparky_validate_meal_suggestion', () => {
 
     const result = await tool.execute!(
       { ingredients: ['tofu'] },
-      { toolCallId: 'call-1', messages: [] }
+      { ...toolOpts, toolCallId: 'call-1' }
     );
 
     expect(result).toContain('"allowed": false');
@@ -42,7 +43,7 @@ describe('sparky_validate_meal_suggestion', () => {
 
     const result = await tool.execute!(
       { ingredients: [] },
-      { toolCallId: 'call-1', messages: [] }
+      { ...toolOpts, toolCallId: 'call-1' }
     );
 
     expect(result).toContain('Error [VALIDATION]');

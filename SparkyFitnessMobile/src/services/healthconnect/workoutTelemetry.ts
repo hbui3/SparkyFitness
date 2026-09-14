@@ -127,15 +127,15 @@ interface HcLocation {
 /**
  * Whether the route needs an explicit per-session consent prompt.
  *
- * The native module writes this field as a STRING ("CONSENT_REQUIRED"), but the
- * library shipped a numeric enum declaring the same member as 2 — so comparing
- * against the enum never matched and routes were silently never requested.
- * `patches/react-native-health-connect@3.5.3.patch` makes that enum
- * string-valued, which fixes the mismatch (and upstream's own documented
- * example) without changing runtime behaviour.
+ * The native module writes this field as a STRING ("CONSENT_REQUIRED"), while
+ * the library declares a numeric enum with the same member as 2 — so comparing
+ * against `ExerciseRouteResultType` never matches and routes are silently never
+ * requested, including in upstream's own documented example. Upstream is fixing
+ * the read-side typing in matinzd/react-native-health-connect#274.
  *
- * The numeric form is still accepted so this keeps working if the patch is ever
- * dropped during an upgrade — a silent regression here means no GPS at all.
+ * We deliberately do not depend on either: `HcExerciseRoute.type` is `unknown`
+ * and both forms are accepted here, so this keeps working whichever way the
+ * library ends up declaring it. A silent regression here means no GPS at all.
  */
 export function routeNeedsConsent(route: HcExerciseRoute | undefined): boolean {
   const type = route?.type;

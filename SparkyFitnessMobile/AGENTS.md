@@ -1,8 +1,8 @@
 # AGENTS.md
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-13_
 
-SparkyFitness Mobile is a React Native 0.85 + Expo SDK 56 app for syncing Apple Health / Health Connect data with the SparkyFitness backend, tracking nutrition, hydration, fasting, measurements, exercise, saved foods, meal templates, custom exercises, workout presets, iOS / Android widgets, the active workout HUD, and the Sparky AI chat.
+SparkyFitness Mobile is a React Native 0.86 + Expo SDK 57 app for syncing Apple Health / Health Connect data with the SparkyFitness backend, tracking nutrition, hydration, fasting, measurements, exercise, saved foods, meal templates, custom exercises, workout presets, iOS / Android widgets, the active workout HUD, and the Sparky AI chat.
 
 This is the package guide for `SparkyFitnessMobile/`. Work from this directory for mobile implementation and validation. If a task crosses into the backend, frontend, or `shared/`, read that package guide too before editing outside mobile.
 
@@ -18,7 +18,7 @@ This is the package guide for `SparkyFitnessMobile/`. Work from this directory f
 
 ## Stack And Imports
 
-- Primary stack: React 19.2, React Native 0.85, Expo SDK 56, TypeScript 6, React Navigation 7, TanStack Query 5, Uniwind / TailwindCSS v4, Reanimated 4, Skia, Victory Native, Expo Background Task / Task Manager / Notifications, Zustand, assistant-ui + AI SDK (chat).
+- Primary stack: React 19.2, React Native 0.86, Expo SDK 57, TypeScript 6, React Navigation 7, TanStack Query 5, Uniwind / TailwindCSS v4, Reanimated 4, Skia, Victory Native, Expo Background Task / Task Manager / Notifications, Zustand, assistant-ui + AI SDK (chat).
 - `@/*` maps to this package and `@workspace/shared` maps to `../shared/src/index.ts`.
 - Prefer `@workspace/shared` schemas, constants, date/timezone helpers, and types over local duplicates.
 - The app talks to the backend under `/api`; health uploads go to `POST /api/health-data`.
@@ -52,7 +52,7 @@ npx expo prebuild --clean
 - Use Watchman-disabled Jest commands in agent/sandbox runs; bare Jest often fails on macOS.
 - `collectCoverage` is enabled in Jest config, so expect coverage output from normal test runs.
 - Run `npx expo prebuild --clean` after native dependency changes, permissions, app group or widget target changes, Expo plugin changes, native config edits, or patching native modules.
-- After editing the root `patches/react-native-health-connect@3.5.3.patch`, run `pnpm install` from the repo root, then prebuild from mobile.
+- After editing the root `patches/react-native-health-connect@4.1.3.patch`, run `pnpm install` from the repo root, then prebuild from mobile.
 
 ## App Shell And Navigation
 
@@ -151,10 +151,12 @@ npx expo prebuild --clean
 
 ## Native Patches
 
-- `react-native-health-connect` is declared as `^3.5.3`; the installed 3.5.3 build is patched from the repo root via `pnpm.patchedDependencies`.
-- Patch file: `../patches/react-native-health-connect@3.5.3.patch`.
-- The patch changes Android `getAggregateGroupByPeriodRequest` implementations from instant-based `getTimeRangeFilter` to local-date-time `getTimeRangeFilterLocal` for non-Steps record types. This protects per-day grouping around DST and local-day boundaries.
+- `react-native-health-connect` is declared as `^4.1.3`; the installed build is patched from the repo root via `patchedDependencies` in `pnpm-workspace.yaml`.
+- Patch file: `../patches/react-native-health-connect@4.1.3.patch`, one hunk. `PermissionUtils.mapPermissionResult` maps `ExerciseRoute` and `BackgroundAccessPermission` back to JS but not `ReadHealthDataHistory`, even though `parsePermissions` accepts it on the request path. Since `requestPermission` also resolves through `mapPermissionResult`, a granted history permission can never be observed, so `ensureHistoryReadPermission` always returns false and Import Full History believes it is capped at 30 days. Reported upstream as matinzd/react-native-health-connect#276; drop the patch if that lands.
+- The older 3.5.3 patch also forced `getTimeRangeFilterLocal` in `getAggregateGroupByPeriodRequest` (DST / local-day grouping) and made `ExerciseRouteResultType` string-valued. Both are gone: 4.1.3 uses the local filter at all 21 sites, and upstream is fixing the route enum in #274 by typing the read path as a string literal union instead — a better fix than ours, so `routeNeedsConsent` keeps accepting both forms and depends on neither declaration.
 - `@bacons/apple-targets@4.0.6` is patched via `../patches/@bacons__apple-targets@4.0.6.patch`, fixing two upstream bugs. First, its xcode pass matched "its" extension target by type with a fall-back to any same-type target, which adopted and corrupted the expo-widgets `ExpoWidgetsTarget` on a clean prebuild; the patch scopes the match to an exact product-name hit. Second, the existing-target update path crashed every non-clean prebuild (EvanBacon/expo-apple-targets#201): removing the old build configuration list's referrers cleared `target.props.buildConfigurationList`, which the next line then dereferenced; the patch holds the list in a local and iterates a copy of its configurations so none are skipped mid-removal.
+- `@bacons/apple-targets` is held at 4.0.6 on purpose: it has a 5.x, and moving to it invalidates the patch file. `expo install --fix` does not touch either patched package (neither is an Expo SDK package), so SDK upgrades leave both patches applying cleanly.
+- `expo-health-connect` was removed. It only ever supplied an Expo config plugin, and upstream archived it: everything it did ships inside `react-native-health-connect` as of v4, which now writes both the `ACTION_SHOW_PERMISSIONS_RATIONALE` intent filter (Android 13 and below) and the `ViewPermissionUsageActivity` alias (Android 14+). Installing both causes Android build failures from duplicate classes.
 - After changing a patch or upgrading a patched package, run `pnpm install` from the repo root and then `npx expo prebuild --clean` from mobile before native validation.
 
 ## Food, Meals, Units, And Photo Estimates
@@ -274,6 +276,8 @@ npx expo prebuild --clean
 - Keep `YYYY-MM-DD` values as calendar-day strings until a database or external API boundary requires UTC instants.
 - For day-string logic, prefer shared timezone helpers such as `isDayString`, `addDays`, `compareDays`, `localDateToDay`, `todayInZone`, `instantToDay`, `dayToUtcRange`, and `dayRangeToUtcRange`.
 - Mobile API contract changes usually require matching server and often web checks. Food photo, shared schemas, nutrition, meal copy, and auth changes are common cross-package surfaces.
+- **Library Deletes & Cache Invalidation:** Library mutations for exercises (`useExerciseMutations.ts`) and foods (`useFoodMutations.ts`) must invalidate all dependent caches: library search, count, details, workout presets, and daily diary summaries (`dailySummaryRootQueryKey`).
+- **Snapshot Preservation & Preset Seeding:** `mode: 'delete'` preserves logged workouts/meals using snapshots (`exercise_id` / `food_id` set to `null`). When creating/saving a preset from a logged session (`useWorkoutPresetForm.ts`), entries with null `exercise_id` are automatically dropped while valid exercises carry over. Empty presets are guarded against starting or logging.
 
 ## Server API Orientation
 
@@ -281,7 +285,7 @@ All endpoints require auth headers, and proxy headers are injected before auth h
 
 - `healthDataApi.ts` - `POST /api/health-data`, identity checks, chunking, timeout, retry, session-expiry handling.
 - `dailySummaryApi.ts`, `goalsApi.ts`, `measurementsApi.ts`, `preferencesApi.ts` - daily summary, goals, check-ins, water, timezone bootstrap, nutrient display preferences.
-- `checkInPhotosApi.ts` - progress photos: the gallery (every photo with that day's weight, in one request), a day's photos, the days that have any, multipart upload and delete. Image bytes come from the authenticated `/file/{id}` route, so `useCheckInPhotoSource` attaches auth and proxy headers and memoizes each source by photo id.
+- `checkInPhotosApi.ts` - progress photos: the gallery (every photo with that day's weight, in one request), a day's photos, the days that have any, multipart upload and delete. Image bytes come from the authenticated `/file/{id}` route, so `useCheckInPhotoSource` attaches auth and proxy headers and memoizes each source by photo id. It is a thin wrapper over `useAuthedImageSource`, the shared hook behind every authenticated image (see also `usePregnancyPhotoSource` for bump photos); that hook also refuses to build a source over plaintext HTTP outside `__DEV__`, so the session token never goes out in clear.
 - `foodEntriesApi.ts`, `foodEntryMealsApi.ts`, `foodsApi.ts`, `mealsApi.ts`, `mealTypesApi.ts`, `mealPlansApi.ts` - diary food entries, grouped logged meals, saved foods/variants/barcodes, saved meals, meal types, and recurring meal plans.
 - `externalFoodSearchApi.ts`, `aiSettingsApi.ts`, `aiConversionApi.ts` - provider-agnostic food search/details/barcode, label/photo estimate, AI availability, unit conversion.
 - `exerciseApi.ts`, `externalExerciseSearchApi.ts`, `workoutPresetsApi.ts` - exercise history, suggested/search/import flows, preset/individual exercise sessions, workout presets.

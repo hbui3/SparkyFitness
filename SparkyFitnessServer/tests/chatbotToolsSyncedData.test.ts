@@ -1,6 +1,7 @@
 import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { buildSyncedDataTools } from '../ai/tools/syncedDataTools.js';
 import syncedDataService from '../services/syncedDataService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/syncedDataService.js', () => ({
   default: {
@@ -17,7 +18,7 @@ const svc = syncedDataService as unknown as {
   deleteSyncedSource: ReturnType<typeof vi.fn>;
 };
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';
 

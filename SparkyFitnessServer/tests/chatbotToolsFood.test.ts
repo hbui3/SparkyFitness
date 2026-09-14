@@ -13,6 +13,7 @@ import mealTypeRepository from '../models/mealType.js';
 import measurementRepository from '../models/measurementRepository.js';
 import reportRepository from '../models/reportRepository.js';
 import externalProviderRepository from '../models/externalProviderRepository.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/foodCoreService', () => ({
   default: {
@@ -104,7 +105,7 @@ vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 const DB_ERROR_TEXT =
   'Error [DB_ERROR]: A database error occurred.\n\nSuggestion: Do NOT retry the same call — it will fail the same way. Tell the user what failed and stop.';
 
@@ -2704,13 +2705,13 @@ describe('delete_food', () => {
     );
   });
 
-  it('resolves by name and force-deletes', async () => {
+  it('resolves by name and deletes while preserving diary entries', async () => {
     vi.mocked(foodRepository.getFoodsWithPagination).mockResolvedValue([
       eggsRow,
     ]);
     vi.mocked(foodCoreService.deleteFood).mockResolvedValue({
       message: 'Food and all its references deleted permanently.',
-      status: 'force_deleted',
+      status: 'deleted',
     });
 
     const result = await tools.sparky_manage_food.execute!(
@@ -2719,12 +2720,12 @@ describe('delete_food', () => {
     );
 
     expect(result).toBe(
-      '✅ Food "Eggs" deleted (including variants and diary entries).'
+      '✅ Food "Eggs" deleted (including variants). Your logged diary entries are preserved.'
     );
     expect(foodCoreService.deleteFood).toHaveBeenCalledWith(
       'user-1',
       FOOD_ID,
-      true
+      'delete'
     );
   });
 
@@ -3655,7 +3656,7 @@ describe('save_as_meal_template', () => {
     vi.mocked(foodRepository.getFoodById).mockResolvedValue(eggsRow);
     vi.mocked(foodCoreService.deleteFood).mockResolvedValue({
       message: 'Food and all its references deleted permanently.',
-      status: 'force_deleted',
+      status: 'deleted',
     });
 
     const result = await tools.sparky_manage_food.execute!(
@@ -3667,7 +3668,7 @@ describe('save_as_meal_template', () => {
     );
 
     expect(result).toBe(
-      '✅ Food "Eggs" deleted (including variants and diary entries).'
+      '✅ Food "Eggs" deleted (including variants). Your logged diary entries are preserved.'
     );
     expect(foodCoreService.deleteFood).toHaveBeenCalled();
     expect(foodEntryService.copyFoodEntries).not.toHaveBeenCalled();

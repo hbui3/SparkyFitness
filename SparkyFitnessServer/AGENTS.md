@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-09-10_
+_Last updated: 2026-09-13_
 
 SparkyFitness Server is the backend API package for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessServer/`.
 
@@ -25,7 +25,7 @@ If a task also touches `shared/`, the frontend, or the mobile app, read the rele
 - Dev boot path: `pnpm start` -> `nodemon` -> `tsx index.ts`
 - `index.ts` loads `../.env`, applies file-backed secrets, runs preflight checks, then imports `SparkyFitnessServer.ts`
 - Main app shell: `SparkyFitnessServer.ts`
-- Stack: Express 5, PostgreSQL via `pg`, Better Auth, Zod, TypeScript 5, Vitest 4, ESLint 10
+- Stack: Express 5, PostgreSQL via `pg`, Better Auth, Zod, TypeScript 6, Vitest 5, ESLint 10
 - Module system: ESM with `type: "module"` and `moduleResolution: "NodeNext"`
 - The package is now effectively TypeScript-first; almost all source files are `.ts`
 - Main domains: food and meal tracking, owner-only pantry/shopping/dated meal planning, exercise logging and adaptive training, health and sleep data, sleep science, fasting, medications, mood, menstrual cycle and pregnancy, reporting, AI chat with private persistent coach profiles, onboarding, identity, admin tooling, and external provider integrations
@@ -62,6 +62,8 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `routes/` - primary HTTP route surface
 - `routes/v2/` - newer typed route surface; pair these changes with `schemas/`
 - `routes/v2/openFoodFactsContributionRoutes.ts` - owner-only single-food preview and explicit photo-backed publication; background contributions are disabled for this release
+- `routes/v2/reportRoutes.ts` - weekly alcohol rollup and the zero-padded hydration/caffeine/alcohol range used by the Trends charts (`reports` permission)
+- `routes/v2/nutritionKineticsRoutes.ts` - active-caffeine estimate and bedtime cutoff (`diary` permission)
 - `routes/auth/` - auth-specific route fragments mounted through `routes/authRoutes.ts`
 - `services/` - business logic and orchestration
 - `services/workoutDeduplicationService.ts` - canonical cross-provider workout reads; preserves provider rows in storage while suppressing overlapping mobile-health mirrors for reports, calories, daily views, and coach aggregates
@@ -70,6 +72,9 @@ pnpm exec eslint routes/v2/foodRoutes.ts services/foodCoreService.ts
 - `models/reportRepository.ts` - tabular report reads and provider provenance. `check_in_measurements.source_provenance` is per metric because a daily row can combine providers; ingest paths must pass source metadata into `models/measurementRepository.ts`.
 - `models/` - PostgreSQL repositories and persistence helpers
 - `middleware/` - auth, permissions, uploads, and shared Express middleware
+- `utils/uploadsPath.ts` - the uploads root plus the resolver and containment guard for stored `file_path` values; use it instead of re-deriving `SPARKY_FITNESS_CUSTOM_UPLOADS_DIRECTORY`
+- `utils/oauthState.ts` - server-issued single-use OAuth `state` nonces for provider linking (`issueOAuthState`, `persistOAuthState`, `claimOAuthState`); use it instead of hand-rolling a state value
+- `middleware/requireSelfMiddleware.ts` - `requireSelfActor`, which rejects a switched/delegated context outright; attach per-route to account-linking routes
 - `integrations/` - provider adapters and ingest pipelines
 - `schemas/` - Zod route schemas
 - `types/` - TypeScript declarations, including `Express.Request` augmentation
@@ -118,6 +123,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 ### Environment and Secrets
 
 - Runtime `.env` is expected at `../.env`
+- New `user_preferences` rows default to German via the shared `DEFAULT_LANGUAGE` constant plus the database column default; existing user language choices are never rewritten.
 - The tracked template lives at `../docker/.env.example`
 - `utils/secretLoader.ts` loads `*_FILE` secrets before preflight validation
 - Current hard startup requirements enforced by `utils/preflightChecks.ts` include:
@@ -130,7 +136,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   - `SPARKY_FITNESS_FRONTEND_URL`
   - `SPARKY_FITNESS_API_ENCRYPTION_KEY`
 - `BETTER_AUTH_SECRET` is currently soft-required: startup will generate a temporary value if it is missing, but that is only appropriate for throwaway local runs because sessions will not survive restarts
-- Common operational toggles include `SPARKY_FITNESS_SERVER_PORT`, `SPARKY_FITNESS_ADMIN_EMAIL`, `ALLOW_PRIVATE_NETWORK_CORS`, `ALLOW_PRIVATE_NETWORK_AI`, `SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS`, and `BETTER_AUTH_URL`
+- Common operational toggles include `SPARKY_FITNESS_SERVER_PORT`, `SPARKY_FITNESS_ADMIN_EMAIL`, `ALLOW_PRIVATE_NETWORK_CORS`, `ALLOW_PRIVATE_NETWORK_AI`, `ALLOW_PRIVATE_NETWORK_FOOD_PROVIDERS`, `SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS`, and `BETTER_AUTH_URL`
+- User-configured self-hosted food providers (Mealie/Tandoor/Norish) can point `base_url` at a private/internal address only for admins by default; a non-admin on a multi-user server is blocked unless `ALLOW_PRIVATE_NETWORK_FOOD_PROVIDERS=true`. This mirrors the AI policy (a single-user self-host is an admin, so their LAN recipe server works with no config). Enforced by `utils/outboundUrlPolicy.ts` (`deriveFoodProviderNetworkPolicy(isAdmin)`) at provider save time in `services/externalProviderService.ts`. Separate from `ALLOW_PRIVATE_NETWORK_AI` by design
 - `ALLOW_PRIVATE_NETWORK_AI=true` lets non-admin users use custom AI service URLs (`custom`/`ollama`/`openai_compatible`) that resolve to private/internal addresses; default off is an SSRF guard enforced by `utils/outboundUrlPolicy.ts` at save/test time and again in the runtime guarded fetch path. Current admins and global admin-created AI settings can use private URLs for self-hosted providers like Ollama
 
 ### TypeScript and Module Conventions
@@ -164,6 +171,16 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   3. Update the developer-facing documentation in `../docs/content/8.developer/11.database-security-tiers.md` to define its security tier (Tier 1, Tier 2, or Tier 3).
   4. Add or update the matching Zod schema in `../shared/src/schemas/database/`.
 - Startup automatically applies migrations and then reapplies RLS policies; do not create alternate migration mechanisms
+
+### Uploads: Public vs Sensitive
+
+- `SparkyFitnessServer.ts` serves the uploads root publicly at `/uploads` and `/api/uploads`; both are in `publicRoutes`, so `authenticate` never runs on them
+- Sensitive subtrees are **denied on the static mount** and served instead by an authenticated, owner-checked per-id route. Two exist today:
+  - `check-in` -> `GET /api/measurements/check-in-photos/file/:id` (delegatable via the `checkin` permission)
+  - `pregnancy` -> `GET /api/v2/pregnancy/photos/file/:id` (owner-only; deliberately **no** `checkPermissionMiddleware`, because reproductive-health data is never delegated)
+- Adding a sensitive upload subtree means adding its directory name to `SENSITIVE_UPLOAD_SUBTREES` in `SparkyFitnessServer.ts` **and** adding an authenticated file route; the deny rule matches the decoded, normalized path, because a prefix match on the raw URL is bypassable with `..%2f`
+- Responses for these domains omit `file_path`: the on-disk layout is a server detail and clients address photos by id
+- `tests/uploadsStaticMount.test.ts` guards both the deny behavior and the fact that the deny rule is registered before `express.static`
 
 ### Auth and Request Context
 
@@ -199,10 +216,11 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 - Current adapters span food/nutrition (OpenFoodFacts, FatSecret, Nutritionix, USDA, Mealie, Tandoor, Norish, SwissFood, Yazio), fitness devices (Garmin Connect sync plus FIT file import via `integrations/garminfit/` + `services/fitImportService.ts`, Withings, Fitbit, Oura, Polar, Strava, Hevy, Speediance, iGPSPORT), exercise databases (Wger, FreeExerciseDB), and health-data import (Google Health, generic/mobile health data)
 - Scheduled jobs currently include backups, session cleanup, and sync loops for Withings, Garmin, Fitbit, Oura, Polar, Strava, Hevy, Speediance, and iGPSPORT. Speediance uses `integrations/speediance/`, `routes/speedianceRoutes.ts`, and the shared `Speediance.api.zod.ts` contract for completed-workout import plus owner-only, verified custom-workout creation/editing/calendar scheduling exposed to the coach through `ai/tools/speedianceTools.ts`. Remote workouts mirror into the existing native workout-preset/plan-template domain; do not add a parallel plan store. `services/plannedWorkoutScheduleService.ts` detects still-open native plan sessions, carries yesterday's missed session to today, and lets proactive coaching send concrete reminders. Scheduling consumes the owner-only context from `services/trainingFeedbackService.ts` and blocks unacknowledged avoided exercises at the write boundary. A completed Speediance import replaces the matching `Workout Plan` placeholder instead of duplicating it. iGPSPORT uses `integrations/igpsport/`, `routes/igpsportRoutes.ts`, the shared `IGPSport.api.zod.ts` contract, and the native FIT import service. Both providers' regional base URLs must stay allow-listed.
 - Integration work often spans route, service, repository, cron, and external-provider settings code; inspect the whole path before calling the work complete
+- **OAuth linking (`/authorize`, `/callback`) is self-only, and `state` is a server-issued single-use nonce.** Never derive a user id from a callback request body, and never gate an authorize route with `checkPermissionMiddleware('diary')` — on GET that resolves to `diary_read`, which would hand a read-only delegate the owner's decrypted OAuth client id. Use `requireSelfActor` plus `utils/oauthState.ts`. Withings and Polar follow this pattern; Oura, Fitbit and Strava are self-only but still send `state = userId` and ignore it on callback (tracked follow-up)
 
 ### AI Services
 
-- AI calls go through the Vercel `ai` SDK (v6) with provider adapters for OpenAI, Anthropic, and Google, plus OpenAI-compatible, Mistral, Groq, OpenRouter, and Ollama service types
+- AI calls go through the Vercel `ai` SDK (v7) with provider adapters for OpenAI, Anthropic, and Google, plus OpenAI-compatible, Mistral, Groq, OpenRouter, and Ollama service types
 - `ai/config.ts` holds default model and vision-model selection per provider; `ai/providerDispatch.ts` is the unified dispatch helper used by chat, food-photo analysis, nutrition-label scan, and unit conversion
 - Prefer routing new AI features through `providerDispatch.ts` instead of calling provider SDKs directly
 - Chatbot tool calls run in-process through the registry in `ai/tools/`
@@ -242,6 +260,8 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   inspect `routes/adaptiveTrainingRoutes.ts`, `services/adaptiveTrainingService.ts`, `services/muscleLoadService.ts`, and `models/adaptiveTrainingRepository.ts`; recommendations must consume canonical workout rows and owned workout presets rather than raw provider rows
 - Missing or incorrect report data source:
   inspect `models/reportRepository.ts`, the provider/health-data ingest path, and `models/measurementRepository.ts`; body check-ins require per-metric `source_provenance`, not one source for the whole daily row
+- Water, hydration, caffeine, or alcohol issue:
+  inspect `services/hydrationTotalsService.ts` (the single owner of the daily water formula), `services/measurementService.ts` (the container "+/-" path and the container->food link), `services/caffeineKineticsService.ts` / `services/alcoholWeekService.ts`, `models/waterContainerRepository.ts`, and the shared maths in `../shared/src/nutrients/`
 - Self-service "delete synced data by source" issue:
   inspect `routes/syncedDataRoutes.ts`, `services/syncedDataService.ts`, and `models/syncedDataRepository.ts` (the `SYNCED_SOURCE_TABLES` whitelist)
 - AI chat or chatbot tool issue:
@@ -271,6 +291,7 @@ Before adding a feature or changing auth/permission behavior, read:
 ## Working Rules
 
 - Match the existing service/repository/middleware layering instead of introducing parallel abstractions
+- **Library Deletes vs Diary Snapshots:** `exercise_entries` and `food_entries` are snapshot-backed (`exercise_id` / `food_id` are `ON DELETE SET NULL`). `deleteExercise` and `deleteFood` (`mode: 'delete'`) must never delete past or today's diary entries; they cascade from templates/presets, clean up future scheduled plan entries (`entry_date >= today AND workout_plan_assignment_id IS NOT NULL`), and clean up empty parent preset entries. Only explicit `delete_with_history` (force delete) deletes diary entries for that user. If an item is referenced by others (`otherUserReferences > 0`), the delete must fall back to `hide` (`is_quick_exercise` / `is_quick_food`).
 - If your change adds a new domain, route family, or table, update this file's Snapshot, Source Map, and Quick Routing sections (and the `Last updated` date) in the same change
 - If you add persisted or user-visible data, think through migration, RLS, permissions, tests, API docs, and downstream client contracts together
 - Validate shared-contract changes from the affected consumers, not just from this package

@@ -63,6 +63,20 @@ jest.mock('../../src/components/MacroCompositionRing', () => {
 jest.mock('uniwind', () => ({
   useCSSVariable: (keys: string | string[]) =>
     Array.isArray(keys) ? keys.map(() => '#111827') : '#111827',
+  // The delete ActionSheet's backdrop reads the theme through useUniwind.
+  useUniwind: () => ({ theme: 'light', hasAdaptiveThemes: false }),
+}));
+
+jest.mock('../../src/services/api/foodsApi', () => ({
+  updateFood: jest.fn(),
+  getFoodDeletionImpact: jest.fn().mockResolvedValue({
+    foodEntriesCount: 0,
+    mealFoodsCount: 0,
+    mealPlansCount: 0,
+    mealPlanTemplateAssignmentsCount: 0,
+    totalReferences: 0,
+    otherUserReferences: 0,
+  }),
 }));
 
 jest.mock('../../src/components/Icon', () => {
@@ -121,7 +135,15 @@ const mockUseFavorites = useFavorites as jest.MockedFunction<
 const mockUseToggleFavorite = useToggleFavorite as jest.MockedFunction<
   typeof useToggleFavorite
 >;
-const mockConfirmAndDelete = jest.fn();
+const mockBuildDeleteOptions = jest.fn(() => [
+  {
+    mode: 'hide' as const,
+    label: 'Hide from search',
+    description: 'Keeps everything as it is.',
+    destructive: false,
+    onSelect: jest.fn(),
+  },
+]);
 
 const insets = { top: 0, bottom: 0, left: 0, right: 0 };
 const frame = { x: 0, y: 0, width: 390, height: 844 };
@@ -240,7 +262,7 @@ describe('FoodDetailScreen', () => {
       isPending: false,
     });
     mockUseDeleteFood.mockReturnValue({
-      confirmAndDelete: mockConfirmAndDelete,
+      buildDeleteOptions: mockBuildDeleteOptions,
       invalidateCaches: jest.fn(),
       isPending: false,
     });
@@ -333,12 +355,14 @@ describe('FoodDetailScreen', () => {
     expect(screen.queryByText('Delete Food')).toBeNull();
   });
 
-  it('shows delete for owned foods and triggers the delete hook', () => {
+  it('opens the delete options sheet instead of deleting outright', () => {
     const screen = renderScreen();
 
     fireEvent.press(screen.getByText('Delete Food'));
 
-    expect(mockConfirmAndDelete).toHaveBeenCalledTimes(1);
+    // The button presents Hide / Delete / Delete-including-history; it must
+    // never delete on a single tap the way the old confirm dialog did.
+    expect(screen.getByText('Delete food')).toBeTruthy();
   });
 
   it('toggles the food favorite from the header star', () => {

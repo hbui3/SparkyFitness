@@ -6,6 +6,7 @@ import coachContextService from '../services/coachContextService.js';
 import { getCoachMealSuggestion } from '../services/coachMealSuggestionService.js';
 import { buildMealPlanningTools } from '../ai/tools/mealPlanningTools.js';
 import coachMealPlanningService from '../services/coachMealPlanningService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/coachContextService.js', () => ({
   default: { getCoachContextSnapshot: vi.fn() },
@@ -48,6 +49,8 @@ const today = {
   waterConsumedMl: 1200,
   waterRemainingMl: 1300,
 };
+
+const toolOptions = (toolCallId: string) => ({ ...toolOpts, toolCallId });
 
 const meal: CoachMealSuggestion = {
   id: 'chicken-rice-bowl',
@@ -136,7 +139,7 @@ describe('sparky_suggest_next_meal', () => {
 
     const result = (await tool.execute!(
       { servings_to_prepare: 3 },
-      { toolCallId: 'call-1', messages: [] }
+      toolOptions('call-1')
     )) as string;
     const parsed = JSON.parse(result.replace('# Next Meal Suggestion\n\n', ''));
 
@@ -178,10 +181,7 @@ describe('sparky_suggest_next_meal', () => {
       'Europe/Berlin'
     ).sparky_suggest_next_meal;
 
-    const result = (await tool.execute!(
-      {},
-      { toolCallId: 'call-1', messages: [] }
-    )) as string;
+    const result = (await tool.execute!({}, toolOptions('call-1'))) as string;
     const parsed = JSON.parse(result.replace('# Next Meal Suggestion\n\n', ''));
 
     expect(parsed.status).toBe('calorie_budget_reached');
@@ -191,7 +191,7 @@ describe('sparky_suggest_next_meal', () => {
 
     const tomorrowResult = (await tool.execute!(
       { planning_day: 'tomorrow' },
-      { toolCallId: 'call-2', messages: [] }
+      toolOptions('call-2')
     )) as string;
     const tomorrow = JSON.parse(
       tomorrowResult.replace('# Next Meal Suggestion\n\n', '')
@@ -213,10 +213,7 @@ describe('sparky_suggest_next_meal', () => {
       'Europe/Berlin'
     ).sparky_suggest_next_meal;
 
-    const result = (await tool.execute!(
-      {},
-      { toolCallId: 'call-1', messages: [] }
-    )) as string;
+    const result = (await tool.execute!({}, toolOptions('call-1'))) as string;
     const parsed = JSON.parse(result.replace('# Next Meal Suggestion\n\n', ''));
 
     expect(parsed.status).toBe('needs_user_input');
@@ -232,7 +229,7 @@ describe('sparky_suggest_next_meal', () => {
 
     const result = (await persistentTool.execute!(
       { days: 3, replace_existing: true },
-      { toolCallId: 'call-plan', messages: [] }
+      toolOptions('call-plan')
     )) as string;
 
     const todayStr = todayInZone('Europe/Berlin');
@@ -259,22 +256,22 @@ describe('sparky_suggest_next_meal', () => {
 
     await tools.sparky_generate_meal_plan.execute!(
       { days: 2 },
-      { toolCallId: 'same-call', messages: [] }
+      toolOptions('same-call')
     );
     await tools.sparky_generate_meal_plan.execute!(
       { days: 2 },
-      { toolCallId: 'same-call', messages: [] }
+      toolOptions('same-call')
     );
     await tools.sparky_generate_meal_plan.execute!(
       { days: 2, operation_id: explicitOperationId },
-      { toolCallId: 'different-call', messages: [] }
+      toolOptions('different-call')
     );
     await tools.sparky_update_planned_meal.execute!(
       {
         entry_id: '40000000-0000-4000-8000-000000000001',
         action: 'skipped',
       },
-      { toolCallId: 'same-call', messages: [] }
+      toolOptions('same-call')
     );
 
     const firstGeneratedId = vi.mocked(
@@ -303,11 +300,11 @@ describe('sparky_suggest_next_meal', () => {
 
     await tools.sparky_confirm_grocery_purchase.execute!(
       { purchases: [{ item_id: itemId, quantity: 250 }] },
-      { toolCallId: 'call-purchase', messages: [] }
+      toolOptions('call-purchase')
     );
     await tools.sparky_update_planned_meal.execute!(
       { entry_id: entryId, action: 'eaten_out' },
-      { toolCallId: 'call-meal', messages: [] }
+      toolOptions('call-meal')
     );
 
     expect(
@@ -341,7 +338,7 @@ describe('sparky_suggest_next_meal', () => {
           { item_id: itemId, quantity: 50 },
         ],
       },
-      { toolCallId: 'call-purchase', messages: [] }
+      toolOptions('call-purchase')
     )) as string;
 
     expect(result).toContain('VALIDATION');
@@ -360,7 +357,7 @@ describe('sparky_suggest_next_meal', () => {
 
     const result = (await tool.execute!(
       { entry_id: entryId },
-      { toolCallId: 'call-delete', messages: [] }
+      toolOptions('call-delete')
     )) as string;
 
     expect(result).toContain('Deleted Planned Meal');

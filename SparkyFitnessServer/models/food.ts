@@ -57,6 +57,7 @@ export interface FoodInput extends NutrientFields {
   ai_confidence?: string | null;
   allergens?: string[] | null;
   traces?: string[] | null;
+  abv_percent?: NutrientValue;
 }
 
 const DEFAULT_VARIANT_JSON_SQL = `
@@ -81,6 +82,10 @@ const DEFAULT_VARIANT_JSON_SQL = `
     'vitamin_c', fv.vitamin_c,
     'calcium', fv.calcium,
     'iron', fv.iron,
+    'caffeine_mg', fv.caffeine_mg,
+    'water_ml', fv.water_ml,
+    'alcohol_g', fv.alcohol_g,
+    'abv_percent', fv.abv_percent,
     'is_default', fv.is_default,
     'glycemic_index', fv.glycemic_index,
     'custom_nutrients', fv.custom_nutrients,
@@ -263,9 +268,9 @@ async function createFoodWithClient(client: PoolClient, foodData: FoodInput) {
         food_id, serving_size, serving_unit, calories, protein, carbs, fat,
         saturated_fat, polyunsaturated_fat, monounsaturated_fat, trans_fat,
         cholesterol, sodium, potassium, dietary_fiber, sugars,
-        vitamin_a, vitamin_c, calcium, iron, is_default, glycemic_index, custom_nutrients,
+        vitamin_a, vitamin_c, calcium, iron, caffeine_mg, water_ml, alcohol_g, abv_percent, is_default, glycemic_index, custom_nutrients,
         source, ai_confidence, allergens, traces, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, TRUE, $21, $22, $23, $24, $25, $26, now(), now()) RETURNING id`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, TRUE, $25, $26, $27, $28, $29, $30, now(), now()) RETURNING id`,
     [
       newFood.id,
       sanitizeNumeric(foodData.serving_size),
@@ -287,6 +292,10 @@ async function createFoodWithClient(client: PoolClient, foodData: FoodInput) {
       sanitizeNumeric(foodData.vitamin_c),
       sanitizeNumeric(foodData.calcium),
       sanitizeNumeric(foodData.iron),
+      sanitizeNumeric(foodData.caffeine_mg),
+      sanitizeNumeric(foodData.water_ml),
+      sanitizeNumeric(foodData.alcohol_g),
+      sanitizeNumeric(foodData.abv_percent),
       sanitizeGlycemicIndex(foodData.glycemic_index),
       foodData.custom_nutrients ?? {},
       foodData.source ?? 'manual',
@@ -330,6 +339,10 @@ function buildDefaultVariantEcho(
     vitamin_c: foodData.vitamin_c,
     calcium: foodData.calcium,
     iron: foodData.iron,
+    caffeine_mg: foodData.caffeine_mg,
+    water_ml: foodData.water_ml,
+    alcohol_g: foodData.alcohol_g,
+    abv_percent: foodData.abv_percent,
     is_default: true,
     user_id: newFood.user_id,
     source: foodData.source ?? 'manual',
@@ -423,6 +436,10 @@ export interface FoodMatchCandidateRow {
   iron: number | string | null;
   vitamin_a: number | string | null;
   vitamin_c: number | string | null;
+  caffeine_mg: number | string | null;
+  water_ml: number | string | null;
+  alcohol_g: number | string | null;
+  abv_percent: number | string | null;
   last_used: string | null;
 }
 
@@ -474,6 +491,7 @@ async function findFoodMatchCandidates(
                 fv.monounsaturated_fat, fv.trans_fat, fv.cholesterol,
                 fv.sodium, fv.potassium, fv.calcium, fv.iron,
                 fv.vitamin_a, fv.vitamin_c,
+                fv.caffeine_mg, fv.water_ml, fv.alcohol_g, fv.abv_percent,
                 (SELECT MAX(fe.entry_date) FROM food_entries fe
                   WHERE fe.food_id = f.id AND fe.user_id = $1) AS last_used
          FROM foods f
@@ -943,17 +961,141 @@ async function getFoodDeletionImpact(
     systemClient.release();
   }
 }
-async function deleteFoodAndDependencies(foodId: string, userId: string) {
+/**
+ * Deletes only the current user's diary entries for a food. Backs the
+ * `delete_with_history` mode alone -- a plain delete leaves the diary intact.
+ *
+ * Scoped to `user_id` on purpose: under family sharing another user may have
+ * logged the same food, and their history is never ours to remove.
+ */
+async function deleteFoodEntriesForUser(
+  foodId: string,
+  userId: string
+): Promise<number> {
   const client = await getClient(userId);
   try {
-    await client.query('BEGIN');
-    // 1. Delete food entries referencing this food for the current user
-    await client.query(
+    const result = await client.query(
       'DELETE FROM food_entries WHERE food_id = $1 AND user_id = $2',
       [foodId, userId]
     );
-    log('info', `Deleted food entries for food ${foodId} by user ${userId}`);
-    // 2. Delete meal_foods referencing this food for meals owned by the current user
+    log(
+      'info',
+      `Deleted ${result.rowCount} food entries for food ${foodId} by user ${userId}`
+    );
+    return result.rowCount ?? 0;
+  } finally {
+    client.release();
+  }
+}
+/**
+ * Removes a food from the library along with the *composition* rows that point
+ * at it (meals, meal plans, meal plan templates, variants).
+ *
+ * Deliberately does NOT touch food_entries. Since
+ * 20260912150000_preserve_data_on_user_and_library_deletes.sql the entry's
+ * food_id is ON DELETE SET NULL, and an entry carries its own snapshot
+ * (food_name, brand_name, serving size, full nutrition), so diary history
+ * survives the library row. Deleting entries here would pre-empt that rule and
+ * destroy history -- including other users' history.
+ */
+async function deleteFoodAndDependencies(
+  foodId: string,
+  userId: string,
+  today?: string,
+  options: { deleteHistory?: boolean } = {}
+): Promise<{ success: boolean; deletedEntries: number }> {
+  const client = await getClient(userId);
+  try {
+    await client.query('BEGIN');
+
+    let deletedEntries = 0;
+
+    if (options.deleteHistory) {
+      // Delete all diary entries for this user referencing this food
+      const entryMealsResult = await client.query(
+        `
+        SELECT DISTINCT food_entry_meal_id
+        FROM food_entries
+        WHERE food_id = $1
+          AND user_id = $2
+          AND food_entry_meal_id IS NOT NULL
+      `,
+        [foodId, userId]
+      );
+      const entryMealIds = entryMealsResult.rows.map(
+        (r: { food_entry_meal_id: string }) => r.food_entry_meal_id
+      );
+
+      const entriesResult = await client.query(
+        'DELETE FROM food_entries WHERE food_id = $1 AND user_id = $2',
+        [foodId, userId]
+      );
+      deletedEntries = entriesResult.rowCount ?? 0;
+
+      if (entryMealIds.length > 0) {
+        await client.query(
+          `
+          DELETE FROM food_entry_meals fem
+          WHERE fem.id = ANY($1::uuid[])
+            AND NOT EXISTS (
+              SELECT 1 FROM food_entries fe WHERE fe.food_entry_meal_id = fem.id
+            )
+        `,
+          [entryMealIds]
+        );
+      }
+      log(
+        'info',
+        `Deleted ${deletedEntries} food entries for food ${foodId} by user ${userId}`
+      );
+    } else if (today) {
+      // 0. Delete future food entries generated from meal plan templates for this food
+      const entryMealsResult = await client.query(
+        `
+        SELECT DISTINCT food_entry_meal_id
+        FROM food_entries
+        WHERE food_id = $1
+          AND user_id = $2
+          AND entry_date >= $3
+          AND meal_plan_template_id IS NOT NULL
+          AND food_entry_meal_id IS NOT NULL
+      `,
+        [foodId, userId, today]
+      );
+      const entryMealIds = entryMealsResult.rows.map(
+        (r: { food_entry_meal_id: string }) => r.food_entry_meal_id
+      );
+
+      await client.query(
+        `
+        DELETE FROM food_entries
+        WHERE food_id = $1
+          AND user_id = $2
+          AND entry_date >= $3
+          AND meal_plan_template_id IS NOT NULL
+      `,
+        [foodId, userId, today]
+      );
+
+      if (entryMealIds.length > 0) {
+        await client.query(
+          `
+          DELETE FROM food_entry_meals fem
+          WHERE fem.id = ANY($1::uuid[])
+            AND NOT EXISTS (
+              SELECT 1 FROM food_entries fe WHERE fe.food_entry_meal_id = fem.id
+            )
+        `,
+          [entryMealIds]
+        );
+      }
+      log(
+        'info',
+        `Deleted future planned food entries for food ${foodId} starting from ${today}`
+      );
+    }
+
+    // 1. Delete meal_foods referencing this food for meals owned by the current user
     await client.query(
       `
       DELETE FROM meal_foods mf
@@ -968,13 +1110,13 @@ async function deleteFoodAndDependencies(foodId: string, userId: string) {
       'info',
       `Deleted meal foods for food ${foodId} in meals by user ${userId}`
     );
-    // 3. Delete meal_plans referencing this food for the current user
+    // 2. Delete meal_plans referencing this food for the current user
     await client.query(
       'DELETE FROM meal_plans WHERE food_id = $1 AND user_id = $2',
       [foodId, userId]
     );
     log('info', `Deleted meal plans for food ${foodId} by user ${userId}`);
-    // 4. Delete meal_plan_template_assignments referencing this food for templates owned by the current user
+    // 3. Delete meal_plan_template_assignments referencing this food for templates owned by the current user
     await client.query(
       `
       DELETE FROM meal_plan_template_assignments mpta
@@ -989,19 +1131,19 @@ async function deleteFoodAndDependencies(foodId: string, userId: string) {
       'info',
       `Deleted meal plan template assignments for food ${foodId} in templates by user ${userId}`
     );
-    // 5. Delete food variants associated with this food
+    // 4. Delete food variants associated with this food
     await client.query('DELETE FROM food_variants WHERE food_id = $1', [
       foodId,
     ]);
     log('info', `Deleted food variants for food ${foodId}`);
-    // 6. Finally, delete the food itself
+    // 5. Finally, delete the food itself
     const result = await client.query(
       'DELETE FROM foods WHERE id = $1 AND user_id = $2 RETURNING id',
       [foodId, userId]
     );
     log('info', `Deleted food ${foodId} by user ${userId}`);
     await client.query('COMMIT');
-    return result.rowCount > 0;
+    return { success: (result.rowCount ?? 0) > 0, deletedEntries };
   } catch (error) {
     await client.query('ROLLBACK');
     log(
@@ -1051,6 +1193,10 @@ interface BulkImportFoodData {
   vitamin_c?: NumericInput;
   calcium?: NumericInput;
   iron?: NumericInput;
+  caffeine_mg?: NumericInput;
+  water_ml?: NumericInput;
+  alcohol_g?: NumericInput;
+  abv_percent?: NumericInput;
   glycemic_index?: string | null;
   custom_nutrients?: Record<string, unknown> | null;
   source?: string | null;
@@ -1288,6 +1434,10 @@ async function createFoodsInBulk(
                 iron = COALESCE($19, iron),
                 glycemic_index = COALESCE($20, glycemic_index),
                 custom_nutrients = COALESCE($21, custom_nutrients),
+                caffeine_mg = COALESCE($22, caffeine_mg),
+                water_ml = COALESCE($23, water_ml),
+                alcohol_g = COALESCE($24, alcohol_g),
+                abv_percent = COALESCE($25, abv_percent),
                 updated_at = now()
               WHERE id = $1`,
             [
@@ -1314,6 +1464,10 @@ async function createFoodsInBulk(
               // null (not {}) so the COALESCE above keeps the stored map when
               // the import carried no custom nutrients at all.
               variant.custom_nutrients ?? null,
+              sanitizeNumeric(variant.caffeine_mg),
+              sanitizeNumeric(variant.water_ml),
+              sanitizeNumeric(variant.alcohol_g),
+              sanitizeNumeric(variant.abv_percent),
             ]
           );
         } else {
@@ -1323,10 +1477,10 @@ async function createFoodsInBulk(
               saturated_fat, polyunsaturated_fat, monounsaturated_fat, trans_fat,
               cholesterol, sodium, potassium, dietary_fiber, sugars,
               vitamin_a, vitamin_c, calcium, iron, glycemic_index, custom_nutrients,
-              source, ai_confidence, allergens, traces, created_at, updated_at
+              source, ai_confidence, allergens, traces, caffeine_mg, water_ml, alcohol_g, abv_percent, created_at, updated_at
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-              $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, now(), now()
+              $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, now(), now()
             )`,
             [
               foodId,
@@ -1356,6 +1510,10 @@ async function createFoodsInBulk(
               variant.ai_confidence ?? null,
               variant.allergens ?? null,
               variant.traces ?? null,
+              sanitizeNumeric(variant.caffeine_mg),
+              sanitizeNumeric(variant.water_ml),
+              sanitizeNumeric(variant.alcohol_g),
+              sanitizeNumeric(variant.abv_percent),
             ]
           );
         }
@@ -1507,7 +1665,12 @@ async function findFoodByProviderExternalId(
   const client = await getClient(userId);
   try {
     const result = await client.query(
-      `SELECT f.id, f.name, f.brand, f.barcode, f.is_custom, f.user_id, f.shared_with_public, f.provider_external_id, f.provider_type, f.provider_verified, f.images, f.notes,
+      // Deliberately NOT filtered by is_quick_food, unlike the discovery
+      // queries: this is a dedup lookup, and skipping a hidden row would insert
+      // a duplicate alongside it. The caller is responsible for un-hiding what
+      // it reuses -- see refreshExistingExternalFoodMetadata. is_quick_food is
+      // selected so it can make that decision.
+      `SELECT f.id, f.name, f.brand, f.barcode, f.is_custom, f.user_id, f.shared_with_public, f.provider_external_id, f.provider_type, f.provider_verified, f.images, f.notes, f.is_quick_food,
               fv.id AS default_variant_id, fv.serving_size, fv.serving_unit,
               ${DEFAULT_VARIANT_JSON_SQL}
        FROM foods f
@@ -1555,6 +1718,9 @@ async function updateFoodVariantNutrition(
         calcium = $19,
         iron = $20,
         custom_nutrients = COALESCE($21::jsonb, custom_nutrients),
+        caffeine_mg = $22,
+        water_ml = $23,
+        alcohol_g = $24,
         updated_at = now()
       WHERE id = $1`,
       [
@@ -1581,6 +1747,9 @@ async function updateFoodVariantNutrition(
         nutritionData.custom_nutrients
           ? JSON.stringify(nutritionData.custom_nutrients)
           : null,
+        sanitizeNumeric(nutritionData.caffeine_mg),
+        sanitizeNumeric(nutritionData.water_ml),
+        sanitizeNumeric(nutritionData.alcohol_g),
       ]
     );
   } finally {
@@ -1611,6 +1780,7 @@ export type { BulkImportFoodData };
 export { getFoodsNeedingReview };
 export { clearUserIgnoredUpdate };
 export { deleteFoodAndDependencies };
+export { deleteFoodEntriesForUser };
 export default {
   createFoodWithClient,
   findFoodMatchCandidates,
@@ -1634,4 +1804,5 @@ export default {
   getFoodsNeedingReview,
   clearUserIgnoredUpdate,
   deleteFoodAndDependencies,
+  deleteFoodEntriesForUser,
 };

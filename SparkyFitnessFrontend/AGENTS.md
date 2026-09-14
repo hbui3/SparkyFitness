@@ -85,6 +85,8 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - To learn a database table's shape, read `../shared/src/schemas/database/<Table>.zod.ts` - do not read `../db_schema_backup.sql` or the migrations.
 - Auth flows go through `src/lib/auth-client.ts` and `useAuth`; acting-user (family access) state lives in `ActiveUserContext` and affects most data hooks.
 - New UI should reuse `src/components/ui/` primitives and existing shared components before adding new ones.
+- **Cache Invalidation on Library Mutations:** When mutating foods, exercises, presets, or plans, use the domain invalidation hooks from `src/hooks/useInvalidateKeys.ts` (`useExerciseInvalidation`, `useFoodInvalidation`, `useMealInvalidation`, `useDiaryInvalidation`) to invalidate the entire family of dependent query keys including search, presets, templates, and diary daily progress.
+- **Library Deletes & Snapshots:** Deleting foods or exercises uses `mode: 'delete'` which preserves logged diary history (via snapshots) and drops items from presets/plans; only explicit `delete_with_history` deletes diary entries. Empty presets are guarded against starting/logging.
 
 ## Testing and Validation
 

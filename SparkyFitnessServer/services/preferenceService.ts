@@ -1,6 +1,7 @@
 import preferenceRepository from '../models/preferenceRepository.js';
 import { log } from '../config/logging.js';
 import {
+  DEFAULT_LANGUAGE,
   isValidTimeZone,
   SUPPORTED_TIME_FORMATS,
   MAX_GOAL_MODE_PERCENTAGE,
@@ -158,6 +159,7 @@ async function validateChartScaleMode(
 function getDefaultPreferences() {
   return {
     calorie_goal_adjustment_mode: 'dynamic',
+    language: DEFAULT_LANGUAGE,
     show_net_carbs: false,
     timezone: null,
     time_format: 'h:mm A',

@@ -2,6 +2,7 @@ import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { buildVisionTools } from '../ai/tools/visionTools.js';
 import foodPhotoEstimationService from '../services/foodPhotoEstimationService.js';
 import labelScanService from '../services/labelScanService.js';
+import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/foodPhotoEstimationService', () => ({
   default: {
@@ -17,7 +18,7 @@ vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
 
-const opts = { toolCallId: 'tc-1', messages: [] };
+const opts = toolOpts;
 
 // A syntactically valid base64 JPEG prefix.
 const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQAAAQ==';

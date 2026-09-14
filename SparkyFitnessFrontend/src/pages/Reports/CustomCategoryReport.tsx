@@ -12,7 +12,7 @@ import { Activity } from 'lucide-react';
 import ZoomableChart from '@/components/ZoomableChart';
 import { useTranslation } from 'react-i18next';
 import { BODY_BATTERY_METRICS } from './BodyBatteryCard';
-import { RESPIRATION_METRICS } from './RespirationCard';
+import { RESPIRATION_METRICS } from './respirationMetrics';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { formatCustomChartData } from '@/utils/reportUtil';
 import {

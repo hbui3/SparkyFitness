@@ -1,7 +1,9 @@
 import { tool } from 'ai';
 import { todayInZone } from '@workspace/shared';
 import { z } from 'zod';
-import workoutPlanTemplateService from '../../services/workoutPlanTemplateService.js';
+import workoutPlanTemplateService, {
+  type WorkoutPlanAssignmentSetInput,
+} from '../../services/workoutPlanTemplateService.js';
 import plannedWorkoutScheduleService from '../../services/plannedWorkoutScheduleService.js';
 import workoutPresetRepository from '../../models/workoutPresetRepository.js';
 import { log } from '../../config/logging.js';
@@ -120,15 +122,15 @@ interface WorkoutPlanAssignmentRecord {
   workout_preset_name?: string;
   exercise_id?: string | null;
   sort_order: number;
-  sets: unknown[];
+  sets: WorkoutPlanAssignmentSetInput[];
 }
 
 interface WorkoutPlanRecord {
   id: number;
   plan_name: string;
   description: string | null;
-  start_date: string | Date;
-  end_date: string | Date | null;
+  start_date: string;
+  end_date: string | null;
   is_active: boolean;
   cycle_length_weeks: number;
   assignments: WorkoutPlanAssignmentRecord[];
@@ -174,14 +176,8 @@ function asWorkoutPlan(value: unknown): WorkoutPlanRecord | null {
     plan_name: value.plan_name,
     description:
       typeof value.description === 'string' ? value.description : null,
-    start_date:
-      typeof value.start_date === 'string' || value.start_date instanceof Date
-        ? value.start_date
-        : '',
-    end_date:
-      typeof value.end_date === 'string' || value.end_date instanceof Date
-        ? value.end_date
-        : null,
+    start_date: typeof value.start_date === 'string' ? value.start_date : '',
+    end_date: typeof value.end_date === 'string' ? value.end_date : null,
     is_active: value.is_active === true,
     cycle_length_weeks: asPositiveInteger(value.cycle_length_weeks) ?? 1,
     assignments: Array.isArray(value.assignments)

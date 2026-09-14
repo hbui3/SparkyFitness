@@ -43,6 +43,7 @@ import BulkDeleteDialog from '@/components/BulkDeleteDialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/DataTable';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
+import { type DataTableFeatures } from '@/components/ui/dataTableFeatures';
 import { Badge } from '@/components/ui/badge';
 
 const MealPlanCalendar: React.FC = () => {
@@ -222,7 +223,7 @@ const MealPlanCalendar: React.FC = () => {
     }
   };
 
-  const columns = useMemo<ColumnDef<MealPlanTemplate>[]>(
+  const columns = useMemo<ColumnDef<DataTableFeatures, MealPlanTemplate>[]>(
     () => [
       {
         id: 'select',

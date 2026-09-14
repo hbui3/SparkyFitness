@@ -119,7 +119,9 @@ router.get(
  *         description: Entries are required.
  */
 router.post('/import-from-csv', authenticate, async (req, res, next) => {
-  const { entries, scope, overrideNutrition } = req.body;
+  // req.body is undefined for a non-JSON content-type; default to {} so a
+  // malformed request hits the 400 below instead of a raw destructure 500.
+  const { entries, scope, overrideNutrition } = req.body ?? {};
   if (!entries || !Array.isArray(entries)) {
     return res.status(400).json({ error: 'Entries are required.' });
   }
@@ -891,7 +893,7 @@ router.put(
       }
       if (
         // @ts-expect-error TS(2571): Object is of type 'unknown'.
-        error.message === 'Food entry not found or not authorized to update.'
+        error.message.startsWith('Food entry not found')
       ) {
         // @ts-expect-error TS(2571): Object is of type 'unknown'.
         return res.status(404).json({ error: error.message });
@@ -947,7 +949,7 @@ router.delete(
       }
       if (
         // @ts-expect-error TS(2571): Object is of type 'unknown'.
-        error.message === 'Food entry not found or not authorized to delete.'
+        error.message.startsWith('Food entry not found')
       ) {
         // @ts-expect-error TS(2571): Object is of type 'unknown'.
         return res.status(404).json({ error: error.message });

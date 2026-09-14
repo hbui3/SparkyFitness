@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   View,
@@ -10,7 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import Button from '../components/ui/Button';
 import Icon from '../components/Icon';
@@ -19,6 +25,10 @@ import FoodNutritionSummary from '../components/FoodNutritionSummary';
 import { NoteMarkdown } from '../components/NoteMarkdown';
 import { usableFoodImages } from '../utils/foodImages';
 import StatusView from '../components/StatusView';
+import ActionSheet, {
+  type ActionSheetItem,
+  type ActionSheetRef,
+} from '../components/ActionSheet';
 import SettingsRow, { SettingsRowGroup } from '../components/SettingsRow';
 import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
 import {
@@ -30,8 +40,8 @@ import {
   usePreferences,
   useToggleFavorite,
 } from '../hooks';
-import { foodsQueryKey } from '../hooks/queryKeys';
-import { updateFood } from '../services/api/foodsApi';
+import { foodDeletionImpactQueryKey, foodsQueryKey } from '../hooks/queryKeys';
+import { getFoodDeletionImpact, updateFood } from '../services/api/foodsApi';
 import { useScreenHeader, type HeaderItem } from '../hooks/useScreenHeader';
 import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import {
@@ -249,7 +259,7 @@ const FoodDetailScreen: React.FC<FoodDetailScreenProps> = ({
   }, [selectedVariantId, localVariantOptions]);
 
   const {
-    confirmAndDelete,
+    buildDeleteOptions,
     isPending: isDeletePending,
     invalidateCaches,
   } = useDeleteFood({
@@ -259,6 +269,30 @@ const FoodDetailScreen: React.FC<FoodDetailScreenProps> = ({
       navigation.goBack();
     },
   });
+
+  // Prefetched rather than fetched on tap: the ActionSheet needs its items
+  // before present(), and this decides which options exist at all. Until it
+  // resolves, buildDeleteOptions offers Hide only.
+  const { data: deletionImpact } = useQuery({
+    queryKey: foodDeletionImpactQueryKey(food.id),
+    queryFn: () => getFoodDeletionImpact(food.id),
+    enabled: canManageFood,
+  });
+
+  const deleteSheetRef = useRef<ActionSheetRef>(null);
+  const deleteSheetItems = useMemo<ActionSheetItem[]>(
+    () =>
+      buildDeleteOptions(deletionImpact ?? null).map((option) => ({
+        key: option.mode,
+        label: `${option.label}\n${option.description}`,
+        destructive: option.destructive,
+        onPress: option.onSelect,
+      })),
+    [buildDeleteOptions, deletionImpact]
+  );
+  const handlePressDelete = useCallback(() => {
+    deleteSheetRef.current?.present();
+  }, []);
 
   const handleEdit = () => {
     if (!selectedVariantId) {
@@ -304,6 +338,14 @@ const FoodDetailScreen: React.FC<FoodDetailScreenProps> = ({
         calcium:
           displayValues.calcium != null ? String(displayValues.calcium) : '',
         iron: displayValues.iron != null ? String(displayValues.iron) : '',
+        caffeineMg:
+          displayValues.caffeineMg != null
+            ? String(displayValues.caffeineMg)
+            : '',
+        waterMl:
+          displayValues.waterMl != null ? String(displayValues.waterMl) : '',
+        alcoholG:
+          displayValues.alcoholG != null ? String(displayValues.alcoholG) : '',
         cholesterol:
           displayValues.cholesterol != null
             ? String(displayValues.cholesterol)
@@ -539,7 +581,7 @@ const FoodDetailScreen: React.FC<FoodDetailScreenProps> = ({
         {canManageFood && (
           <Button
             variant="destructive"
-            onPress={confirmAndDelete}
+            onPress={handlePressDelete}
             disabled={isDeletePending}
           >
             {isDeletePending
@@ -558,6 +600,14 @@ const FoodDetailScreen: React.FC<FoodDetailScreenProps> = ({
     >
       {header}
       {renderContent()}
+
+      <ActionSheet
+        ref={deleteSheetRef}
+        title={t('foodDetail.deleteSheetTitle', {
+          defaultValue: 'Delete food',
+        })}
+        items={deleteSheetItems}
+      />
     </View>
   );
 };

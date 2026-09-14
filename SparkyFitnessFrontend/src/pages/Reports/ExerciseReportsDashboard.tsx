@@ -168,10 +168,24 @@ const ExerciseReportsDashboard = ({
       return [selectedExercise];
     }
     if (selectedExercise === 'All') {
-      // availableExercises can list the same exercise_id under more than one
-      // exercise_name (e.g. a synced provider logging naming variants over
-      // time), so dedupe here to avoid duplicate query keys downstream.
-      return Array.from(new Set(availableExercises.map((ex) => ex.id)));
+      // availableExercises comes from a DISTINCT over exercise_entries, whose
+      // exercise_id is nullable by design: deleting an exercise from the
+      // library sets it to null on preserved diary snapshots rather than
+      // deleting the entry. Drop those rows here — there is no exercise left
+      // to fetch progress for — before the id feeds the per-exercise progress
+      // queries below, or a null slips through as the literal string "null"
+      // in the request URL.
+      // availableExercises can also list the same exercise_id under more than
+      // one exercise_name (e.g. a synced provider logging naming variants
+      // over time), so dedupe here too, to avoid duplicate query keys
+      // downstream.
+      return Array.from(
+        new Set(
+          availableExercises
+            .map((ex) => ex.id)
+            .filter((id): id is string => !!id)
+        )
+      );
     }
     return [];
   }, [selectedExercise, availableExercises]);

@@ -550,7 +550,9 @@
       "updateProfile": "Mise à jour du profil",
       "weightTrend": "Tendance du poids",
       "adaptiveTdee": "TDEE adaptatif",
-      "burnedEnergyBreakdown": "Répartition de l'énergie dépensée :"
+      "burnedEnergyBreakdown": "Répartition de l'énergie dépensée :",
+      "profileIncompleteDesc": "Le poids, la taille et l'âge sont manquants. Les objectifs caloriques pourraient être inexacts.",
+      "projectedBurn": "Dépense énergétique quotidienne totale estimée"
     },
     "editExerciseEntryDialog": {
       "setLabel": "Définir",
@@ -731,8 +733,27 @@
         "activityDetails": "Détails de l'activité",
         "date": "Date",
         "exercise": "Exercice",
-        "notes": "Notes"
-      }
+        "notes": "Notes",
+        "preset": "Modèle",
+        "sets": "Séries"
+      },
+      "noDataToImport": "Aucune donnée valide à importer.",
+      "noFile": "Veuillez sélectionner un fichier CSV à importer.",
+      "parseError": "Échec de l'analyse du CSV : {{error}}",
+      "preview": "Aperçu des entrées à importer",
+      "processFile": "Traiter le fichier",
+      "standardValuesDescription": "Lors de l'importation de définitions d'exercices, assurez-vous que les valeurs pour « Niveau », « Force » et « Mécanique » correspondent à ces options standard.",
+      "standardValuesForDropdowns": "Valeurs standard pour les listes déroulantes de définition d'exercices",
+      "title": "Importer l'historique des entrées d'exercices"
+    },
+    "logExerciseEntryDialog": {
+      "logExercise": "Enregistrer l'exercice : {{exerciseName}}",
+      "notesPlaceholder": "Remarques concernant cette séance...",
+      "saveEntry": "Enregistrer l'entrée",
+      "saving": "Sauvegarde...",
+      "sessionNotes": "Notes",
+      "uploadImage": "Photo",
+      "caloriesBurnedOptional": "Calories brûlées (optionnel)"
     }
   },
   "workoutPresetsManager": {
@@ -2566,7 +2587,8 @@
       "logging": "Enregistrement…",
       "saving": "Sauvegarde…",
       "custom": "Personnalisé",
-      "clear": "Effacer"
+      "clear": "Effacer",
+      "inactive": "Inactif"
     },
     "today": {
       "doses": "Doses",
@@ -2587,8 +2609,8 @@
       "asNeeded": "Au besoin",
       "medicationsTitle": "Médicaments du jour",
       "supplementsTitle": "Compléments alimentaires du jour",
-      "medicationsDescription": "Suivez les doses programmées et consignez les médicaments pris à la demande",
-      "noMedicationDoses": "Aucune dose prévue aujourd'hui. Notez ci-dessous tout médicament pris au besoin.",
+      "medicationsDescription": "Suivez les doses planifiées et consignez les médicaments pris à la demande",
+      "noMedicationDoses": "Aucune dose prévue aujourd'hui. Notez ci-dessous tout médicament pris si nécessaire",
       "supplementsDescription": "Suivez les doses planifiées et notez les compléments pris au besoin",
       "noSupplementDoses": "Aucune dose prévue aujourd'hui. Notez ci-dessous tout médicament pris au besoin.",
       "noPrnMedications": "Aucun médicament au besoin ou non programmé n'est configuré.",
@@ -2601,7 +2623,26 @@
       "logIntake": "Consigner une prise",
       "adherenceTitle": "Synthèse de l'observance",
       "editLogged": "Éditer la dose consignée",
-      "takenAt": "Pris le"
+      "takenAt": "Pris le",
+      "ring14Day": "14 jours",
+      "noScheduledToday": "Aucune dose programmée aujourd'hui.",
+      "noScheduledDay": "Aucune dose programmée pour ce jour.",
+      "loggedToday": "{{completed}} doses sur {{total}} enregistrées aujourd'hui.",
+      "loggedDay": "{{completed}} doses sur {{total}} enregistrées pour cette journée.",
+      "loggedActivity": "Enregistré aujourd'hui",
+      "loggedActivityDescription": "Tout ce que vous avez pris ou omis de prendre à cette date.",
+      "loadingHistory": "Chargement de l'historique…",
+      "addNote": "Ajouter une note...",
+      "note": "Note :",
+      "injectionDueToday": "Injection de {{name}} — prévue pour aujourd'hui",
+      "injectionScheduled": "Injection de {{name}} — programmée",
+      "scheduledAt": "Programmé à {{time}}",
+      "anyTimeToday": "À tout moment aujourd'hui",
+      "logShot": "Plan d'ensemble",
+      "taken": "Prise",
+      "prnTaken": "Pris au besoin",
+      "editEntryTime": "Modifier l'heure de saisie",
+      "removeEntry": "Supprimer l'entrée"
     },
     "locations": {
       "head": "Tête",
@@ -2631,7 +2672,8 @@
     "insights": {
       "title": "Analyses et conseils sur les effets secondaires",
       "subtitle": "Corrélations pharmacocinétiques superposées aux horaires de prise récents",
-      "disclaimer": "Les analyses sont calculées sur une fenêtre glissante de 30 jours. Il s'agit d'estimations à but éducatif, pas d'un avis médical."
+      "disclaimer": "Les analyses sont calculées sur une fenêtre glissante de 30 jours. Il s'agit d'estimations à but éducatif, pas d'un avis médical.",
+      "symptomCorrelation": "Corrélation : {{symptom}}"
     },
     "scheduleDesc": {
       "atTime": " à {{time}}",
@@ -2684,7 +2726,7 @@
       "skipped": "Ignoré",
       "tooltipSkipped": "{{count}} ignorés",
       "tooltipPrn": "{{count}} PRN pris",
-      "tooltipSnoozed": "{{count}} reporté"
+      "tooltipSnoozed": "{{count}} mis en attente"
     },
     "gi": {
       "title": "Sous-suivi digestif",
@@ -2896,11 +2938,15 @@
       "effectiveness": "Évaluation de l'efficacité",
       "hideAdvanced": "Masquer les options avancées",
       "notesPlaceholder": "À prendre avec de l'eau avant le petit-déjeuner. Éviter la consommation d'alcool.",
-      "photoPath": "URL de la photo du comprimé / de l'étiquette (facultatif)",
+      "photoPath": "URL de la photo du comprimé ou de l'étiquette (facultatif)",
       "servingUnit_gummy_one": "gummy",
       "servingUnit_gummy_many": "gummies",
       "servingUnit_gummy_other": "gummies",
-      "customGlp1": "GLP-1 personnalisé / Autre..."
+      "customGlp1": "GLP-1 personnalisé / Autre...",
+      "pharmacyDetail": "Pharmacie",
+      "packagingPhoto": "Photo du comprimé/de l'emballage",
+      "effectivenessDetail": "Efficacité",
+      "todayTab": "Aujourd'hui"
     },
     "schedule": {
       "heading": "Horaires et rappels",
@@ -2958,7 +3004,7 @@
       "configDesc": "Afficher ou masquer certains graphiques et widgets de corrélation.",
       "configTitle": "Afficher/Masquer les visualisations",
       "corrDose": "Dose de GLP-1 vs sévérité des nausées",
-      "corrHydration": "Hydration vs. Constipation",
+      "corrHydration": "Hydratation vs. Constipation",
       "corrSleep": "Durée de sommeil vs. fatigue",
       "corrProtein": "Prise de protéine vs. nausée",
       "kpiAdherence": "Observance moyenne",
@@ -2980,18 +3026,36 @@
       "kpiSymptomCount": "Effets secondaires signalés",
       "kpiSymptomCountDetail": "Nombre de symptômes distincts prédéfinis ou personnalisés enregistrés.",
       "nauseaVsDose": "Sévérité des nausées vs. dose de médicament GLP-1",
-      "nauseaVsDoseDesc": "Suit la sévérité maximale des nausées (barres) par rapport au calendrier d'administration des doses injectées (courbe)."
+      "nauseaVsDoseDesc": "Suit la sévérité maximale des nausées (barres) par rapport au calendrier d'administration des doses injectées (courbe).",
+      "configWeightGoal": "Graphique : Poids vs Objectif",
+      "configMedicationLog": "Tableau du journal des médicaments",
+      "configHydrationConstipation": "Carte Hydratation vs. Constipation",
+      "configProteinNausea": "Carte Protéine vs Nausée",
+      "configSleepFatigue": "Carte Sommeil vs Fatigue",
+      "configDoseNausea": "Carte Taille de la Dose vs Nausée",
+      "chartNauseaSeverity": "Gravité des Nausées",
+      "chartDoseMg": "Dose (mg)",
+      "chartMedicationDose": "Dose du médicament (mg)",
+      "chartWeight": "Poids",
+      "chartTargetWeight": "Poids Cible",
+      "hydrationInsufficient": "Données insuffisants pour cartographier la relation. Continuez à suivre l'hydratation et les symptômes.",
+      "proteinTolerance": "<strong>Tolérance à la protéine :</strong> Un apport quotidien en protéines plus élevé est associé à une moindre intensité des nausées. Continuez à consommer des repas légers et riches en protéines.",
+      "configNauseaDose": "Comparaison nausées et dose",
+      "configGlp1Checkin": "Suivi quotidien du GLP-1",
+      "chartCheckInScore": "Score d'auto-évaluation (0-10)",
+      "chartHunger": "Niveau de faim",
+      "chartFoodNoise": "Préoccupation alimentaire"
     },
     "subtype": {
-      "all": "Tout",
+      "all": "Tous",
       "meds": "Médicaments",
-      "supplements": "Compléments"
+      "supplements": "Compléments alimentaires"
     },
     "forms": {
-      "tablet": "Tablette",
-      "capsule": "Capsule",
+      "tablet": "Comprimé",
+      "capsule": "Gélule",
       "softgel": "Capsule molle",
-      "gummy": "Gomme vitaminée (Gummy)",
+      "gummy": "Gomme à mâcher",
       "powder": "Poudre",
       "liquid": "Liquide"
     },
@@ -3028,7 +3092,8 @@
     },
     "print": {
       "dates": "Période de rapport :",
-      "header": "Rapport sur les médicaments prescrits"
+      "header": "Rapport sur les médicaments prescrits",
+      "name": "Nom :"
     }
   },
   "chat": {
@@ -3247,7 +3312,7 @@
     "recovery": "Récupération : {{val}}",
     "fitnessAge": "Age physiologique : {{val}}",
     "readiness": "Etat de préparation",
-    "recHours": "Enr .:{{val}}"
+    "recHours": "Enr .: {{val}}"
   },
   "layout": {
     "welcome": "Bienvenue {{activeUserName}}"
@@ -3439,5 +3504,38 @@
     "checklist": {
       "week": "Semaine {{n}}"
     }
+  },
+  "openFoodFactsContribution": {
+    "title": "Contribuez à Open Food Facts",
+    "unavailable": "Les contributions nécessitent vos propres aliments personnalisés, un paramètre de serveur activé et un compte Open Food Facts disponible.",
+    "introduction": "Les contributions nécessitent vos propres aliments personnalisés, un paramètre de serveur activé et un compte Open Food Facts disponible.",
+    "saveAndPreview": "Enregistrer et prévisualiser la contribution",
+    "photoLabel": "Votre propre photo de produit",
+    "photoHelp": "Utilisez une photo nette de la face avant, de l'étiquette nutritionnelle ou de l'emballage. La localisation et les autres métadonnées de l'image sont supprimées avant la publication.",
+    "imageTypeLabel": "Contenu photographique",
+    "nutritionPhoto": "Étiquette nutritionnelle",
+    "frontPhoto": "Face avant du produit",
+    "packagingPhoto": "Conditionnement",
+    "imageError": "Choisissez une photo nette au format JPEG, PNG ou WebP de moins de 20 Mo, mesurant au moins 640 pixels sur son côté le plus long et 160 pixels sur son côté le plus court, et ne dépassant pas 40 mégapixels.",
+    "preview": "Prévisualiser la contribution",
+    "preparing": "Préparation de l'aperçu…",
+    "previewError": "La prévisualisation n'a pas pu être préparée.",
+    "previewTitle": "Examinez cette contribution précise",
+    "existingProduct": "Cette contribution met à jour un produit public existant. Vérifiez les informations actuelles avant de confirmer.",
+    "newProduct": "Cette contribution crée un bien public.",
+    "personalAccount": "Votre compte personnel Open Food Facts",
+    "globalAccount": "Le compte Open Food Facts sur serveur partagé",
+    "imageAlt": "Photo à publier",
+    "fieldsCaption": "Chaque champ qui sera publié",
+    "field": "Champ",
+    "value": "Valeur exacte",
+    "dataConsent": "J'ai saisi ces données à partir de l'emballage physique, vérifié les valeurs exactes ci-dessus et j'accepte de les publier sous les licences ODbL et Database Contents License.",
+    "imageConsent": "J'ai pris cette photo, je détiens les droits pour la partager et j'accepte de la publier sous licence CC BY-SA.",
+    "publish": "Publier cette contribution",
+    "publishing": "Édition…",
+    "publishError": "La publication n'a pas pu être confirmée. Vérifiez le produit avant de préparer une nouvelle contribution.",
+    "expired": "Cet aperçu a expiré. Demandez et examinez un nouvel aperçu.",
+    "successTitle": "Contribution publiée",
+    "partialTitle": "Photo publiée ; données produit non confirmées"
   }
 }
