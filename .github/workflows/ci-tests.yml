@@ -321,11 +321,13 @@ jobs:
       # The schema + RLS policies are now applied and the non-superuser app role
       # exists, so the permission matrix can verify every table's real RLS
       # behaviour as the app role (superuser DB user seeds, app role is enforced).
-      - name: Verify RLS permission matrix and Strava cleanup
-        run: pnpm exec vitest run tests/rlsPermissionMatrix.integration.test.ts tests/stravaActivityDetailCleanup.integration.test.ts
+      - name: Verify RLS permission matrix, Strava cleanup and Better Auth schema
+        run: pnpm exec vitest run tests/rlsPermissionMatrix.integration.test.ts tests/stravaActivityDetailCleanup.integration.test.ts tests/betterAuthSchemaCheck.integration.test.ts
         env:
           # Default-on (SKIP_RLS_MATRIX unset) — runs against the Postgres this
           # job provisions, with policies already applied by the steps above.
+          # betterAuthSchemaCheck catches a Better Auth upgrade that expects
+          # columns no migration adds (the #2469 / #2470 auth outage).
           SPARKY_FITNESS_DB_HOST: localhost
           SPARKY_FITNESS_DB_PORT: "5432"
           SPARKY_FITNESS_DB_NAME: sparky_test
@@ -333,6 +335,9 @@ jobs:
           SPARKY_FITNESS_DB_PASSWORD: postgres
           SPARKY_FITNESS_APP_DB_USER: sparky_app
           SPARKY_FITNESS_APP_DB_PASSWORD: sparky_app_pw
+          # auth.ts derives baseURL from this at import time; pin it so the
+          # Better Auth instance is built the same way on every run.
+          SPARKY_FITNESS_FRONTEND_URL: http://localhost:3004
 
   # Prove an existing deployment can upgrade cleanly: apply the base branch's
   # migrations to an empty database, then apply this PR's new migrations on top.

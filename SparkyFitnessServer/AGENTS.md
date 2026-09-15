@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-09-13_
+_Last updated: 2026-09-14_
 
 SparkyFitness Server is the backend API package for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessServer/`.
 
@@ -23,7 +23,7 @@ If a task also touches `shared/`, the frontend, or the mobile app, read the rele
 ## Current Snapshot
 
 - Dev boot path: `pnpm start` -> `nodemon` -> `tsx index.ts`
-- `index.ts` loads `../.env`, applies file-backed secrets, runs preflight checks, then imports `SparkyFitnessServer.ts`
+- `index.ts` loads `../.env`, applies file-backed secrets, runs preflight checks, applies migrations and RLS policies, then imports `SparkyFitnessServer.ts`
 - Main app shell: `SparkyFitnessServer.ts`
 - Stack: Express 5, PostgreSQL via `pg`, Better Auth, Zod, TypeScript 6, Vitest 5, ESLint 10
 - Module system: ESM with `type: "module"` and `moduleResolution: "NodeNext"`
@@ -106,8 +106,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
 - `index.ts` is the true local boot path used by `pnpm start`; do not bypass it for normal development because it performs env loading and preflight work
 - `SparkyFitnessServer.ts` creates the Express app, configures static upload serving, mounts auth interception, registers routes, exposes API docs, schedules cron jobs, and handles graceful shutdown
 - Startup order matters:
-  - apply pending migrations
-  - reapply `db/rls_policies.sql`
+  - `index.ts`: apply pending migrations, then reapply `db/rls_policies.sql` — **before** `SparkyFitnessServer.ts` (and therefore `auth.ts`) is imported
   - upsert env-configured OIDC provider
   - mount Better Auth
   - sync trusted SSO providers
@@ -171,6 +170,7 @@ When searching, ignore noisy/generated directories unless you explicitly need th
   3. Update the developer-facing documentation in `../docs/content/8.developer/11.database-security-tiers.md` to define its security tier (Tier 1, Tier 2, or Tier 3).
   4. Add or update the matching Zod schema in `../shared/src/schemas/database/`.
 - Startup automatically applies migrations and then reapplies RLS policies; do not create alternate migration mechanisms
+- Migrations run from `index.ts`, **before any application module is imported**, and via dynamic `await import()`. Both details are load-bearing: Better Auth validates the schema eagerly at `auth.ts` module scope and caches a mismatch for the life of the process (issues #2469 / #2470), and `db/poolManager.ts` builds its pools at module load, so a static import would be hoisted above the env/secret loading. `tests/bootOrder.test.ts` guards this
 
 ### Uploads: Public vs Sensitive
 
