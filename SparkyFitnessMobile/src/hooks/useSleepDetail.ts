@@ -4,6 +4,7 @@ import { fetchSleepEntries } from '../services/api/sleepApi';
 import type { SleepEntry, SleepStageEvent } from '../types/sleep';
 import { addDays } from '../utils/dateUtils';
 import { sleepDayQueryKey } from './queryKeys';
+import { useRefetchOnFocus } from './useRefetchOnFocus';
 
 const NO_STAGES: SleepStageEvent[] = [];
 
@@ -26,6 +27,8 @@ export function useSleepDetail(entryId: string, day: string) {
     select: (entries: SleepEntry[]) =>
       entries.find((entry) => entry.id === entryId) ?? null,
   });
+
+  useRefetchOnFocus(entryQuery.refetch);
 
   const entry = entryQuery.data ?? null;
 

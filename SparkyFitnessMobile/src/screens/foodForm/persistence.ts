@@ -300,23 +300,26 @@ export function hasFoodFormChanges(
   });
 }
 
-export function invalidateFoodCaches(queryClient: QueryClient, foodId: string) {
-  void queryClient.invalidateQueries({
-    queryKey: foodVariantsQueryKey(foodId),
-    refetchType: 'all',
-  });
-  void queryClient.invalidateQueries({
-    queryKey: foodsQueryKey,
-    refetchType: 'all',
-  });
-  void queryClient.invalidateQueries({
-    queryKey: ['foodsLibrary'],
-    refetchType: 'all',
-  });
-  void queryClient.invalidateQueries({
-    queryKey: ['foodSearch'],
-    refetchType: 'all',
-  });
+export function invalidateFoodCaches(
+  queryClient: QueryClient,
+  foodId: string
+): void {
+  for (const queryKey of [
+    foodVariantsQueryKey(foodId),
+    foodsQueryKey,
+    ['foodsLibrary'],
+    ['foodSearch'],
+    ['foodDetail', foodId],
+    ['favorites'],
+    ['meals'],
+    ['mealDetail'],
+    ['mealPlans'],
+    ['mealPlanTemplate'],
+    ['dailySummary'],
+    ['foodEntryMealDetail'],
+  ]) {
+    void queryClient.invalidateQueries({ queryKey, refetchType: 'all' });
+  }
 }
 
 function updateFoodVariantCache(

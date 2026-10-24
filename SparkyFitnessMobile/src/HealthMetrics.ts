@@ -36,7 +36,7 @@ export interface HealthMetric {
   category?: string;
   enabled?: boolean; // Set to false to temporarily disable a metric
   backgroundDeliveryFrequency?: BackgroundDeliveryFrequency; // Default: 'daily'
-  aggregationStrategy?: 'min-max-avg' | 'sum' | 'last';
+  aggregationStrategy?: 'min-max-avg' | 'min-max-time-avg' | 'sum' | 'last';
   readKind?: MetricReadKind; // Default derived by metricReadKind()
   // Day-aligned rolling lookback floor (in days) for raw reads, so records logged
   // after the fact — event time in the past, entered recently — are still picked up.
@@ -47,7 +47,10 @@ export const metricReadKind = (
   metric: Pick<HealthMetric, 'readKind' | 'aggregationStrategy'>
 ): MetricReadKind =>
   metric.readKind ??
-  (metric.aggregationStrategy === 'min-max-avg' ? 'min-max-avg-day' : 'raw');
+  (metric.aggregationStrategy === 'min-max-avg' ||
+  metric.aggregationStrategy === 'min-max-time-avg'
+    ? 'min-max-avg-day'
+    : 'raw');
 
 const ALL_HEALTH_METRICS: HealthMetric[] = [
   {
@@ -112,7 +115,7 @@ const ALL_HEALTH_METRICS: HealthMetric[] = [
     type: 'heart_rate',
     category: 'Common',
     backgroundDeliveryFrequency: 'hourly',
-    aggregationStrategy: 'min-max-avg',
+    aggregationStrategy: 'min-max-time-avg',
   },
   {
     id: 'weight',
@@ -183,6 +186,25 @@ const ALL_HEALTH_METRICS: HealthMetric[] = [
     platforms: ['ios'],
     category: 'Vitals',
     enabled: false,
+  },
+  {
+    // Health Connect and HealthKit. Each session is sent as a MindfulnessSession
+    // and upserted by its record id into mindfulness_sessions, so the rolling
+    // lookback can re-read sessions entered for an earlier day without
+    // duplicating them.
+    id: 'mindfulness',
+    labelKey: 'healthMetrics.mindfulness',
+    defaultLabel: 'Mindfulness',
+    stateKey: 'isMindfulnessSyncEnabled',
+    preferenceKey: 'syncMindfulnessEnabled',
+    recordType: 'MindfulnessSession',
+    unit: 'min',
+    icon: require('../assets/icons/health-metrics/stress.png'),
+    permissions: [{ accessType: 'read', recordType: 'MindfulnessSession' }],
+    type: 'mindfulness',
+    platforms: ['android', 'ios'],
+    category: 'Common',
+    rollingLookbackDays: 2,
   },
   {
     id: 'basalBodyTemperature',
@@ -499,6 +521,22 @@ const ALL_HEALTH_METRICS: HealthMetric[] = [
     icon: require('../assets/icons/health-metrics/bone_mass.png'),
     permissions: [{ accessType: 'read', recordType: 'BoneMass' }],
     type: 'bone_mass',
+    category: 'Body Measurements',
+  },
+  {
+    // Health Connect only. Sent in kg; the server converts it to
+    // body_water_percentage with the same day's weight.
+    id: 'bodyWaterMass',
+    labelKey: 'healthMetrics.bodyWaterMass',
+    defaultLabel: 'Body Water Mass',
+    stateKey: 'isBodyWaterMassSyncEnabled',
+    preferenceKey: 'syncBodyWaterMassEnabled',
+    recordType: 'BodyWaterMass',
+    unit: 'kg',
+    icon: require('../assets/icons/health-metrics/hydration.png'),
+    permissions: [{ accessType: 'read', recordType: 'BodyWaterMass' }],
+    type: 'body_water_mass',
+    platforms: ['android'],
     category: 'Body Measurements',
   },
   {
@@ -1111,6 +1149,8 @@ export function getHealthMetricLabel(
       return t('healthMetrics.sleepSession', { defaultValue: 'Sleep Session' });
     case 'stress':
       return t('healthMetrics.stress', { defaultValue: 'Stress' });
+    case 'mindfulness':
+      return t('healthMetrics.mindfulness', { defaultValue: 'Mindfulness' });
     case 'basalBodyTemperature':
       return t('healthMetrics.basalBodyTemperature', {
         defaultValue: 'Basal Body Temperature',
@@ -1173,6 +1213,10 @@ export function getHealthMetricLabel(
       });
     case 'boneMass':
       return t('healthMetrics.boneMass', { defaultValue: 'Bone Mass' });
+    case 'bodyWaterMass':
+      return t('healthMetrics.bodyWaterMass', {
+        defaultValue: 'Body Water Mass',
+      });
     case 'cervicalMucus':
       return t('healthMetrics.cervicalMucus', {
         defaultValue: 'Cervical Mucus',

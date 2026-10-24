@@ -11,6 +11,8 @@ import Icon from '../components/Icon';
 import FormInput from '../components/FormInput';
 import Button from '../components/ui/Button';
 import SafeImage from '../components/SafeImage';
+import ProgramWorkoutBadge from '../components/recording/ProgramWorkoutBadge';
+import ShoePickerCard from '../components/ShoePickerCard';
 import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
 import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import {
@@ -25,6 +27,10 @@ import {
   getWorkoutSummary,
   isCardioModality,
   isDurationModality,
+  isWeightDistanceModality,
+  isWeightDurationModality,
+  setDistanceFromKm,
+  setDistanceUnitLabel,
   resolveSnapshotModality,
 } from '../utils/workoutSession';
 import {
@@ -121,7 +127,7 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
   const [draftSets, setDraftSets] = useState<WorkoutDraftSet[]>([]);
   const [activeSetKey, setActiveSetKey] = useState<string | null>(null);
   const [activeSetField, setActiveSetField] = useState<
-    'weight' | 'reps' | 'duration'
+    'weight' | 'reps' | 'duration' | 'distance'
   >('weight');
   const modality = resolveSnapshotModality(session.exercise_snapshot);
   const durationLike = isDurationModality(modality);
@@ -136,7 +142,11 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
     session.sets.length > 1 ||
     (!cardioEffort &&
       session.sets.some(
-        (s) => s.weight != null || s.reps != null || s.duration != null
+        (s) =>
+          s.weight != null ||
+          s.reps != null ||
+          s.duration != null ||
+          (isWeightDistanceModality(modality) && s.distance != null)
       ));
 
   const {
@@ -173,7 +183,11 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
           set.distance != null
             ? String(
                 parseFloat(
-                  distanceFromKm(set.distance, distanceUnit).toFixed(2)
+                  setDistanceFromKm(
+                    set.distance,
+                    distanceUnit,
+                    modality
+                  ).toFixed(2)
                 )
               )
             : '',
@@ -234,7 +248,7 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
     (
       _exerciseId: string,
       setClientId: string,
-      field: 'weight' | 'reps' | 'duration',
+      field: 'weight' | 'reps' | 'duration' | 'distance',
       value: string
     ) => {
       setDraftSets((prev) =>
@@ -253,7 +267,7 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
   );
 
   const activateSet = useCallback(
-    (key: string, field: 'weight' | 'reps' | 'duration') => {
+    (key: string, field: 'weight' | 'reps' | 'duration' | 'distance') => {
       setActiveSetKey(key);
       setActiveSetField(field);
     },
@@ -281,7 +295,8 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
               : null,
             distanceKm: submission.distanceKm,
           }
-        : undefined
+        : undefined,
+      distanceUnit
     );
 
     const payload = {
@@ -416,6 +431,15 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
         editKey: 'avgHeartRate',
         editSuffix: 'bpm',
         keyboardType: 'numeric',
+      });
+    }
+    if (session.workout_effort != null) {
+      stats.push({
+        value: t('workoutEffort.value', {
+          defaultValue: '{{rating}}/10',
+          rating: formatLocalizedNumber(session.workout_effort),
+        }),
+        label: t('activityDetail.stats.effort', { defaultValue: 'Effort' }),
       });
     }
     if (session.steps != null && session.steps > 0) {
@@ -713,8 +737,16 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
         </View>
 
+        {!isEditing && <ProgramWorkoutBadge entryId={session.id} />}
+
         {/* Stats grid */}
         {renderStatsGrid()}
+
+        {!isEditing && isCardioModality(modality) && (
+          <View className="mt-4">
+            <ShoePickerCard exerciseEntryId={session.id} />
+          </View>
+        )}
 
         {/* Sets section */}
         {isEditing ? (
@@ -730,6 +762,7 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
                 activeSetField={activeSetField}
                 modality={modality}
                 weightUnit={weightUnit}
+                distanceUnitLabel={setDistanceUnitLabel(distanceUnit, modality)}
                 onActivateSet={activateSet}
                 onDeactivateSet={deactivateSet}
                 onUpdateSetField={updateDraftSetField}
@@ -764,9 +797,15 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
                       </Text>
                     )}
                     <Text className="text-xs font-semibold text-text-muted flex-1 text-center">
-                      {t('activityDetail.labels.reps', {
-                        defaultValue: 'Reps',
-                      })}
+                      {isWeightDurationModality(modality)
+                        ? t('activityDetail.labels.secondsShort', {
+                            defaultValue: 'Sec',
+                          })
+                        : isWeightDistanceModality(modality)
+                          ? setDistanceUnitLabel(distanceUnit, modality)
+                          : t('activityDetail.labels.reps', {
+                              defaultValue: 'Reps',
+                            })}
                     </Text>
                   </>
                 )}
@@ -779,6 +818,21 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
                 const displayReps = set.reps != null ? String(set.reps) : '-';
                 const seconds = effectiveSetDurationSec(set, modality);
                 const displayDuration = seconds != null ? String(seconds) : '-';
+                const displaySecond = isWeightDurationModality(modality)
+                  ? displayDuration
+                  : isWeightDistanceModality(modality)
+                    ? set.distance != null
+                      ? String(
+                          parseFloat(
+                            setDistanceFromKm(
+                              set.distance,
+                              distanceUnit,
+                              modality
+                            ).toFixed(1)
+                          )
+                        )
+                      : '-'
+                    : displayReps;
                 return (
                   <View key={set.id} className="flex-row py-1.5">
                     <Text className="text-sm text-text-muted w-10 text-center">
@@ -796,7 +850,7 @@ const ActivityDetailScreen: React.FC<Props> = ({ navigation, route }) => {
                           </Text>
                         )}
                         <Text className="text-sm text-text-primary flex-1 text-center">
-                          {displayReps}
+                          {displaySecond}
                         </Text>
                       </>
                     )}

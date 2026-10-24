@@ -9,6 +9,7 @@ import { CheckInTopRow } from './CheckInTopRow';
 import { useCheckInLogic } from '@/hooks/CheckIn/useCheckInLogic';
 import { useSearchParams } from 'react-router-dom';
 import { CheckInPhotos } from './CheckInPhotos';
+import SymptomsPanel from '../Symptoms/SymptomsPanel';
 import { useCheckInPhotoDates } from '@/hooks/CheckIn/useCheckInPhotos';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -17,8 +18,16 @@ import { useUpdateFastMutation } from '@/hooks/Fasting/useFasting';
 import { FastingLog } from '@/types/fasting';
 import { CombinedMeasurement } from '@/types/checkin';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Timer, Activity, Moon, Camera } from 'lucide-react';
+import {
+  Timer,
+  Activity,
+  Moon,
+  Camera,
+  HeartPulse,
+  Sparkles,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { MindfulnessSection } from './MindfulnessSection';
 
 const CheckIn = () => {
   const { user } = useAuth();
@@ -43,9 +52,6 @@ const CheckIn = () => {
     height,
     hips,
     loading,
-    mood,
-    moodNotes,
-    moodTags,
     neck,
     placeholders,
     recentMeasurements,
@@ -59,9 +65,6 @@ const CheckIn = () => {
     setCustomValues,
     setHeight,
     setHips,
-    setMood,
-    setMoodNotes,
-    setMoodTags,
     setNeck,
     setSelectedDate,
     setSteps,
@@ -73,8 +76,12 @@ const CheckIn = () => {
     useMostRecentForCalculation,
     waist,
     weight,
-    handleSaveMood,
-    isSavingMood,
+    moodCheckins,
+    isLoadingMoodCheckins,
+    isSavingMoodCheckin,
+    handleCreateMoodCheckin,
+    handleUpdateMoodCheckin,
+    handleDeleteMoodCheckin,
   } = useCheckInLogic(currentUserId);
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -123,6 +130,11 @@ const CheckIn = () => {
                 icon: Timer,
               },
               {
+                id: 'mindfulness',
+                label: t('checkIn.tabs.mindfulness', 'Mindfulness'),
+                icon: Sparkles,
+              },
+              {
                 id: 'sleep',
                 label: t('checkIn.tabs.sleep', 'Sleep'),
                 icon: Moon,
@@ -131,6 +143,11 @@ const CheckIn = () => {
                 id: 'photos',
                 label: t('checkIn.tabs.photos', 'Photos'),
                 icon: Camera,
+              },
+              {
+                id: 'symptoms',
+                label: t('checkIn.tabs.symptoms', 'Symptoms'),
+                icon: HeartPulse,
               },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -180,14 +197,13 @@ const CheckIn = () => {
           className="focus-visible:outline-none space-y-6"
         >
           <CheckInTopRow
-            mood={mood}
-            moodNotes={moodNotes}
-            moodTags={moodTags}
-            setMood={setMood}
-            setMoodNotes={setMoodNotes}
-            setMoodTags={setMoodTags}
-            onSaveMood={handleSaveMood}
-            isSavingMood={isSavingMood}
+            selectedDate={selectedDate}
+            checkins={moodCheckins}
+            isLoadingCheckins={isLoadingMoodCheckins}
+            isSavingCheckin={isSavingMoodCheckin}
+            onCreateCheckin={handleCreateMoodCheckin}
+            onUpdateCheckin={handleUpdateMoodCheckin}
+            onDeleteCheckin={handleDeleteMoodCheckin}
           />
           <RecentActivity
             convertMeasurement={convertMeasurement}
@@ -263,12 +279,39 @@ const CheckIn = () => {
           />
         </TabsContent>
 
+        <TabsContent value="mindfulness" className="focus-visible:outline-none">
+          <MindfulnessSection selectedDate={selectedDate} />
+        </TabsContent>
+
         <TabsContent value="sleep" className="focus-visible:outline-none">
           <SleepEntrySection key={selectedDate} selectedDate={selectedDate} />
         </TabsContent>
 
         <TabsContent value="photos" className="focus-visible:outline-none">
-          <CheckInPhotos selectedDate={selectedDate} />
+          <CheckInPhotos
+            selectedDate={selectedDate}
+            onLogWeight={(dateString) => {
+              setSelectedDate(dateString);
+              setSearchParams((prev) => {
+                prev.set('tab', 'measurements');
+                prev.set('date', dateString);
+                return prev;
+              });
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="symptoms" className="focus-visible:outline-none">
+          <SymptomsPanel
+            selectedDate={selectedDate}
+            onDateChange={(dateString) => {
+              setSelectedDate(dateString);
+              setSearchParams((prev) => {
+                prev.set('date', dateString);
+                return prev;
+              });
+            }}
+          />
         </TabsContent>
       </Tabs>
 

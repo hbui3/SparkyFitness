@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { View, Text } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { CommonActions } from '@react-navigation/native';
+import type { WorkoutFormat } from '@workspace/shared';
 import FormInput from '../components/FormInput';
 import FormScreenChrome from '../components/FormScreenChrome';
 import WorkoutFormExerciseList, {
@@ -23,6 +24,7 @@ import {
   useWorkoutPresetForm,
   type PresetDraft,
 } from '../hooks/useWorkoutPresetForm';
+import { type ExerciseProgressionPatch } from '../hooks/draftExercisesSlice';
 import { useExerciseImageSource } from '../hooks/useExerciseImageSource';
 import { type HeaderItem } from '../hooks/useScreenHeader';
 import {
@@ -40,6 +42,7 @@ import type {
   WorkoutPresetCreatePayload,
   WorkoutPresetUpdatePayload,
 } from '../services/api/workoutPresetsApi';
+import { buildExerciseReplaceContext } from '../utils/exerciseReplace';
 
 type CreateParams = Extract<
   RootStackParamList['WorkoutPresetForm'],
@@ -58,6 +61,8 @@ interface PresetFormBodyProps {
   state: PresetDraft;
   setName: (s: string) => void;
   setDescription: (s: string) => void;
+  setWorkoutFormat: (f: WorkoutFormat) => void;
+  setTimeCapSeconds: (s: number | null) => void;
   weightUnit: 'kg' | 'lbs';
   distanceUnit: 'km' | 'miles';
   exerciseSetEditing: ReturnType<typeof useExerciseSetEditing>;
@@ -74,6 +79,10 @@ interface PresetFormBodyProps {
   ) => void;
   removeSet: (exerciseClientId: string, setClientId: string) => void;
   setExerciseRest: (exerciseClientId: string, seconds: number) => void;
+  setExerciseProgression: (
+    exerciseClientId: string,
+    patch: ExerciseProgressionPatch
+  ) => void;
   supersetWith: (currentClientId: string, pickedClientId: string) => void;
   ungroupExercise: (clientId: string) => void;
   reorderExercises: (fromItemIndex: number, toItemIndex: number) => void;
@@ -81,6 +90,11 @@ interface PresetFormBodyProps {
   onAddExercisePress: () => void;
   onReplaceExercise: (clientId: string) => void;
   onDuplicateExercise: (clientId: string) => void;
+  addWarmupSets: (
+    clientId: string,
+    warmups: { weight: string; reps: string }[],
+    restSec: number
+  ) => void;
   onRegisterAccessoryHandle: (
     key: string,
     handle: SetRowAccessoryHandle | null
@@ -89,10 +103,45 @@ interface PresetFormBodyProps {
   listRef: React.Ref<WorkoutFormExerciseListHandle>;
 }
 
+const FORMATS: readonly WorkoutFormat[] = [
+  'standard',
+  'interval',
+  'tabata',
+  'emom',
+  'amrap',
+  'for_time',
+] as const;
+
+function getFormatLabel(
+  format: WorkoutFormat,
+  t: (key: string, options?: { defaultValue?: string }) => string
+): string {
+  switch (format) {
+    case 'standard':
+      return t('workoutPresetForm.formatStandard', {
+        defaultValue: 'Standard',
+      });
+    case 'interval':
+      return t('workoutPresetForm.formatInterval', {
+        defaultValue: 'Interval / HIIT',
+      });
+    case 'tabata':
+      return t('workoutPresetForm.formatTabata', { defaultValue: 'Tabata' });
+    case 'emom':
+      return t('workoutPresetForm.formatEmom', { defaultValue: 'EMOM' });
+    case 'amrap':
+      return t('workoutPresetForm.formatAmrap', { defaultValue: 'AMRAP' });
+    case 'for_time':
+      return t('workoutPresetForm.formatForTime', { defaultValue: 'For Time' });
+  }
+}
+
 const PresetFormBody: React.FC<PresetFormBodyProps> = ({
   state,
   setName,
   setDescription,
+  setWorkoutFormat,
+  setTimeCapSeconds,
   weightUnit,
   distanceUnit,
   exerciseSetEditing,
@@ -100,6 +149,7 @@ const PresetFormBody: React.FC<PresetFormBodyProps> = ({
   updateSetMeta,
   removeSet,
   setExerciseRest,
+  setExerciseProgression,
   supersetWith,
   ungroupExercise,
   reorderExercises,
@@ -107,6 +157,7 @@ const PresetFormBody: React.FC<PresetFormBodyProps> = ({
   onAddExercisePress,
   onReplaceExercise,
   onDuplicateExercise,
+  addWarmupSets,
   onRegisterAccessoryHandle,
   onViewExercise,
   listRef,
@@ -132,6 +183,69 @@ const PresetFormBody: React.FC<PresetFormBodyProps> = ({
           returnKeyType="next"
         />
       </View>
+
+      <View className="gap-1.5">
+        <Text className="text-text-secondary text-sm font-medium">
+          {t('workoutPresetForm.format', { defaultValue: 'Format' })}
+        </Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          className="flex-row"
+          contentContainerStyle={{ gap: 6 }}
+        >
+          {FORMATS.map((fmt) => {
+            const isSelected = (state.workoutFormat ?? 'standard') === fmt;
+            return (
+              <Pressable
+                key={fmt}
+                onPress={() => setWorkoutFormat(fmt)}
+                className={`px-3 py-2 rounded-xl border ${
+                  isSelected
+                    ? 'bg-accent-primary/15 border-accent-primary'
+                    : 'bg-surface border-border/50'
+                }`}
+              >
+                <Text
+                  className={`text-xs font-semibold ${
+                    isSelected ? 'text-accent-primary' : 'text-text-secondary'
+                  }`}
+                >
+                  {getFormatLabel(fmt, t)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {(state.workoutFormat === 'amrap' ||
+        state.workoutFormat === 'for_time' ||
+        state.workoutFormat === 'emom') && (
+        <View className="gap-1.5">
+          <Text className="text-text-secondary text-sm font-medium">
+            {t('workoutPresetForm.timeCapMinutes', {
+              defaultValue: 'Time Cap (minutes)',
+            })}
+          </Text>
+          <FormInput
+            placeholder={t('workoutPresetForm.timeCapPlaceholder', {
+              defaultValue: 'e.g. 20',
+            })}
+            value={
+              state.timeCapSeconds != null
+                ? String(Math.floor(state.timeCapSeconds / 60))
+                : ''
+            }
+            onChangeText={(val) => {
+              const num = parseInt(val, 10);
+              setTimeCapSeconds(!isNaN(num) && num > 0 ? num * 60 : null);
+            }}
+            keyboardType="number-pad"
+            returnKeyType="done"
+          />
+        </View>
+      )}
 
       <View className="gap-1.5">
         <Text className="text-text-secondary text-sm font-medium">
@@ -168,9 +282,11 @@ const PresetFormBody: React.FC<PresetFormBodyProps> = ({
           removeSet={removeSet}
           onAddSet={exerciseSetEditing.handleAddSet}
           onRemoveExercise={exerciseSetEditing.handleRemoveExercise}
+          setExerciseProgression={setExerciseProgression}
           setExerciseRest={setExerciseRest}
           onReplaceExercise={onReplaceExercise}
           onDuplicateExercise={onDuplicateExercise}
+          addWarmupSets={addWarmupSets}
           supersetWith={supersetWith}
           ungroupExercise={ungroupExercise}
           onReorderExercises={reorderExercises}
@@ -212,15 +328,19 @@ const CreatePresetMode: React.FC<CreatePresetModeProps> = ({
     state,
     setName,
     setDescription,
+    setWorkoutFormat,
+    setTimeCapSeconds,
     addExercise,
     removeExercise,
     replaceExercise,
     duplicateExercise,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,
     setExerciseRest,
+    setExerciseProgression,
     supersetWith,
     ungroupExercise,
     reorderExercises,
@@ -325,7 +445,13 @@ const CreatePresetMode: React.FC<CreatePresetModeProps> = ({
   // place instead of appending.
   const handleReplaceExercise = (clientId: string) => {
     exerciseSetEditing.setReplaceTarget(clientId);
-    navigation.navigate('ExerciseSearch', { returnKey: route.key });
+    navigation.navigate('ExerciseSearch', {
+      returnKey: route.key,
+      replaceFor: buildExerciseReplaceContext(
+        state.exercises.find((e) => e.clientId === clientId),
+        state.exercises
+      ),
+    });
   };
 
   const handleSave = async () => {
@@ -362,6 +488,8 @@ const CreatePresetMode: React.FC<CreatePresetModeProps> = ({
       name: trimmedName,
       description: trimmedDescription.length > 0 ? trimmedDescription : null,
       is_public: false,
+      workout_format: state.workoutFormat,
+      time_cap_seconds: state.timeCapSeconds,
       exercises: buildPresetExercisesPayload(
         state.exercises,
         weightUnit,
@@ -399,6 +527,8 @@ const CreatePresetMode: React.FC<CreatePresetModeProps> = ({
         state={state}
         setName={setName}
         setDescription={setDescription}
+        setWorkoutFormat={setWorkoutFormat}
+        setTimeCapSeconds={setTimeCapSeconds}
         weightUnit={weightUnit}
         distanceUnit={distanceUnit}
         exerciseSetEditing={exerciseSetEditing}
@@ -406,6 +536,7 @@ const CreatePresetMode: React.FC<CreatePresetModeProps> = ({
         updateSetMeta={updateSetMeta}
         removeSet={removeSet}
         setExerciseRest={setExerciseRest}
+        setExerciseProgression={setExerciseProgression}
         supersetWith={supersetWith}
         ungroupExercise={ungroupExercise}
         reorderExercises={reorderExercises}
@@ -413,6 +544,7 @@ const CreatePresetMode: React.FC<CreatePresetModeProps> = ({
         onAddExercisePress={openExerciseSearch}
         onReplaceExercise={handleReplaceExercise}
         onDuplicateExercise={duplicateExercise}
+        addWarmupSets={addWarmupSets}
         onRegisterAccessoryHandle={onRegisterAccessoryHandle}
         onViewExercise={(exercise) =>
           navigation.navigate('ExerciseDetail', {
@@ -460,6 +592,14 @@ export function buildPresetEditPayload(args: {
     payload.description = trimmedDesc;
   }
 
+  if (state.workoutFormat !== (initialPreset.workout_format ?? 'standard')) {
+    payload.workout_format = state.workoutFormat;
+  }
+
+  if (state.timeCapSeconds !== (initialPreset.time_cap_seconds ?? null)) {
+    payload.time_cap_seconds = state.timeCapSeconds;
+  }
+
   // is_public is intentionally never sent: the form has no UI, and sending false
   // would unshare a previously-public preset (server uses COALESCE).
 
@@ -490,15 +630,19 @@ const EditPresetMode: React.FC<EditPresetModeProps> = ({
     state,
     setName,
     setDescription,
+    setWorkoutFormat,
+    setTimeCapSeconds,
     addExercise,
     removeExercise,
     replaceExercise,
     duplicateExercise,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,
     setExerciseRest,
+    setExerciseProgression,
     supersetWith,
     ungroupExercise,
     reorderExercises,
@@ -598,7 +742,13 @@ const EditPresetMode: React.FC<EditPresetModeProps> = ({
   // place instead of appending.
   const handleReplaceExercise = (clientId: string) => {
     exerciseSetEditing.setReplaceTarget(clientId);
-    navigation.navigate('ExerciseSearch', { returnKey: route.key });
+    navigation.navigate('ExerciseSearch', {
+      returnKey: route.key,
+      replaceFor: buildExerciseReplaceContext(
+        state.exercises.find((e) => e.clientId === clientId),
+        state.exercises
+      ),
+    });
   };
 
   const handleSave = async () => {
@@ -668,12 +818,15 @@ const EditPresetMode: React.FC<EditPresetModeProps> = ({
         state={state}
         setName={setName}
         setDescription={setDescription}
+        setWorkoutFormat={setWorkoutFormat}
+        setTimeCapSeconds={setTimeCapSeconds}
         weightUnit={weightUnit}
         distanceUnit={distanceUnit}
         exerciseSetEditing={exerciseSetEditing}
         updateSetField={updateSetField}
         updateSetMeta={updateSetMeta}
         removeSet={removeSet}
+        setExerciseProgression={setExerciseProgression}
         setExerciseRest={setExerciseRest}
         supersetWith={supersetWith}
         ungroupExercise={ungroupExercise}
@@ -682,6 +835,7 @@ const EditPresetMode: React.FC<EditPresetModeProps> = ({
         onAddExercisePress={openExerciseSearch}
         onReplaceExercise={handleReplaceExercise}
         onDuplicateExercise={duplicateExercise}
+        addWarmupSets={addWarmupSets}
         onRegisterAccessoryHandle={onRegisterAccessoryHandle}
         onViewExercise={(exercise) =>
           navigation.navigate('ExerciseDetail', {

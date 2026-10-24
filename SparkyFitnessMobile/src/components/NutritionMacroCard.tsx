@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
-import { View, Text } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { useCSSVariable } from 'uniwind';
+import Icon from './Icon';
 import MacroCompositionRing from './MacroCompositionRing';
 import ProgressRing from './ProgressRing';
 import { getNetCarbsValue } from '../utils/nutrientUtils';
@@ -33,6 +34,13 @@ interface NutritionMacroCardProps {
   proteinGoal?: number;
   carbsGoal?: number;
   fatGoal?: number;
+  // When provided, each macro row in the goal-bars layout is tappable and shows
+  // a chevron. Not offered for the net carbs row, whose value has no trend series.
+  onMacroPress?: (macro: {
+    key: 'protein' | 'carbs' | 'fat';
+    label: string;
+    goal?: number;
+  }) => void;
 }
 
 const RING_SIZE = 130;
@@ -52,6 +60,7 @@ const NutritionMacroCard: React.FC<NutritionMacroCardProps> = ({
   proteinGoal,
   carbsGoal,
   fatGoal,
+  onMacroPress,
 }) => {
   const [proteinColor, carbsColor, fatColor, trackColor, accentColor] =
     useCSSVariable([
@@ -193,18 +202,45 @@ const NutritionMacroCard: React.FC<NutritionMacroCardProps> = ({
               const goalPct = macro.goalPercent;
               const fillPct =
                 goalPct != null ? Math.max(0, Math.min(goalPct, 100)) : 0;
+              const pressable =
+                onMacroPress != null && !(useNetCarbs && macro.key === 'carbs');
+              const Row = pressable ? TouchableOpacity : View;
               return (
-                <View key={macro.key}>
+                <Row
+                  key={macro.key}
+                  {...(pressable
+                    ? {
+                        activeOpacity: 0.7,
+                        accessibilityRole: 'button' as const,
+                        testID: `macro-row-${macro.key}`,
+                        onPress: () =>
+                          onMacroPress({
+                            key: macro.key as 'protein' | 'carbs' | 'fat',
+                            label: macro.label,
+                            goal: macro.goal,
+                          }),
+                      }
+                    : {})}
+                >
                   <View className="flex-row justify-between mb-1">
                     <Text className="text-text-secondary text-sm">
                       {macro.label}
                     </Text>
-                    <Text className="text-text-primary text-sm font-medium">
-                      {formatLocalizedNumber(Math.round(macro.value))}g
-                      {macro.goal && macro.goal > 0
-                        ? ` / ${formatLocalizedNumber(Math.round(macro.goal))}g`
-                        : ''}
-                    </Text>
+                    <View className="flex-row items-center gap-1">
+                      <Text className="text-text-primary text-sm font-medium">
+                        {formatLocalizedNumber(Math.round(macro.value))}g
+                        {macro.goal && macro.goal > 0
+                          ? ` / ${formatLocalizedNumber(Math.round(macro.goal))}g`
+                          : ''}
+                      </Text>
+                      {pressable ? (
+                        <Icon
+                          name="chevron-forward"
+                          size={14}
+                          color={trackColor}
+                        />
+                      ) : null}
+                    </View>
                   </View>
                   <View className="h-2 rounded-full bg-progress-track overflow-hidden">
                     {goalPct != null && goalPct > 0 ? (
@@ -244,7 +280,7 @@ const NutritionMacroCard: React.FC<NutritionMacroCardProps> = ({
                         );
                       })()
                     : null}
-                </View>
+                </Row>
               );
             })}
           </View>

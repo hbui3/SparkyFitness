@@ -5,7 +5,10 @@ import { useMedications, useMedicationEntries } from '../hooks/useMedications';
 import { useAppPreferencesStore } from '../stores/appPreferencesStore';
 import { getTodayDate } from '../utils/dateUtils';
 import { reconcileMedicationReminders } from '../services/medicationReminderService';
-import { maybePromptForExactAlarmPermission } from '../services/notifications';
+import {
+  maybePromptForExactAlarmPermission,
+  registerLocalizedNotificationPresentation,
+} from '../services/notifications';
 import { addLog } from '../services/LogService';
 import i18n from '../localization/i18n';
 
@@ -21,6 +24,12 @@ const MedicationReminderReconciler: React.FC = () => {
   );
   const medicationReminderHideNames = useAppPreferencesStore(
     (s) => s.medicationReminderHideNames
+  );
+  const medicationReminderConsolidate = useAppPreferencesStore(
+    (s) => s.medicationReminderConsolidate
+  );
+  const medicationReminderSnoozeMinutes = useAppPreferencesStore(
+    (s) => s.medicationReminderSnoozeMinutes
   );
   const remindersActive = medicationRemindersEnabled && notificationsEnabled;
   const [languageRevision, setLanguageRevision] = useState(0);
@@ -41,6 +50,15 @@ const MedicationReminderReconciler: React.FC = () => {
     toDate: today,
     enabled: remindersActive,
   });
+
+  useEffect(() => {
+    void registerLocalizedNotificationPresentation().catch((error) => {
+      addLog(
+        `Failed to update notification categories: ${(error as Error).message}`,
+        'WARNING'
+      );
+    });
+  }, [medicationReminderSnoozeMinutes, languageRevision]);
 
   useEffect(() => {
     if (remindersActive && (isLoadingMeds || isLoadingEntries)) return;
@@ -64,6 +82,7 @@ const MedicationReminderReconciler: React.FC = () => {
     remindersActive,
     medicationReminderRepeats,
     medicationReminderHideNames,
+    medicationReminderConsolidate,
     today,
     languageRevision,
   ]);

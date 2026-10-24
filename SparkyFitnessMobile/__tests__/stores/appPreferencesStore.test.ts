@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { HEALTH_TREND_KEYS } from '../../src/constants/healthTrends';
+import { REPORT_KEYS } from '../../src/constants/reports';
+import { WATCH_PAGE_KEYS } from '../../src/constants/watchPages';
 import {
   useAppPreferencesStore,
   PREFERENCE_DEFAULTS,
@@ -82,24 +84,21 @@ describe('appPreferencesStore', () => {
       expect(state.hiddenHealthTrends).toEqual([]);
     });
 
-    it('writes order and hidden keys together', () => {
-      useAppPreferencesStore
-        .getState()
-        .setHealthTrendLayout(['weight', 'sleep', 'steps'], ['steps']);
-
-      const state = useAppPreferencesStore.getState();
-      expect(state.healthTrendOrder).toEqual(['weight', 'sleep', 'steps']);
-      expect(state.hiddenHealthTrends).toEqual(['steps']);
-    });
-
-    it('clears hidden keys when every graph is shown again', () => {
+    it('writes order and hidden keys independently with new setters', () => {
       const store = useAppPreferencesStore.getState();
+      store.setHealthTrendOrder(['weight', 'sleep', 'steps']);
+      expect(useAppPreferencesStore.getState().healthTrendOrder).toEqual([
+        'weight',
+        'sleep',
+        'steps',
+      ]);
 
-      store.setHealthTrendLayout(['steps', 'weight', 'sleep'], ['sleep']);
-      useAppPreferencesStore
-        .getState()
-        .setHealthTrendLayout(['steps', 'weight', 'sleep'], []);
+      store.setHealthTrendHidden('steps', true);
+      expect(useAppPreferencesStore.getState().hiddenHealthTrends).toEqual([
+        'steps',
+      ]);
 
+      store.setHealthTrendHidden('steps', false);
       expect(useAppPreferencesStore.getState().hiddenHealthTrends).toEqual([]);
     });
 
@@ -126,6 +125,154 @@ describe('appPreferencesStore', () => {
       expect(state.soundsEnabled).toBe(false); // persisted values honoured
       expect(state.healthTrendOrder).toEqual([...HEALTH_TREND_KEYS]);
       expect(state.hiddenHealthTrends).toEqual([]);
+    });
+  });
+
+  describe('report preferences', () => {
+    it('defaults to every report, nothing hidden, opening on 30 days', () => {
+      const state = useAppPreferencesStore.getState();
+      expect(state.reportOrder).toEqual([...REPORT_KEYS]);
+      expect(state.hiddenReports).toEqual([]);
+      expect(state.hiddenReportSections).toEqual([]);
+      expect(state.reportDefaultRange).toBe('30d');
+    });
+
+    it('hides and shows reports and sections without duplicates', () => {
+      const store = useAppPreferencesStore.getState();
+      store.setReportHidden('mood', true);
+      store.setReportHidden('mood', true);
+      store.setReportSectionHidden('sleep.stages', true);
+      store.setReportSectionHidden('sleep.stages', true);
+      expect(useAppPreferencesStore.getState().hiddenReports).toEqual(['mood']);
+      expect(useAppPreferencesStore.getState().hiddenReportSections).toEqual([
+        'sleep.stages',
+      ]);
+
+      store.setReportHidden('mood', false);
+      store.setReportSectionHidden('sleep.stages', false);
+      expect(useAppPreferencesStore.getState().hiddenReports).toEqual([]);
+      expect(useAppPreferencesStore.getState().hiddenReportSections).toEqual(
+        []
+      );
+    });
+
+    it('shows the original six nutrient averages until the user picks', () => {
+      const state = useAppPreferencesStore.getState();
+      expect(state.shownReportNutrients).toEqual([
+        'dietary_fiber',
+        'sugars',
+        'sodium',
+        'water_ml',
+        'caffeine_mg',
+        'alcohol_g',
+      ]);
+      expect(state.reportNutrientOrder).toEqual([]);
+
+      state.setReportNutrientShown('Creatine', true);
+      state.setReportNutrientShown('Creatine', true);
+      state.setReportNutrientShown('sugars', false);
+      expect(
+        useAppPreferencesStore
+          .getState()
+          .shownReportNutrients.filter((key) => key === 'Creatine')
+      ).toHaveLength(1);
+      expect(
+        useAppPreferencesStore.getState().shownReportNutrients
+      ).not.toContain('sugars');
+    });
+
+    it('reset puts every report setting back to its default', () => {
+      const store = useAppPreferencesStore.getState();
+      store.setReportOrder(['mood', 'nutrition', 'sleep', 'exercise']);
+      store.setReportHidden('sleep', true);
+      store.setReportDefaultRange('7d');
+      store.setReportSectionHidden('nutrition.goal', true);
+
+      store.resetReportCustomization();
+
+      const state = useAppPreferencesStore.getState();
+      expect(state.reportOrder).toEqual([...REPORT_KEYS]);
+      expect(state.hiddenReports).toEqual([]);
+      expect(state.reportDefaultRange).toBe('30d');
+      expect(state.hiddenReportSections).toEqual([]);
+    });
+  });
+
+  describe('watch page preferences', () => {
+    it('defaults to every page, in the order the watch shipped with', () => {
+      const state = useAppPreferencesStore.getState();
+      expect(state.watchPageOrder).toEqual([...WATCH_PAGE_KEYS]);
+      expect(state.hiddenWatchPages).toEqual([]);
+    });
+
+    it('writes order and hidden pages independently', () => {
+      const store = useAppPreferencesStore.getState();
+      store.setWatchPageOrder(['workout', 'goals', 'water', 'entry', 'trend']);
+      expect(useAppPreferencesStore.getState().watchPageOrder[0]).toBe(
+        'workout'
+      );
+
+      store.setWatchPageHidden('trend', true);
+      store.setWatchPageHidden('trend', true);
+      expect(useAppPreferencesStore.getState().hiddenWatchPages).toEqual([
+        'trend',
+      ]);
+
+      store.setWatchPageHidden('trend', false);
+      expect(useAppPreferencesStore.getState().hiddenWatchPages).toEqual([]);
+    });
+
+    it('shows the three macros on the Goals page until the wearer picks', () => {
+      const store = useAppPreferencesStore.getState();
+      expect(store.shownWatchNutrients).toEqual(['protein', 'carbs', 'fat']);
+
+      store.setWatchNutrientShown('sodium', true);
+      store.setWatchNutrientShown('fat', false);
+      expect(useAppPreferencesStore.getState().shownWatchNutrients).toEqual([
+        'protein',
+        'carbs',
+        'sodium',
+      ]);
+    });
+  });
+
+  describe('dashboard card preferences', () => {
+    it('defaults to the full registry order', () => {
+      const state = useAppPreferencesStore.getState();
+      expect(state.dashboardCardOrder).toEqual([
+        'calorieRing',
+        'askSparky',
+        'macros',
+        'exercise',
+        'trainingLoad',
+        'hydration',
+        'caffeine',
+        'fasting',
+        'cycle',
+        'medications',
+        'symptoms',
+        'mood',
+        'progressPhotos',
+        'healthTrends',
+        'mindfulness',
+      ]);
+    });
+
+    it('updates dashboard card order', () => {
+      const newOrder = ['fasting', 'hydration', 'caffeine'] as never[];
+      useAppPreferencesStore.getState().setDashboardCardOrder(newOrder);
+      expect(useAppPreferencesStore.getState().dashboardCardOrder).toEqual(
+        newOrder
+      );
+    });
+
+    it('persists symptomsCardVisible across storage write', async () => {
+      useAppPreferencesStore.getState().setSymptomsCardVisible(false);
+      expect(useAppPreferencesStore.getState().symptomsCardVisible).toBe(false);
+      const raw = await AsyncStorage.getItem('@SparkyFitness/app-preferences');
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw!);
+      expect(parsed.state.symptomsCardVisible).toBe(false);
     });
   });
 

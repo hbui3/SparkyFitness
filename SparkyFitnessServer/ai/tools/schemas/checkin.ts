@@ -124,8 +124,29 @@ const logMoodSchema = z
       .min(1)
       .max(10)
       .optional()
-      .default(5)
-      .describe('Mood score (1-10); defaults to 5 if omitted'),
+      .describe(
+        'Mood score (1-10). Optional; omit if the user did not give one. ' +
+          'Converted to the stored 10-100 scale on write -- do not widen this ' +
+          'range to match the column'
+      ),
+    energy_value: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .optional()
+      .describe(
+        'Energy 1-5 (1 = drained, 5 = energized). Optional; omit if the user did not mention it'
+      ),
+    focus_value: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .optional()
+      .describe(
+        'Focus 1-5 (1 = scattered, 5 = locked in). Optional; omit if the user did not mention it'
+      ),
     notes: z
       .string()
       .max(2000)
@@ -211,6 +232,16 @@ const getBiometricsHistorySchema = z
   })
   .strict();
 
+const getCustomMetricsHistorySchema = z
+  .object({
+    action: z.literal('get_custom_metrics_history'),
+    start_date: dateSchema
+      .optional()
+      .describe('Start date for the history range'),
+    end_date: dateSchema.optional().describe('End date for the history range'),
+  })
+  .strict();
+
 export const manageCheckinSchema = z.discriminatedUnion('action', [
   logBiometricsSchema,
   logCustomMetricSchema,
@@ -222,6 +253,7 @@ export const manageCheckinSchema = z.discriminatedUnion('action', [
   listCheckinDiarySchema,
   getFastingStatusSchema,
   getBiometricsHistorySchema,
+  getCustomMetricsHistorySchema,
 ]);
 
 export type ManageCheckinInput = z.infer<typeof manageCheckinSchema>;
@@ -242,6 +274,7 @@ export const manageCheckinInput = z.object({
       'list_checkin_diary',
       'get_fasting_status',
       'get_biometrics_history',
+      'get_custom_metrics_history',
     ])
     .optional()
     .describe('Action to perform; see tool description for per-action fields.'),
@@ -301,7 +334,27 @@ export const manageCheckinInput = z.object({
     .min(1)
     .max(10)
     .optional()
-    .describe('Mood score (1-10)'),
+    .describe(
+      'Mood score (1-10). Optional; omit if the user did not give one. Converted to the stored 10-100 scale'
+    ),
+  energy_value: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional()
+    .describe(
+      'Energy 1-5 (1 = drained, 5 = energized). Optional; omit if the user did not mention it'
+    ),
+  focus_value: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional()
+    .describe(
+      'Focus 1-5 (1 = scattered, 5 = locked in). Optional; omit if the user did not mention it'
+    ),
   mood_tags: z
     .array(z.string())
     .optional()

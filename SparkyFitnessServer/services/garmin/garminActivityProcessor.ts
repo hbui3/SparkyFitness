@@ -184,6 +184,7 @@ async function attachHrZones(
       exercise_entry_id: exerciseEntryId,
       entry_date: entryDate,
       ...zone,
+      zone_method: 'device',
     }))
   );
 }

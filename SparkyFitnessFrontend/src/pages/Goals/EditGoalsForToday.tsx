@@ -71,7 +71,11 @@ const EditGoalsForm = ({
 }: {
   initialData: ExpandedGoals;
   selectedDate: string;
-  onSave: (goals: ExpandedGoals, clear?: boolean) => Promise<void>;
+  onSave: (
+    goals: ExpandedGoals,
+    clear?: boolean,
+    initialCalories?: number
+  ) => Promise<void>;
   isSaving: boolean;
   customNutrients: UserCustomNutrient[];
 }) => {
@@ -89,6 +93,8 @@ const EditGoalsForm = ({
     ...DEFAULT_GOALS,
     ...initialData,
   });
+  // Baseline captured at mount; initialData can change on refetch while open.
+  const [initialCalories] = useState(goals.calories);
 
   const {
     algorithms,
@@ -228,8 +234,11 @@ const EditGoalsForm = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-end">
         <div className="space-y-1.5">
           <Label>
-            {t('goals.goalsSettings.calories', 'Calories')} (
-            {getEnergyUnitString(energyUnit)})
+            {t(
+              'goals.goalsSettings.calories2',
+              'Calories ({{energyUnitString}})',
+              { energyUnitString: getEnergyUnitString(energyUnit) }
+            )}
           </Label>
           <NumericInput
             id="calories"
@@ -301,40 +310,43 @@ const EditGoalsForm = ({
           <div
             className={`text-sm font-medium text-right ${isMacroValid ? 'text-green-600' : 'text-destructive'}`}
           >
-            {t('goals.mealDistribution.total', 'Total')}: {currentMacroTotal}%{' '}
-            {!isMacroValid &&
-              `(${t('goals.mealDistribution.mustBe100', 'Must be 100% to save')})`}
+            {t('goals.goalsSettings.total', 'Total: {{currentMacroTotal}}%', {
+              currentMacroTotal,
+            })}{' '}
+            {!isMacroValid && (
+              <span>{`(${t('goals.mealDistribution.mustBe100', 'Must be 100% to save')})`}</span>
+            )}
           </div>
           <div className="p-3 bg-muted/50 rounded-md text-xs text-muted-foreground grid grid-cols-3 gap-2">
             <span>
-              {t('goals.mealDistribution.protein', 'Protein:')}{' '}
-              {calculateGrams(
-                goals.calories,
-                goals.protein_percentage || 0,
-                'protein',
-                goals.dietary_fiber
-              )}
-              g
+              {t('goals.goalsSettings.proteinG', 'Protein: {{grams}}g', {
+                grams: calculateGrams(
+                  goals.calories,
+                  goals.protein_percentage || 0,
+                  'protein',
+                  goals.dietary_fiber
+                ),
+              })}
             </span>
             <span>
-              {t('goals.mealDistribution.carbs', 'Carbs:')}{' '}
-              {calculateGrams(
-                goals.calories,
-                goals.carbs_percentage || 0,
-                'carbs',
-                goals.dietary_fiber
-              )}
-              g
+              {t('goals.goalsSettings.carbsG', 'Carbs: {{grams}}g', {
+                grams: calculateGrams(
+                  goals.calories,
+                  goals.carbs_percentage || 0,
+                  'carbs',
+                  goals.dietary_fiber
+                ),
+              })}
             </span>
             <span>
-              {t('goals.mealDistribution.fat', 'Fat:')}{' '}
-              {calculateGrams(
-                goals.calories,
-                goals.fat_percentage || 0,
-                'fat',
-                goals.dietary_fiber
-              )}
-              g
+              {t('goals.goalsSettings.fatG', 'Fat: {{grams}}g', {
+                grams: calculateGrams(
+                  goals.calories,
+                  goals.fat_percentage || 0,
+                  'fat',
+                  goals.dietary_fiber
+                ),
+              })}
             </span>
           </div>
         </div>
@@ -432,7 +444,7 @@ const EditGoalsForm = ({
               finalGoals.carbs_percentage = null;
               finalGoals.fat_percentage = null;
             }
-            onSave(finalGoals);
+            onSave(finalGoals, false, initialCalories);
           }}
           disabled={isSaving || !isMacroValid || !isTotalPercentageValid}
           className="w-full"
@@ -461,7 +473,11 @@ const EditGoalsForToday = ({ selectedDate }: EditGoalsProps) => {
   const { mutateAsync: saveGoals, isPending: saving } = useSaveGoalsMutation();
   const { data: customNutrients = [] } = useCustomNutrients();
 
-  const handleSave = async (goalsToSave: ExpandedGoals, clear = false) => {
+  const handleSave = async (
+    goalsToSave: ExpandedGoals,
+    clear = false,
+    initialCalories?: number
+  ) => {
     if (!user) return;
 
     // Logic to convert percentages if needed before sending to API
@@ -485,7 +501,14 @@ const EditGoalsForToday = ({ selectedDate }: EditGoalsProps) => {
       );
     }
 
-    if (goalModeCalculationMethod === 'adaptive' || goalMode !== 'maintain') {
+    // Only a manual calorie edit overrides the adaptive/goal-mode setup;
+    // changing macros alone must leave it intact. Compare against the value
+    // the form started with, since serverGoals can refetch while it is open.
+    const caloriesEdited = clear || finalGoals.calories !== initialCalories;
+    if (
+      caloriesEdited &&
+      (goalModeCalculationMethod === 'adaptive' || goalMode !== 'maintain')
+    ) {
       try {
         await saveAllPreferences({
           goalMode: 'maintain',

@@ -3,7 +3,7 @@ import { getClient } from '../db/poolManager.js';
 import { log } from '../config/logging.js';
 const PRESET_ENTRY_SELECT = `
   SELECT id, user_id, workout_preset_id, name, description, entry_date, created_at,
-         updated_at, created_by_user_id, notes, source
+         updated_at, created_by_user_id, notes, source, location
   FROM exercise_preset_entries
 `;
 
@@ -33,8 +33,12 @@ async function createExercisePresetEntryWithClient(
   createdByUserId: any
 ) {
   const result = await client.query(
-    `INSERT INTO exercise_preset_entries (user_id, workout_preset_id, name, description, entry_date, created_by_user_id, notes, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    // workout_format is snapshotted from the preset so later preset edits or
+    // deletes don't reclassify this session's sets.
+    `INSERT INTO exercise_preset_entries (user_id, workout_preset_id, name, description, entry_date, created_by_user_id, notes, source, location, workout_format)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+             COALESCE((SELECT wp.workout_format FROM workout_presets wp WHERE wp.id = $2), 'standard'))
+     RETURNING id`,
     [
       userId,
       entryData.workout_preset_id ?? null,
@@ -44,6 +48,7 @@ async function createExercisePresetEntryWithClient(
       createdByUserId,
       entryData.notes ?? null,
       entryData.source ?? 'manual',
+      entryData.location ?? null,
     ]
   );
   return getExercisePresetEntryByIdWithClient(
@@ -138,6 +143,10 @@ async function updateExercisePresetEntryWithClient(
         : existingEntry.entry_date,
     notes:
       updateData.notes !== undefined ? updateData.notes : existingEntry.notes,
+    location:
+      updateData.location !== undefined
+        ? updateData.location
+        : existingEntry.location,
     source:
       updateData.source !== undefined
         ? updateData.source
@@ -151,8 +160,14 @@ async function updateExercisePresetEntryWithClient(
        entry_date = $4,
        notes = $5,
        source = $6,
+       location = $7,
+       workout_format = CASE
+         WHEN workout_preset_id IS DISTINCT FROM $1
+           THEN COALESCE((SELECT wp.workout_format FROM workout_presets wp WHERE wp.id = $1), 'standard')
+         ELSE workout_format
+       END,
        updated_at = now()
-     WHERE id = $7 AND user_id = $8
+     WHERE id = $8 AND user_id = $9
      RETURNING id`,
     [
       mergedEntry.workout_preset_id,
@@ -161,6 +176,7 @@ async function updateExercisePresetEntryWithClient(
       mergedEntry.entry_date,
       mergedEntry.notes,
       mergedEntry.source,
+      mergedEntry.location,
       id,
       userId,
     ]
@@ -289,6 +305,24 @@ async function deleteExercisePresetEntriesByEntrySourceAndDate(
     client.release();
   }
 }
+/** The user's own distinct workout locations, most recently used first. */
+async function getDistinctLocations(userId: string): Promise<string[]> {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      `SELECT location
+       FROM exercise_preset_entries
+       WHERE user_id = $1 AND location IS NOT NULL AND TRIM(location) != ''
+       GROUP BY location
+       ORDER BY MAX(entry_date) DESC, MAX(created_at) DESC
+       LIMIT 5`,
+      [userId]
+    );
+    return result.rows.map((row: { location: string }) => row.location);
+  } finally {
+    client.release();
+  }
+}
 
 async function deleteOnePlannedPresetEntry(
   userId: string,
@@ -344,6 +378,8 @@ async function deleteOnePlannedPresetEntry(
     client.release();
   }
 }
+
+export { deleteOnePlannedPresetEntry };
 export { createExercisePresetEntry };
 export { createExercisePresetEntryWithClient };
 export { getExercisePresetEntryById };
@@ -354,8 +390,9 @@ export { updateExercisePresetEntryWithClient };
 export { deleteExercisePresetEntry };
 export { deleteExercisePresetEntriesByEntrySourceAndDate };
 export { deleteExercisePresetEntriesByEntrySourceAndDateWithClient };
-export { deleteOnePlannedPresetEntry };
+export { getDistinctLocations };
 export default {
+  deleteOnePlannedPresetEntry,
   createExercisePresetEntry,
   createExercisePresetEntryWithClient,
   getExercisePresetEntryById,
@@ -366,5 +403,5 @@ export default {
   deleteExercisePresetEntry,
   deleteExercisePresetEntriesByEntrySourceAndDate,
   deleteExercisePresetEntriesByEntrySourceAndDateWithClient,
-  deleteOnePlannedPresetEntry,
+  getDistinctLocations,
 };

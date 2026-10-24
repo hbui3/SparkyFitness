@@ -1,6 +1,12 @@
 import React, { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { View, Text, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  ActivityIndicator,
+  Platform,
+} from 'react-native';
 import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -29,6 +35,7 @@ import { formatRelativeTime } from '../utils/dateUtils';
 import type { DiagnosticQueryState } from '../types/diagnosticReport';
 import Constants from 'expo-constants';
 import { useDiscreetMode } from '../hooks/useDiscreetMode';
+import WatchConnectivity from '../../modules/watch-connectivity';
 
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -47,6 +54,11 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
   const insets = useSafeAreaInsets();
   const activeWorkoutBarPadding = useActiveWorkoutBarPadding();
   const usesNativeTabs = useNativeIOSTabsActive();
+
+  // Only offered with a watch paired: the settings do nothing without one.
+  const hasPairedWatch =
+    WatchConnectivity?.isSupported() === true &&
+    WatchConnectivity.isPaired() === true;
 
   const [showPrivacyModal, setShowPrivacyModal] = useState<boolean>(false);
 
@@ -258,6 +270,14 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
               {isConnected && (
                 <SettingsRow
                   icon="calorie-settings"
+                  title={t('settings.rows.goals', { defaultValue: 'Goals' })}
+                  onPress={() => navigation.navigate('Goals')}
+                  iconColor={catCalories}
+                />
+              )}
+              {isConnected && (
+                <SettingsRow
+                  icon="calorie-settings"
                   title={t('settings.rows.calories', {
                     defaultValue: 'Calories & BMR',
                   })}
@@ -267,10 +287,28 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
               )}
               {isConnected && (
                 <SettingsRow
+                  icon="microphone"
+                  title={t('voiceSettings.open', {
+                    defaultValue: 'Voice settings',
+                  })}
+                  onPress={() => navigation.navigate('ChatSettings')}
+                  iconColor={catBlue}
+                />
+              )}
+              {isConnected && (
+                <SettingsRow
                   icon="food-search-settings"
                   title={t('settings.rows.food', { defaultValue: 'Food' })}
                   onPress={() => navigation.navigate('FoodSettings')}
                   iconColor={catOrange}
+                />
+              )}
+              {isConnected && (
+                <SettingsRow
+                  icon="sparkles"
+                  title={t('settings.rows.ai', { defaultValue: 'AI' })}
+                  onPress={() => navigation.navigate('AiSettings')}
+                  iconColor={catTeal}
                 />
               )}
               {isConnected && (
@@ -293,6 +331,16 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
               )}
               {isConnected && (
                 <SettingsRow
+                  icon="chart-bar"
+                  title={t('settings.rows.reports', {
+                    defaultValue: 'Reports',
+                  })}
+                  onPress={() => navigation.navigate('ReportsSettings')}
+                  iconColor={catBlue}
+                />
+              )}
+              {isConnected && (
+                <SettingsRow
                   icon="wellness"
                   title={
                     discreetMode
@@ -307,12 +355,38 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
                   iconColor={catPink}
                 />
               )}
+              {isConnected && (
+                <SettingsRow
+                  icon="timer"
+                  title={t('settings.rows.fasting', {
+                    defaultValue: 'Fasting',
+                  })}
+                  onPress={() => navigation.navigate('FastingSettings')}
+                  iconColor={catOrange}
+                />
+              )}
               <SettingsRow
                 icon="workout-settings"
                 title={t('settings.rows.workout', { defaultValue: 'Workout' })}
                 onPress={() => navigation.navigate('WorkoutSettings')}
                 iconColor={catBlue}
               />
+              {hasPairedWatch && (
+                <SettingsRow
+                  icon="watch-settings"
+                  title={
+                    Platform.OS === 'android'
+                      ? t('settings.rows.wearOs', {
+                          defaultValue: 'Wear OS',
+                        })
+                      : t('settings.rows.watch', {
+                          defaultValue: 'Apple Watch',
+                        })
+                  }
+                  onPress={() => navigation.navigate('WatchSettings')}
+                  iconColor={catSlate}
+                />
+              )}
             </SettingsRowGroup>
 
             <SettingsRowGroup>

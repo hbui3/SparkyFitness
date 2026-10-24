@@ -100,7 +100,7 @@ describe('sparky_manage_profile', () => {
 
   it('update_profile does not accept an email field (cannot change account email)', async () => {
     const result = await tools.sparky_manage_profile.execute!(
-      { action: 'update_profile', email: 'admin@example.com' } as any,
+      { action: 'update_profile', email: 'admin@example.com' } as never,
       opts
     );
 
@@ -171,12 +171,12 @@ describe('sparky_manage_profile', () => {
       'user-1',
       'user-1',
       {
-        timezone: null,
+        timezone: undefined,
         energy_unit: 'kJ',
-        default_weight_unit: null,
-        default_measurement_unit: null,
-        default_distance_unit: null,
-        water_display_unit: null,
+        default_weight_unit: undefined,
+        default_measurement_unit: undefined,
+        default_distance_unit: undefined,
+        water_display_unit: undefined,
       }
     );
     expect(preferenceService.upsertUserPreferences).not.toHaveBeenCalled();
@@ -198,11 +198,11 @@ describe('sparky_manage_profile', () => {
       'user-1',
       {
         timezone: 'UTC',
-        energy_unit: null,
-        default_weight_unit: null,
-        default_measurement_unit: null,
-        default_distance_unit: null,
-        water_display_unit: null,
+        energy_unit: undefined,
+        default_weight_unit: undefined,
+        default_measurement_unit: undefined,
+        default_distance_unit: undefined,
+        water_display_unit: undefined,
       }
     );
   });
@@ -237,7 +237,7 @@ describe('sparky_manage_profile', () => {
     vi.mocked(preferenceService.updateUserPreferences).mockResolvedValue({});
 
     const result = await tools.sparky_manage_profile.execute!(
-      { update_preferences: { default_weight_unit: 'lbs' } } as any,
+      { update_preferences: { default_weight_unit: 'lbs' } } as never,
       opts
     );
 
@@ -246,12 +246,12 @@ describe('sparky_manage_profile', () => {
       'user-1',
       'user-1',
       {
-        timezone: null,
-        energy_unit: null,
+        timezone: undefined,
+        energy_unit: undefined,
         default_weight_unit: 'lbs',
-        default_measurement_unit: null,
-        default_distance_unit: null,
-        water_display_unit: null,
+        default_measurement_unit: undefined,
+        default_distance_unit: undefined,
+        water_display_unit: undefined,
       }
     );
   });
@@ -260,7 +260,7 @@ describe('sparky_manage_profile', () => {
     vi.mocked(preferenceService.updateUserPreferences).mockResolvedValue({});
 
     const result = await tools.sparky_manage_profile.execute!(
-      { default_weight_unit: 'lbs' } as any,
+      { default_weight_unit: 'lbs' } as never,
       opts
     );
 
@@ -269,12 +269,12 @@ describe('sparky_manage_profile', () => {
       'user-1',
       'user-1',
       {
-        timezone: null,
-        energy_unit: null,
+        timezone: undefined,
+        energy_unit: undefined,
         default_weight_unit: 'lbs',
-        default_measurement_unit: null,
-        default_distance_unit: null,
-        water_display_unit: null,
+        default_measurement_unit: undefined,
+        default_distance_unit: undefined,
+        water_display_unit: undefined,
       }
     );
   });

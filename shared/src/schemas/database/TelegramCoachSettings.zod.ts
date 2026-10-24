@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const telegramCoachSettingsSchema = z.object({
   id: z.literal(1),

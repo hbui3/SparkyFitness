@@ -35,11 +35,14 @@ export function useAddCustomExerciseForm(
   const [newExerciseForce, setNewExerciseForce] = useState('');
   const [newExerciseLevel, setNewExerciseLevel] = useState('');
   const [newExerciseMechanic, setNewExerciseMechanic] = useState('');
-  const [newExerciseEquipment, setNewExerciseEquipment] = useState('');
-  const [newExercisePrimaryMuscles, setNewExercisePrimaryMuscles] =
-    useState('');
+  const [newExerciseEquipment, setNewExerciseEquipment] = useState<string[]>(
+    []
+  );
+  const [newExercisePrimaryMuscles, setNewExercisePrimaryMuscles] = useState<
+    string[]
+  >([]);
   const [newExerciseSecondaryMuscles, setNewExerciseSecondaryMuscles] =
-    useState('');
+    useState<string[]>([]);
   const [newExerciseInstructions, setNewExerciseInstructions] = useState('');
   const [newExerciseImages, setNewExerciseImages] = useState<File[]>([]);
   const [newExerciseImageUrls, setNewExerciseImageUrls] = useState<string[]>(
@@ -64,9 +67,9 @@ export function useAddCustomExerciseForm(
     setNewExerciseForce('');
     setNewExerciseLevel('');
     setNewExerciseMechanic('');
-    setNewExerciseEquipment('');
-    setNewExercisePrimaryMuscles('');
-    setNewExerciseSecondaryMuscles('');
+    setNewExerciseEquipment([]);
+    setNewExercisePrimaryMuscles([]);
+    setNewExerciseSecondaryMuscles([]);
     setNewExerciseInstructions('');
     setNewExerciseImages([]);
     setNewExerciseImageUrls([]);
@@ -90,18 +93,9 @@ export function useAddCustomExerciseForm(
         force: newExerciseForce,
         level: newExerciseLevel,
         mechanic: newExerciseMechanic,
-        equipment: newExerciseEquipment
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
-        primary_muscles: newExercisePrimaryMuscles
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
-        secondary_muscles: newExerciseSecondaryMuscles
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        equipment: newExerciseEquipment,
+        primary_muscles: newExercisePrimaryMuscles,
+        secondary_muscles: newExerciseSecondaryMuscles,
         instructions: newExerciseInstructions
           .split('\n')
           .map((s) => s.trim())

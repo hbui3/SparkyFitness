@@ -1,9 +1,12 @@
 import { log } from '../config/logging.js';
+import { CustomCategoryExistsError } from '../utils/errors.js';
+import { getClient } from '../db/poolManager.js';
 import measurementRepository from '../models/measurementRepository.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import {
   pickMealTypeForTime,
   userHourMinute,
+  clockInZone,
   instantToDay,
   instantHourMinute,
   instantToDayWithOffset,
@@ -20,6 +23,11 @@ import {
 } from '../utils/sleepStageAggregates.js';
 import userRepository from '../models/userRepository.js';
 import sleepRepository from '../models/sleepRepository.js';
+import type {
+  SleepEntryInput,
+  SleepEntryUpsertOptions,
+} from '../models/sleepRepository.js';
+import type { SleepUserProfile } from '../models/userRepository.js';
 import exerciseEntryDb from '../models/exerciseEntry.js';
 import waterContainerRepository from '../models/waterContainerRepository.js';
 import foodRepository from '../models/foodRepository.js';
@@ -202,27 +210,50 @@ async function preCleanEntriesBySourceAndDate(
     userId: string,
     startDate: string,
     endDate: string,
-    source: string
+    source: string,
+    excludedExerciseName?: string,
+    keepSourceIds?: string[]
   ) => Promise<unknown>
 ) {
   if (entries.length === 0) return;
   const daysBySource: Record<string, Set<string>> = {};
+  // Records this payload will re-insert anyway. They are held back from the
+  // delete so the write path updates them in place instead, which preserves the
+  // telemetry a summary-only re-send does not carry — the route, laps and
+  // heart-rate zones hang off exercise_entry_id with ON DELETE CASCADE, so
+  // deleting the parent first destroys them and the re-insert cannot restore
+  // what the client never sent (#2300).
+  const keepIdsBySource: Record<string, Set<string>> = {};
   for (const entry of entries) {
     const source = entry.source || 'manual';
     const resolved = resolveHealthEntryDate(entry, fallbackTimezone);
     if (!resolved) continue;
     (daysBySource[source] ??= new Set()).add(resolved.parsedDate);
+    if (typeof entry.source_id === 'string' && entry.source_id.length > 0) {
+      (keepIdsBySource[source] ??= new Set()).add(entry.source_id);
+    }
   }
   for (const source of Object.keys(daysBySource)) {
     const days = [...daysBySource[source]].sort();
     if (days.length === 0) continue;
     const startDate = days[0];
     const endDate = days[days.length - 1];
+    const keepSourceIds = [...(keepIdsBySource[source] ?? [])];
     log(
       'info',
-      `[processHealthData] Pre-cleanup: Deleting existing ${label} for source '${source}' from ${startDate} to ${endDate}.`
+      `[processHealthData] Pre-cleanup: Deleting existing ${label} for source '${source}' from ${startDate} to ${endDate}` +
+        (keepSourceIds.length > 0
+          ? `, keeping ${keepSourceIds.length} re-sent record(s) for in-place update.`
+          : '.')
     );
-    await deleteFn(userId, startDate, endDate, source);
+    await deleteFn(
+      userId,
+      startDate,
+      endDate,
+      source,
+      undefined,
+      keepSourceIds
+    );
   }
 }
 
@@ -243,8 +274,9 @@ async function processHealthData(
   const tzFallbackByType = {};
   // Loaded at most once per batch and shared across every sleep session so we don't
   // re-query the user profile per record. Lazy so non-sleep syncs pay nothing.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let sleepContext: { tz: string; userProfile: any } | undefined;
+  let sleepContext:
+    | { tz: string; userProfile: SleepUserProfile | null | undefined }
+    | undefined;
   const getSleepContext = async () => {
     if (!sleepContext) {
       sleepContext = {
@@ -501,8 +533,8 @@ async function getOrCreateCustomCategory(
     };
     const newCategory =
       await measurementRepository.createCustomCategory(newCategoryData);
-    // To return the full category object including the id and the default data_type
-    return { id: newCategory.id, ...newCategoryData };
+    // The stored settings win: a concurrent create may have made the category first.
+    return { ...newCategoryData, ...newCategory.category };
   }
 }
 async function getWaterIntake(
@@ -618,7 +650,10 @@ async function upsertWaterIntake(
       const hasVolumeOverride =
         Number(containerRow?.volume) > 0 && !!containerRow?.linked_food_id;
 
+      let userTz: string | null = null;
       if (containerRow && containerRow.linked_food_id) {
+        const tz = await loadUserTimezone(authenticatedUserId);
+        userTz = tz;
         linkedFood = await foodRepository.getFoodById(
           containerRow.linked_food_id,
           authenticatedUserId
@@ -655,7 +690,6 @@ async function upsertWaterIntake(
           // The meal times are wall-clock times in the user's own day, so
           // "now" has to be read in their zone. Taking the server's clock put
           // a 15:16 drink for a UTC-4 user at 19:16, a whole meal away.
-          const tz = await loadUserTimezone(authenticatedUserId);
           targetMealTypeId =
             pickMealTypeForTime(mealTypes, userHourMinute(tz))?.id ?? null;
         }
@@ -672,6 +706,7 @@ async function upsertWaterIntake(
 
         if (linkedFood && linkedVariant) {
           const snapshot = buildFoodEntrySnapshot(linkedFood, linkedVariant);
+          const entryTime = userTz ? clockInZone(userTz) : null;
           const foodEntryInput = {
             user_id: authenticatedUserId,
             food_id: linkedFood.id,
@@ -684,6 +719,7 @@ async function upsertWaterIntake(
             quantity: linkedQuantity,
             unit: linkedVariant.serving_unit || 'serving',
             entry_date: entryDate,
+            entry_time: entryTime,
             food_entry_meal_id: null,
             meal_plan_template_id: null,
             ...snapshot,
@@ -1162,10 +1198,14 @@ async function createCustomCategory(
   try {
     categoryData.user_id = authenticatedUserId; // Ensure user_id is set from authenticated user
     categoryData.created_by_user_id = actingUserId; // Use actingUserId for audit
-    const newCategory =
+    const { id, created } =
       await measurementRepository.createCustomCategory(categoryData);
-    return newCategory;
+    if (!created) {
+      throw new CustomCategoryExistsError(categoryData.name);
+    }
+    return { id };
   } catch (error) {
+    if (error instanceof CustomCategoryExistsError) throw error;
     log(
       'error',
       `Error creating custom category for user ${authenticatedUserId} by ${actingUserId}:`,
@@ -1302,6 +1342,28 @@ async function getCustomMeasurementEntriesByDate(
     throw error;
   }
 }
+async function getCustomMeasurementEntriesByDateRange(
+  authenticatedUserId: string,
+  targetUserId: string,
+  startDate: string,
+  endDate: string
+) {
+  try {
+    return await measurementRepository.getCustomMeasurementEntriesByDateRange(
+      targetUserId,
+      startDate,
+      endDate
+    );
+  } catch (error) {
+    log(
+      'error',
+      `Error fetching custom measurement entries for user ${targetUserId} by ${authenticatedUserId}:`,
+      error
+    );
+    throw error;
+  }
+}
+
 /**
  * Latest manual value per custom category on or before `date`, one row per
  * category. Backs the mobile Daily editor's previous-value hints; only manual
@@ -1530,17 +1592,17 @@ async function calculateSleepScore(
   return Math.round(Math.max(0, Math.min(score, maxScore)));
 }
 async function processSleepEntry(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  actingUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sleepEntryData: any,
+  userId: string,
+  actingUserId: string,
+  sleepEntryData: SleepEntryInput,
   // Batch callers pass an already-loaded profile + timezone to skip a per-session
   // DB round-trip; single-entry callers omit it and load directly below.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  prefetched?: { tz: string; userProfile: any }
-) {
+  prefetched?: {
+    tz: string;
+    userProfile: SleepUserProfile | null | undefined;
+  },
+  options: SleepEntryUpsertOptions = {}
+): Promise<{ id: string } & Record<string, unknown>> {
   log(
     'debug',
     `[processSleepEntry] Received sleepEntryData: ${JSON.stringify(sleepEntryData)}`
@@ -1624,7 +1686,8 @@ async function processSleepEntry(
     const newSleepEntry = await sleepRepository.upsertSleepEntry(
       userId,
       actingUserId,
-      entryToUpsert
+      entryToUpsert,
+      options
     );
     if (originalHadStages && stage_events && stage_events.length > 0) {
       // Stages merge by natural key (entry_id, start_time, end_time) inside one
@@ -1632,8 +1695,7 @@ async function processSleepEntry(
       await sleepRepository.mergeSleepStageEvents(
         userId,
         newSleepEntry.id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        stage_events.map((stageEvent: any) => ({
+        stage_events.map((stageEvent) => ({
           ...stageEvent,
           duration_in_seconds:
             Math.round(Number(stageEvent.duration_in_seconds)) || 0,
@@ -1657,8 +1719,7 @@ async function processSleepEntry(
       await sleepRepository.mergeSleepStageEvents(
         userId,
         newSleepEntry.id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        stage_events.map((stageEvent: any) => ({
+        stage_events.map((stageEvent) => ({
           ...stageEvent,
           duration_in_seconds:
             Math.round(Number(stageEvent.duration_in_seconds)) || 0,
@@ -2013,12 +2074,47 @@ async function updateWaterIntakeLogTime(
   if (!ownerId) {
     throw new Error('Water intake log entry not found or access denied');
   }
-  const updated = await measurementRepository.updateWaterIntakeLogTime(
-    logId,
-    authenticatedUserId,
-    loggedAt
-  );
-  return updated;
+
+  const client = await getClient(authenticatedUserId);
+  try {
+    await client.query('BEGIN');
+
+    const updated = await measurementRepository.updateWaterIntakeLogTime(
+      logId,
+      authenticatedUserId,
+      loggedAt,
+      client
+    );
+    if (!updated) {
+      throw new Error('Water intake log entry not found');
+    }
+
+    if (updated.food_entry_id) {
+      const tz = await loadUserTimezone(authenticatedUserId);
+      const { hour, minute } = instantHourMinute(loggedAt, tz);
+      const entryTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      const foodUpdated = await foodRepository.updateFoodEntryTime(
+        updated.food_entry_id,
+        authenticatedUserId,
+        entryTime,
+        client
+      );
+      if (!foodUpdated) {
+        throw new Error(
+          `Linked food entry ${updated.food_entry_id} not found or update failed`
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    return updated;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    log('error', `Error updating water intake log time for ${logId}:`, err);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export { updateWaterIntakeLogTime };
@@ -2046,6 +2142,7 @@ export default {
   deleteCustomCategory,
   getCustomMeasurementEntries,
   getCustomMeasurementEntriesByDate,
+  getCustomMeasurementEntriesByDateRange,
   getLatestManualCustomEntriesOnOrBeforeDate,
   getCheckInMeasurementsByDateRange,
   getCustomMeasurementsByDateRange,

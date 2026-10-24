@@ -22,5 +22,5 @@ spec:
   selector:
     matchLabels:
       {{- include "sparkyfitness.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: server
+      sparkyfitness.io/server: "true"
 {{- end }}

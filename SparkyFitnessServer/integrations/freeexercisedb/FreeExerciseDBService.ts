@@ -14,11 +14,18 @@ const DATASET_REQUEST_TIMEOUT_MS = 15 * 1000;
 // Avoid hammering GitHub and making every search wait during an upstream outage.
 const STALE_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 
-interface FreeExercise {
+export interface FreeExercise {
   name: string;
-  equipment?: string;
+  id?: string;
+  category?: string | null;
+  level?: string | null;
+  mechanic?: string | null;
+  force?: string | null;
+  equipment?: string | null;
   primaryMuscles?: string[];
   secondaryMuscles?: string[];
+  images?: string[];
+  instructions?: string[] | string | null;
 }
 
 interface DatasetHolder {

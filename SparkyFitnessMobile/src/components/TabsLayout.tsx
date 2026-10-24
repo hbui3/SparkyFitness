@@ -294,23 +294,6 @@ export function NativeTabsLayout({
           }}
         />
         <NativeTab.Screen
-          name="Add"
-          options={{
-            tabBarLabel: t('navigation.add', { defaultValue: 'Add' }),
-            tabBarIcon: () => ADD_TAB_ICON,
-            role: 'search',
-            preventsDefault: true,
-          }}
-          listeners={{
-            tabPress: (e) => {
-              e.preventDefault();
-              onAddPress?.();
-            },
-          }}
-        >
-          {() => <AddRedirectScreen getLastActiveTab={getLastActiveTab} />}
-        </NativeTab.Screen>
-        <NativeTab.Screen
           name="Library"
           component={LibraryStackScreen}
           options={{
@@ -328,6 +311,26 @@ export function NativeTabsLayout({
               ({ sfSymbol: 'gearshape.fill' }) as unknown as AppleIcon,
           }}
         />
+        {/* Last on purpose: the search-role tab is the detached button at the
+            trailing end of the Liquid Glass bar, and built against the iOS 27
+            SDK it stayed inline when declared between the other tabs. */}
+        <NativeTab.Screen
+          name="Add"
+          options={{
+            tabBarLabel: t('navigation.add', { defaultValue: 'Add' }),
+            tabBarIcon: () => ADD_TAB_ICON,
+            role: 'search',
+            preventsDefault: true,
+          }}
+          listeners={{
+            tabPress: (e) => {
+              e.preventDefault();
+              onAddPress?.();
+            },
+          }}
+        >
+          {() => <AddRedirectScreen getLastActiveTab={getLastActiveTab} />}
+        </NativeTab.Screen>
       </NativeTab.Navigator>
     </NativeTabsOverlayContext.Provider>
   );

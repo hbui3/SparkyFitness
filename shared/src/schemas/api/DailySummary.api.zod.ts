@@ -1,11 +1,11 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   FOOD_VARIANT_NUTRIENT_FIELDS,
   type FoodVariantNutrientField,
-} from "../../constants/foodVariantNutrients.ts";
-import { dailyGoalsResponseSchema } from "./DailyGoals.api.zod.ts";
-import { foodEntryResponseSchema } from "./FoodEntries.api.zod.ts";
-import { exerciseSessionResponseSchema } from "./ExerciseEntries.api.zod.ts";
+} from '../../constants/foodVariantNutrients.ts';
+import { dailyGoalsResponseSchema } from './DailyGoals.api.zod.ts';
+import { foodEntryResponseSchema } from './FoodEntries.api.zod.ts';
+import { exerciseSessionResponseSchema } from './ExerciseEntries.api.zod.ts';
 
 export const calorieBalanceSchema = z.object({
   eaten: z.number(),
@@ -15,15 +15,15 @@ export const calorieBalanceSchema = z.object({
   net: z.number(),
   progress: z.number(),
   bmr: z.number(),
-  bmrSource: z.enum(["formula", "measured"]).optional(),
-  exerciseSource: z.enum(["logged", "active", "steps", "none"]),
+  bmrSource: z.enum(['formula', 'measured']).optional(),
+  exerciseSource: z.enum(['logged', 'active', 'steps', 'none']),
   tdeeProjection: z
     .object({
       projectedBurn: z.number(),
       baselineBurn: z.number(),
       adjustment: z.number(),
       targetCalories: z.number().optional(),
-      source: z.enum(["health_connect_total", "active_plus_bmr"]).optional(),
+      source: z.enum(['health_connect_total', 'active_plus_bmr']).optional(),
     })
     .nullable(),
 });
@@ -62,6 +62,9 @@ export const adjustedGoalsSchema = z.object({
   protein: z.number(),
   carbs: z.number(),
   fat: z.number(),
+  // Present when exercise water loss raised the day's water goal. Omitted
+  // when the base goal is already the one to show.
+  water_goal_ml: z.number().optional(),
 });
 
 export type AdjustedGoals = z.infer<typeof adjustedGoalsSchema>;
@@ -86,7 +89,7 @@ export type AdjustedGoals = z.infer<typeof adjustedGoalsSchema>;
  * typical multivitamin still understated.
  */
 const supplementTotalsShape = Object.fromEntries(
-  FOOD_VARIANT_NUTRIENT_FIELDS.map((field) => [field, z.number()]),
+  FOOD_VARIANT_NUTRIENT_FIELDS.map((field) => [field, z.number()])
 ) as Record<FoodVariantNutrientField, z.ZodNumber>;
 
 export const supplementTotalsSchema = z.object({
@@ -127,7 +130,7 @@ export type DailySummaryResponse = z.infer<typeof dailySummaryResponseSchema>;
 /** Zeros, for a day with no supplements or a server too old to report them. */
 export const EMPTY_SUPPLEMENT_TOTALS: SupplementTotals = {
   ...(Object.fromEntries(
-    FOOD_VARIANT_NUTRIENT_FIELDS.map((field) => [field, 0]),
+    FOOD_VARIANT_NUTRIENT_FIELDS.map((field) => [field, 0])
   ) as Record<FoodVariantNutrientField, number>),
   custom_nutrients: {},
 };
@@ -140,11 +143,11 @@ export const EMPTY_SUPPLEMENT_TOTALS: SupplementTotals = {
  * null. Coercing here keeps that out of `food + supplement` arithmetic downstream.
  */
 const resolveCustomNutrients = (
-  custom: Record<string, number> | null | undefined,
+  custom: Record<string, number> | null | undefined
 ): Record<string, number> => {
   if (!custom) return {};
   return Object.fromEntries(
-    Object.entries(custom).map(([name, value]) => [name, Number(value) || 0]),
+    Object.entries(custom).map(([name, value]) => [name, Number(value) || 0])
   );
 };
 
@@ -172,10 +175,10 @@ const resolveCustomNutrients = (
  * into the returned map poison the constant for every later caller in the process.
  */
 export const resolveSupplementTotals = (
-  totals: Partial<SupplementTotals> | null | undefined,
+  totals: Partial<SupplementTotals> | null | undefined
 ): SupplementTotals => ({
   ...(Object.fromEntries(
-    FOOD_VARIANT_NUTRIENT_FIELDS.map((field) => [field, totals?.[field] ?? 0]),
+    FOOD_VARIANT_NUTRIENT_FIELDS.map((field) => [field, totals?.[field] ?? 0])
   ) as Record<FoodVariantNutrientField, number>),
   custom_nutrients: resolveCustomNutrients(totals?.custom_nutrients),
 });
@@ -194,7 +197,7 @@ export const resolveSupplementTotals = (
  */
 export const addSupplementCustomNutrients = (
   foodTotals: Record<string, number> | null | undefined,
-  totals: Partial<SupplementTotals> | null | undefined,
+  totals: Partial<SupplementTotals> | null | undefined
 ): Record<string, number> => {
   const combined: Record<string, number> = { ...(foodTotals ?? {}) };
   const supplements = resolveSupplementTotals(totals).custom_nutrients;
@@ -218,7 +221,7 @@ export const addSupplementCustomNutrients = (
  * every user: it has no fixed column.
  */
 export const hasSupplementNutrition = (
-  totals: Partial<SupplementTotals> | null | undefined,
+  totals: Partial<SupplementTotals> | null | undefined
 ): boolean => {
   const resolved = resolveSupplementTotals(totals);
   return (

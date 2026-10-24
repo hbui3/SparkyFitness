@@ -1,6 +1,7 @@
 import {
   DECIMAL_INPUT_REGEX,
   parseDecimalInput,
+  parseSignedDecimalInput,
 } from '../../src/utils/numericInput';
 
 describe('parseDecimalInput', () => {
@@ -206,5 +207,25 @@ describe('DECIMAL_INPUT_REGEX', () => {
     expect(DECIMAL_INPUT_REGEX.test('abc')).toBe(false);
     expect(DECIMAL_INPUT_REGEX.test('1a')).toBe(false);
     expect(DECIMAL_INPUT_REGEX.test('1-5')).toBe(false);
+  });
+});
+
+describe('parseSignedDecimalInput', () => {
+  it('takes a leading minus, typographic minus or plus', () => {
+    expect(parseSignedDecimalInput('-30')).toBe(-30);
+    expect(parseSignedDecimalInput('\u221212,5')).toBe(-12.5);
+    expect(parseSignedDecimalInput('+20')).toBe(20);
+    expect(parseSignedDecimalInput(' - 7.5 ')).toBe(-7.5);
+  });
+
+  it('parses unsigned input like parseDecimalInput', () => {
+    expect(parseSignedDecimalInput('22,5')).toBe(22.5);
+    expect(parseSignedDecimalInput('')).toBeNaN();
+    expect(parseSignedDecimalInput(null)).toBeNaN();
+  });
+
+  it('rejects a bare or doubled sign', () => {
+    expect(parseSignedDecimalInput('-')).toBeNaN();
+    expect(parseSignedDecimalInput('--5')).toBeNaN();
   });
 });

@@ -31,6 +31,8 @@ HealthConnectTransformation.setOwnPackageName(Application.applicationId);
 
 export const initHealthConnect = HealthConnect.initHealthConnect;
 export const requestHealthPermissions = HealthConnect.requestHealthPermissions;
+export const requestGrantedHealthPermissions =
+  HealthConnect.requestGrantedHealthPermissions;
 export const ensureHistoryReadPermission =
   HealthConnect.ensureHistoryReadPermission;
 export const readHealthRecords = HealthConnect.readHealthRecords;
@@ -149,10 +151,12 @@ export const stopObservers = (): void => {};
 
 export const syncHealthData = (
   syncDuration: SyncDuration,
-  healthMetricStates: HealthMetricStates = {}
+  healthMetricStates: HealthMetricStates = {},
+  forceTelemetry = false
 ): Promise<SyncResult> =>
   runForegroundSync(healthReadProvider, syncDuration, healthMetricStates, {
     logTag: '[HealthConnectService]',
     emptyMessage: 'No health data to sync.',
     timeoutLabelPrefix: 'Health Connect query',
+    forceTelemetry,
   });

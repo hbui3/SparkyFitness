@@ -17,8 +17,8 @@ const __dirname = path.dirname(__filename);
  * IMPORTANT: Each test must use a unique IP address. The rate limiter's
  * in-memory store persists across tests and is keyed by ip|path.
  */
-// Rate limit config matching auth.js (storage: "memory" is test-only to
-// avoid needing a database; production uses Better Auth's default storage)
+// Rate limit config matching auth.ts (storage: "memory" is test-only to
+// avoid needing a database; production uses storage: "database")
 const RATE_LIMIT_CONFIG = {
   enabled: true,
   window: 60,

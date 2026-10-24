@@ -36,7 +36,7 @@ import type { FastingLog } from '../types/fasting';
 
 const PAGE_SIZE = 25;
 
-interface FastingHistoryRowProps {
+export interface FastingHistoryRowProps {
   fast: FastingLog;
   isLast: boolean;
   onEdit: (fast: FastingLog) => void;
@@ -45,7 +45,7 @@ interface FastingHistoryRowProps {
   t: ReturnType<typeof useTranslation>['t'];
 }
 
-const FastingHistoryRow: React.FC<FastingHistoryRowProps> = ({
+export const FastingHistoryRow: React.FC<FastingHistoryRowProps> = ({
   fast,
   isLast,
   onEdit,

@@ -5,7 +5,13 @@ import { WorkoutSessionBreakdown } from '@/components/ExerciseCharts/WorkoutSess
 
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (_key: string, defaultValue?: string) => defaultValue,
+    t: (
+      key: string,
+      defaultValueOrOptions?: string | { defaultValue?: string }
+    ) =>
+      typeof defaultValueOrOptions === 'string'
+        ? defaultValueOrOptions
+        : (defaultValueOrOptions?.defaultValue ?? key),
   }),
   initReactI18next: {
     type: '3rdParty',

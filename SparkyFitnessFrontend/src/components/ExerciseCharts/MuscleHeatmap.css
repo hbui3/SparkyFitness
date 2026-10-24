@@ -1,0 +1,65 @@
+.muscle-heatmap svg {
+  width: 100%;
+  height: auto;
+}
+
+.muscle-heatmap path {
+  stroke: #4b5563;
+  stroke-width: 0.5;
+  cursor: pointer;
+  transition:
+    fill 0.2s ease-in-out,
+    stroke 0.15s ease-in-out;
+}
+
+.muscle-heatmap path.heat-0 {
+  fill: #374151;
+}
+
+.muscle-heatmap path.heat-1 {
+  fill: #86efac;
+}
+
+.muscle-heatmap path.heat-2 {
+  fill: #22c55e;
+}
+
+.muscle-heatmap path.heat-3 {
+  fill: #eab308;
+}
+
+.muscle-heatmap path.heat-4 {
+  fill: #e11d48;
+}
+
+.muscle-heatmap path.is-selected {
+  stroke: #f8fafc;
+  stroke-width: 1.75;
+}
+
+.muscle-heatmap path:focus-visible {
+  stroke: #f8fafc;
+  stroke-width: 1.75;
+  outline: none;
+}
+
+.muscle-heatmap path.is-dimmed {
+  opacity: 0.22;
+}
+
+:root[data-theme='light'] .muscle-heatmap path.is-selected {
+  stroke: #111827;
+}
+
+:root[data-theme='light'] .muscle-heatmap path:focus-visible {
+  stroke: #111827;
+}
+
+:root[data-theme='light'] .muscle-heatmap path.heat-0 {
+  fill: #e5e7eb;
+  stroke: #d1d5db;
+}
+
+:root[data-theme='light'] .muscle-heatmap path {
+  stroke: #d1d5db;
+}

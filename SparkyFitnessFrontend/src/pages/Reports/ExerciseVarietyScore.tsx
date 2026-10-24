@@ -8,7 +8,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from 'recharts';
 
 interface ExerciseVarietyScoreProps {
@@ -24,10 +23,10 @@ const ExerciseVarietyScore = ({ varietyData }: ExerciseVarietyScoreProps) => {
     return null;
   }
 
-  const chartData = Object.entries(varietyData).map(([muscle, count]) => ({
-    muscle,
-    count,
-  }));
+  const chartData = Object.entries(varietyData)
+    .map(([muscle, count]) => ({ muscle, count }))
+    .sort((a, b) => b.count - a.count);
+  const height = Math.min(420, Math.max(180, chartData.length * 32));
 
   return (
     <Card>
@@ -37,36 +36,49 @@ const ExerciseVarietyScore = ({ varietyData }: ExerciseVarietyScoreProps) => {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer
-          width="100%"
-          height={300}
-          minWidth={0}
-          minHeight={0}
-          debounce={100}
-        >
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="muscle" />
-            <YAxis
-              allowDecimals={false}
-              label={{
-                value: t('reports.uniqueExercises', 'Unique Exercises'),
-                angle: -90,
-                position: 'insideLeft',
-              }}
-            />
-            <Tooltip
-              contentStyle={{ backgroundColor: 'hsl(var(--background))' }}
-            />
-            <Legend />
-            <Bar
-              dataKey="count"
-              fill="#ff7300"
-              name={t('reports.uniqueExercises', 'Unique Exercises')}
-              isAnimationActive={false}
-            />
-          </BarChart>
-        </ResponsiveContainer>
+        <div className="w-full" style={{ height }}>
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+            minWidth={0}
+            minHeight={0}
+            debounce={100}
+          >
+            <BarChart
+              data={chartData}
+              layout="vertical"
+              margin={{ top: 4, right: 12, left: 4, bottom: 4 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis
+                type="number"
+                allowDecimals={false}
+                tick={{ fontSize: 11 }}
+              />
+              <YAxis
+                type="category"
+                dataKey="muscle"
+                width={88}
+                interval={0}
+                tick={{ fontSize: 11 }}
+              />
+              <Tooltip
+                formatter={(value) => [
+                  Number(value) || 0,
+                  t('reports.uniqueExercises', 'Unique Exercises'),
+                ]}
+                contentStyle={{ backgroundColor: 'hsl(var(--background))' }}
+              />
+              <Bar
+                dataKey="count"
+                fill="#ff7300"
+                name={t('reports.uniqueExercises', 'Unique Exercises')}
+                isAnimationActive={false}
+                radius={[0, 4, 4, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </CardContent>
     </Card>
   );

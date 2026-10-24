@@ -1,17 +1,17 @@
-import { z } from "zod";
-import { coachMealPlanningUnitSchema } from "./CoachPantryItems.zod.ts";
+import { z } from 'zod';
+import { coachMealPlanningUnitSchema } from './CoachPantryItems.zod.ts';
 
 export const coachPantryEventTypeSchema = z.enum([
-  "adjust",
-  "purchase",
-  "consume",
-  "spoil",
+  'adjust',
+  'purchase',
+  'consume',
+  'spoil',
 ]);
 
 export const coachPantryEventSourceSchema = z.enum([
-  "manual",
-  "shopping",
-  "meal_plan",
+  'manual',
+  'shopping',
+  'meal_plan',
 ]);
 
 export const coachPantryEventsSchema = z
@@ -25,7 +25,7 @@ export const coachPantryEventsSchema = z
       .finite()
       .min(-999_999_999.999)
       .max(999_999_999.999)
-      .refine((value) => value !== 0, "Pantry event delta must not be zero"),
+      .refine((value) => value !== 0, 'Pantry event delta must not be zero'),
     unit: coachMealPlanningUnitSchema,
     source: coachPantryEventSourceSchema,
     source_id: z.string().uuid().nullable(),

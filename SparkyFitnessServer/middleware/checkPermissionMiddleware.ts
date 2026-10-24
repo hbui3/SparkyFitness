@@ -59,6 +59,10 @@ const checkPermissionMiddleware = (permissionType: any) => {
         if (req.method === 'GET') {
           resolvedPermission = 'medications_read';
         }
+      } else if (permissionType === 'symptoms') {
+        if (req.method === 'GET') {
+          resolvedPermission = 'symptoms_read';
+        }
       }
 
       for (const targetUserId of candidateTargets) {

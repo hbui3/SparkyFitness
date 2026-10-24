@@ -27,6 +27,13 @@ import { useActiveWorkoutStore } from '../stores/activeWorkoutStore';
 import { flushActiveWorkoutBeforeClear } from '../hooks/useActiveWorkoutAutosave';
 import { usePreferences } from '../hooks/usePreferences';
 import { useRestCountdown } from '../hooks/useRestCountdown';
+import { useRecordingBarContent } from '../hooks/useRecordingBarContent';
+import { useWatchRunBarContent } from '../hooks/useWatchRunBarContent';
+import { useHasWatchRunLive } from '../stores/watchRunLiveStore';
+import {
+  useGpsRecording,
+  useHasGpsRecording,
+} from '../services/gpsRecordingService';
 import {
   describeActiveSetAssumed,
   formatRestCountdown,
@@ -40,6 +47,10 @@ import LiquidGlassSurface, {
   createLiquidGlassPillStyle,
 } from './LiquidGlassSurface';
 import { withAlpha } from '../utils/colors';
+import { deleteWorkout } from '../services/api/exerciseApi';
+import { invalidateExerciseCache } from '../hooks/invalidateExerciseCache';
+import { normalizeDate } from '../utils/dateUtils';
+import { addLog } from '../services/LogService';
 
 /**
  * Shared navigation ref — must be passed to the app's `<NavigationContainer ref={...} />`.
@@ -136,8 +147,10 @@ export const ACTIVE_WORKOUT_BAR_HEIGHT =
 export function useActiveWorkoutBarPadding(
   context: 'tabs' | 'stack' = 'tabs'
 ): number {
-  const active = useActiveWorkoutStore((s) => s.sessionId !== null);
-  if (!active) return 0;
+  const workoutActive = useActiveWorkoutStore((s) => s.sessionId !== null);
+  const recordingActive = useHasGpsRecording();
+  const watchRunActive = useHasWatchRunLive();
+  if (!workoutActive && !recordingActive && !watchRunActive) return 0;
   return context === 'tabs'
     ? ACTIVE_WORKOUT_BAR_HEIGHT
     : BAR_CONTENT_HEIGHT + LIQUID_GLASS_VERTICAL_GAP;
@@ -145,14 +158,17 @@ export function useActiveWorkoutBarPadding(
 
 /**
  * Routes where the HUD should be hidden — either modal entry flows (food /
- * exercise search), full-screen editors and planning flows with sticky bottom
- * controls (WorkoutAdd, ActivityAdd, MealPlans, MealPlanForm), the chat screen
- * whose composer is pinned to the bottom — all of which would collide with the
- * bar — or the active-workout screen itself, which is the surface the HUD opens.
+ * exercise search), full-screen editors and planning flows with a sticky
+ * FooterSaveBar/FooterActionBar bottom action (WorkoutAdd, ActivityAdd,
+ * MealPlans, MealPlanForm, MealAdd, CycleLogModal, WaterContainerEdit,
+ * WaterContainers), the chat screen whose composer is pinned to the bottom —
+ * all of which would collide with the bar — or the active-workout screen
+ * itself, which is the surface the HUD opens.
  */
 const HIDDEN_ROUTES = new Set<string>([
   'FoodSearch',
   'FoodEntryAdd',
+  'FoodEntryMultiAdd',
   'FoodForm',
   'FoodScan',
   'FoodPhotoIntro',
@@ -161,9 +177,16 @@ const HIDDEN_ROUTES = new Set<string>([
   'ExerciseSearch',
   'WorkoutAdd',
   'ActivityAdd',
+  'RecordActivity',
+  'WatchRunLive',
   'MealPlans',
   'MealPlanForm',
+  'MealAdd',
+  'CycleLogModal',
+  'WaterContainerEdit',
+  'WaterContainers',
   'MeasurementsAdd',
+  'MindfulnessLog',
   'Chat',
   'ActiveWorkout',
 ]);
@@ -331,7 +354,13 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
     (s) => s.previousSessionSets
   );
   const plannedSetValues = useActiveWorkoutStore((s) => s.plannedSetValues);
-  const { state: restState, remainingMs, progress } = useRestCountdown();
+  const exerciseConfigs = useActiveWorkoutStore((s) => s.exerciseConfigs);
+  const workoutFormat = useActiveWorkoutStore((s) => s.workoutFormat);
+  const {
+    state: restState,
+    remainingMs,
+    progress: restProgress,
+  } = useRestCountdown();
   const queryClient = useQueryClient();
   const { preferences } = usePreferences();
   const weightUnit = normalizeWeightUnit(preferences?.default_weight_unit);
@@ -460,6 +489,37 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
       '--color-progress-track',
     ]) as [string, string, string, string];
 
+  // A GPS recording takes the bar when no strength workout does, so leaving
+  // the Record Activity screen keeps it one tap away above the dock.
+  const recording = useGpsRecording();
+  const gpsContent = useRecordingBarContent({
+    session: sessionId == null ? recording.session : null,
+    points: recording.points,
+    distanceUnit:
+      preferences?.default_distance_unit === 'miles' ? 'miles' : 'km',
+    accentColor: accentPrimary,
+    mutedColor: textMuted,
+    onOpen: () => {
+      if (!navigationRef.isReady()) return;
+      navigationRef.navigate('RecordActivity');
+    },
+  });
+
+  // A walk or run the watch is recording on its own comes next, so the phone
+  // shows how it is going. It never replaces a strength workout or a phone
+  // recording, which are the ones the phone itself controls.
+  const watchRunContent = useWatchRunBarContent({
+    distanceUnit:
+      preferences?.default_distance_unit === 'miles' ? 'miles' : 'km',
+    accentColor: accentPrimary,
+    onOpen: () => {
+      if (!navigationRef.isReady()) return;
+      navigationRef.navigate('WatchRunLive');
+    },
+  });
+  const recordingContent =
+    gpsContent ?? (sessionId == null ? watchRunContent : null);
+
   const isWorkoutComplete = sessionId != null && activeSetId == null;
 
   // Active-set details (exercise name, set number, weight × reps) looked up
@@ -471,8 +531,13 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
   const activeSetDescription = describeActiveSetAssumed(
     activeSession,
     activeSetId,
-    previousSessionSets,
-    plannedSetValues
+    {
+      previousSessionSets,
+      plannedSetValues,
+      exerciseConfigs,
+      weightUnit,
+      workoutFormat,
+    }
   );
   const activeSetLabel =
     activeSetDescription == null
@@ -527,7 +592,7 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
 
   // The bar is a persistent workout HUD — visible for the entire active
   // workout, not just while a rest timer is running.
-  if (sessionId == null) return null;
+  if (sessionId == null && recordingContent == null) return null;
   if (navInfo.suppressed && !(usesNativeTabs && isClosingToTabs)) return null;
   if (variant === 'floating' && navInfo.isOnTabs && !usesNativeTabs)
     return null;
@@ -574,7 +639,10 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
               defaultValue: 'Discard anyway',
             }),
             style: 'destructive',
-            onPress: () => useActiveWorkoutStore.getState().clearWorkout(),
+            onPress: () =>
+              useActiveWorkoutStore
+                .getState()
+                .clearWorkout({ discarded: true }),
           },
         ]
       );
@@ -584,6 +652,59 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
   };
 
   const handleClear = () => {
+    const state = useActiveWorkoutStore.getState();
+    const createdByLiveStart = state.createdByLiveStart;
+    const sessionId = state.sessionId;
+    const entryDate = state.session?.entry_date
+      ? normalizeDate(state.session.entry_date)
+      : null;
+    const completedSetCount = Object.keys(state.completedSetIds).length;
+
+    if (createdByLiveStart && sessionId != null && completedSetCount === 0) {
+      Alert.alert(
+        t('workout.discardWorkoutTitle', { defaultValue: 'Discard workout?' }),
+        t('workout.discardWorkoutMessage', {
+          defaultValue: 'This deletes the workout from your diary.',
+        }),
+        [
+          {
+            text: t('common.cancel', { defaultValue: 'Cancel' }),
+            style: 'cancel',
+          },
+          {
+            text: t('workout.discard', { defaultValue: 'Discard' }),
+            style: 'destructive',
+            onPress: () => {
+              useActiveWorkoutStore
+                .getState()
+                .clearWorkout({ discarded: true });
+              deleteWorkout(sessionId)
+                .then(() => {
+                  if (entryDate != null)
+                    invalidateExerciseCache(queryClient, entryDate);
+                })
+                .catch((error: unknown) => {
+                  addLog(
+                    `Failed to delete discarded live-start workout: ${error}`,
+                    'ERROR'
+                  );
+                  if (entryDate != null)
+                    invalidateExerciseCache(queryClient, entryDate);
+                  Alert.alert(
+                    t('common.error', { defaultValue: 'Error' }),
+                    t('activeWorkout.failedToDeleteWorkout', {
+                      defaultValue:
+                        'Failed to delete discarded workout session from diary.',
+                    })
+                  );
+                });
+            },
+          },
+        ]
+      );
+      return;
+    }
+
     if (isWorkoutComplete) {
       void flushAndClear();
       return;
@@ -622,13 +743,13 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
   // states collapse to two rows — "Next Up: ..." or "Workout complete" on
   // top, load (or empty) underneath.
   const isResting = restState === 'resting' || restState === 'paused';
-  const topStatusLine =
+  const workoutTopStatusLine =
     restState === 'resting'
       ? t('activeWorkout.bar.resting', { defaultValue: 'Resting' })
       : restState === 'paused'
         ? t('activeWorkout.bar.paused', { defaultValue: 'Paused' })
         : null;
-  const primaryLine = (() => {
+  const workoutPrimaryLine = (() => {
     if (isWorkoutComplete)
       return t('activeWorkout.bar.workoutComplete', {
         defaultValue: 'Workout complete',
@@ -647,18 +768,18 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
       set: activeSetLabel.setNumber,
     });
   })();
-  const secondaryLine = isWorkoutComplete
+  const workoutSecondaryLine = isWorkoutComplete
     ? ''
     : (activeSetLabel?.loadText ?? '');
   // Right-aligned countdown — only rendered while a rest timer is running.
-  const countdownLabel =
+  const workoutCountdownLabel =
     restState === 'resting' ? formatRestCountdown(remainingMs) : null;
 
   // Left button:
   //  - resting → Pause (pauses the rest timer)
   //  - ready / paused → X (clear workout)
   //  - complete → hidden (checkmark on the right handles dismiss)
-  const leftButton =
+  const workoutLeftButton =
     restState === 'resting' ? (
       <Pressable
         onPress={handlePausePlay}
@@ -690,7 +811,7 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
   //  - resting → Check (skip rest / mark next ready)
   //  - paused → Play (resume the rest timer)
   //  - complete → checkmark to finish and dismiss the bar
-  const rightButton = (() => {
+  const workoutRightButton = (() => {
     if (isWorkoutComplete) {
       return (
         <Pressable
@@ -763,6 +884,21 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
     );
   })();
 
+  // A recording, when there is one, replaces the workout's text and controls;
+  // the surface, position and animation around them are shared.
+  const topStatusLine = recordingContent?.topStatusLine ?? workoutTopStatusLine;
+  const primaryLine = recordingContent?.primaryLine ?? workoutPrimaryLine;
+  const secondaryLine = recordingContent?.secondaryLine ?? workoutSecondaryLine;
+  const countdownLabel =
+    recordingContent?.countdownLabel ?? workoutCountdownLabel;
+  const leftButton = recordingContent?.leftButton ?? workoutLeftButton;
+  const rightButton = recordingContent?.rightButton ?? workoutRightButton;
+  const progress = recordingContent ? 0 : restProgress;
+  const openLabel =
+    recordingContent?.openLabel ??
+    t('activeWorkout.bar.open', { defaultValue: 'Open active workout' });
+  const onCenterPress = recordingContent?.onCenterPress ?? handleCenterTap;
+
   // Embedded mode adds bottom padding so the floating Add button (which rises
   // ~20pt above the tab bar top edge) overlaps an empty strip at the bottom
   // of the bar instead of covering content. Floating mode is on stack screens
@@ -784,14 +920,12 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
           progress={progress}
           leftButton={leftButton}
           rightButton={rightButton}
-          onCenterPress={handleCenterTap}
+          onCenterPress={onCenterPress}
           topStatusLine={topStatusLine}
           primaryLine={primaryLine}
           secondaryLine={secondaryLine}
           countdownLabel={countdownLabel}
-          openLabel={t('activeWorkout.bar.open', {
-            defaultValue: 'Open active workout',
-          })}
+          openLabel={openLabel}
         />
       </View>
     );
@@ -812,14 +946,12 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
             progress={progress}
             leftButton={leftButton}
             rightButton={rightButton}
-            onCenterPress={handleCenterTap}
+            onCenterPress={onCenterPress}
             topStatusLine={topStatusLine}
             primaryLine={primaryLine}
             secondaryLine={secondaryLine}
             countdownLabel={countdownLabel}
-            openLabel={t('activeWorkout.bar.open', {
-              defaultValue: 'Open active workout',
-            })}
+            openLabel={openLabel}
           />
         </View>
       </View>
@@ -847,7 +979,7 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
         <View className="w-10 items-center">{leftButton}</View>
 
         <Pressable
-          onPress={handleCenterTap}
+          onPress={onCenterPress}
           className="px-1"
           style={{
             alignItems: 'center',
@@ -856,9 +988,7 @@ const ActiveWorkoutBar: React.FC<ActiveWorkoutBarProps> = ({
             justifyContent: 'center',
           }}
           accessibilityRole="button"
-          accessibilityLabel={t('activeWorkout.bar.open', {
-            defaultValue: 'Open active workout',
-          })}
+          accessibilityLabel={openLabel}
         >
           {topStatusLine != null && (
             <Text

@@ -2,6 +2,7 @@ import { betterAuth } from 'better-auth';
 import { APIError } from 'better-auth/api';
 import pg from 'pg';
 import { log } from './config/logging.js';
+import { handleConnectionLoss } from './db/poolManager.js';
 import bcrypt from 'bcryptjs';
 import { syncUserGroups } from './utils/oidcGroupSync.js';
 import userRepository from './models/userRepository.js';
@@ -21,6 +22,7 @@ import { expo } from '@better-auth/expo';
 import { expoSsoCookieRelay } from './utils/expoSsoCookieRelay.js';
 import { passkey } from '@better-auth/passkey';
 import { isDemoMode } from './middleware/demoGuardMiddleware.js';
+import { isEmailLoginDisabled } from './utils/emailLogin.js';
 
 const { Pool } = pg;
 /**
@@ -76,6 +78,15 @@ const authPool = new Pool({
   password: process.env.SPARKY_FITNESS_DB_PASSWORD,
   // @ts-expect-error
   port: process.env.SPARKY_FITNESS_DB_PORT || 5432,
+  // pg returns bigint columns as strings, but Better Auth does arithmetic on
+  // them as numbers (rate_limit.last_request, epoch milliseconds); a string
+  // there turns the 429 retry-after into concatenated digits.
+  types: {
+    getTypeParser: (oid: number, format?: 'text' | 'binary') =>
+      oid === pg.types.builtins.INT8
+        ? Number
+        : pg.types.getTypeParser(oid, format),
+  },
 });
 // Better Auth holds this pool instance for the process lifetime, so it cannot be
 // swapped or ended the way poolManager's pools are during a restore. Without a
@@ -85,6 +96,7 @@ const authPool = new Pool({
 authPool.on('error', (err) => {
   log('error', 'Unexpected error on idle Better Auth client', err);
 });
+handleConnectionLoss(authPool, 'Better Auth');
 // Persistent array reference for trusted providers
 // Mutation of this array will be visible to Better Auth since it holds the reference
 // @ts-expect-error
@@ -98,9 +110,8 @@ const dynamicTrustedProviders = [];
  * whole list is rejected with `discovery_untrusted_origin` and SSO sign-in
  * fails with a 400.
  *
- * Kept in the same persistent-reference style as dynamicTrustedProviders, and
- * refreshed by the same syncTrustedProviders() call, so the getter Better Auth
- * holds always sees current data.
+ * Used when Better Auth resolves options without an HTTP request, including
+ * during initialization. HTTP requests load their own current origin snapshot.
  */
 const dynamicTrustedSsoOrigins: string[] = [];
 /**
@@ -115,6 +126,47 @@ function originOf(url: unknown): string | null {
     return null;
   }
 }
+/** Load provider origins used to validate OIDC discovery and endpoint requests. */
+async function loadTrustedSsoOrigins(): Promise<string[]> {
+  const repoPath = './models/oidcProviderRepository.js';
+  const { default: oidcProviderRepository } = await import(repoPath);
+  // Collect each provider's own origin so 1.7's discovery SSRF guard allows
+  // fetching its well-known document and the endpoints that document names.
+  const rows = await oidcProviderRepository.getOidcProviders();
+  const ssoOrigins = new Set<string>();
+  for (const row of rows ?? []) {
+    // getOidcProviders() renames the columns on the way out: the issuer is
+    // `issuer_url` and the endpoints are camelCase. Reading the raw column
+    // names here would silently collect nothing but the discovery origin,
+    // which only happens to work while every endpoint shares one host.
+    for (const candidate of [
+      row?.issuer_url,
+      row?.discoveryEndpoint,
+      row?.authorizationEndpoint,
+      row?.tokenEndpoint,
+      row?.userInfoEndpoint,
+      row?.jwksEndpoint,
+    ]) {
+      const origin = originOf(candidate);
+      if (origin) ssoOrigins.add(origin);
+    }
+  }
+  return [...ssoOrigins];
+}
+
+const requestSsoOrigins = new WeakMap<Request, Promise<string[]>>();
+
+/** Share one origin snapshot across repeated checks of the same request. */
+async function getTrustedSsoOrigins(request?: Request): Promise<string[]> {
+  if (!request) return dynamicTrustedSsoOrigins;
+  let origins = requestSsoOrigins.get(request);
+  if (!origins) {
+    origins = loadTrustedSsoOrigins();
+    requestSsoOrigins.set(request, origins);
+  }
+  return origins;
+}
+
 // Function to sync trusted providers from database
 async function syncTrustedProviders() {
   try {
@@ -129,27 +181,7 @@ async function syncTrustedProviders() {
       // @ts-expect-error
       dynamicTrustedProviders
     );
-    // Collect each provider's own origin so 1.7's discovery SSRF guard allows
-    // fetching its well-known document and the endpoints that document names.
-    const rows = await oidcProviderRepository.getOidcProviders();
-    const ssoOrigins = new Set<string>();
-    for (const row of rows ?? []) {
-      // getOidcProviders() renames the columns on the way out: the issuer is
-      // `issuer_url` and the endpoints are camelCase. Reading the raw column
-      // names here would silently collect nothing but the discovery origin,
-      // which only happens to work while every endpoint shares one host.
-      for (const candidate of [
-        row?.issuer_url,
-        row?.discoveryEndpoint,
-        row?.authorizationEndpoint,
-        row?.tokenEndpoint,
-        row?.userInfoEndpoint,
-        row?.jwksEndpoint,
-      ]) {
-        const origin = originOf(candidate);
-        if (origin) ssoOrigins.add(origin);
-      }
-    }
+    const ssoOrigins = await loadTrustedSsoOrigins();
     dynamicTrustedSsoOrigins.length = 0;
     dynamicTrustedSsoOrigins.push(...ssoOrigins);
     log(
@@ -289,6 +321,11 @@ const auth = betterAuth({
   // Rate limiting for auth endpoints
   rateLimit: {
     enabled: true,
+    // Counted in the database rather than in memory so that every server
+    // instance enforces one shared limit per client address.
+    storage: 'database',
+    modelName: 'rate_limit',
+    fields: { lastRequest: 'last_request' },
     window: 60,
     max: 100,
     // Credential checks answer 401, which intrusion-detection tooling reads as
@@ -322,8 +359,7 @@ const auth = betterAuth({
     // the *public* route instead; SparkyFitnessServer.ts refuses
     // /api/auth/sign-in/email and /sign-up/email with the identical response
     // Better Auth would have sent, so nothing outside can tell the difference.
-    enabled:
-      isDemoMode() || process.env.SPARKY_FITNESS_DISABLE_EMAIL_LOGIN !== 'true',
+    enabled: isDemoMode() || !isEmailLoginDisabled(),
     requireEmailVerification: false,
     minPasswordLength: 8,
     sendResetPassword: async ({ user, url }) => {
@@ -376,6 +412,34 @@ const auth = betterAuth({
     // sitting behind nginx (i.e. the default docker-compose setup).
     // Supersedes the old `trustProxy: true`, which was never a real option.
     trustedProxyHeaders: true,
+    // Client IP detection for Better Auth rate limiting and audit logging.
+    // Better Auth resolves client IP from `ipAddressHeaders`. We prioritize
+    // `x-client-ip` (injected by Express middleware from getClientIp(req),
+    // which honours SPARKY_FITNESS_TRUSTED_PROXY_HOPS and SPARKY_FITNESS_REAL_IP_HEADER).
+    // If SPARKY_FITNESS_TRUSTED_PROXIES is specified, Better Auth also trusts
+    // those CIDR ranges when inspecting multi-hop X-Forwarded-For chains directly.
+    ipAddress: {
+      ipAddressHeaders: [
+        'x-client-ip',
+        ...(process.env.SPARKY_FITNESS_REAL_IP_HEADER?.trim() &&
+        process.env.SPARKY_FITNESS_REAL_IP_HEADER.trim().toLowerCase() !==
+          'x-forwarded-for' &&
+        process.env.SPARKY_FITNESS_REAL_IP_HEADER.trim().toLowerCase() !==
+          'x-client-ip'
+          ? [process.env.SPARKY_FITNESS_REAL_IP_HEADER.trim().toLowerCase()]
+          : []),
+        'x-forwarded-for',
+      ],
+      ...(process.env.SPARKY_FITNESS_TRUSTED_PROXIES?.trim()
+        ? {
+            trustedProxies: process.env.SPARKY_FITNESS_TRUSTED_PROXIES.split(
+              ','
+            )
+              .map((p) => p.trim())
+              .filter(Boolean),
+          }
+        : {}),
+    },
     crossSubDomainCookies: {
       enabled: false,
     },
@@ -487,13 +551,13 @@ const auth = betterAuth({
   },
   // Trust proxy (for Docker/Nginx deployments)
   // NOTE: Better Auth calls this with the raw Request object directly (not a context wrapper)
-  trustedOrigins: (request) => {
+  trustedOrigins: async (request) => {
     const cleanOrigins = [
       ...getBaseTrustedOrigins(),
       'sparkyfitnessmobile://',
       // IdP origins -- required since 1.7 validates OIDC discovery URLs against
       // this list before fetching them.
-      ...dynamicTrustedSsoOrigins,
+      ...(await getTrustedSsoOrigins(request)),
     ];
     const { origin: originHeader, referer: refererHeader } =
       extractRequestHeaders(request);

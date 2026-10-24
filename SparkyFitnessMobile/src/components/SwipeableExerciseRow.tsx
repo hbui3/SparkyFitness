@@ -179,6 +179,20 @@ const SwipeableExerciseRow: React.FC<SwipeableExerciseRowProps> = ({
               >
                 {subtitle}
               </Text>
+              {session.type === 'preset' && session.location ? (
+                <View className="flex-row items-center mt-0.5">
+                  <Icon name="location" size={12} color={textMuted} />
+                  <Text
+                    className="text-xs text-text-muted ml-1 flex-1"
+                    numberOfLines={1}
+                    accessibilityLabel={t('workoutDetail.labels.location', {
+                      defaultValue: 'Gym / Location',
+                    })}
+                  >
+                    {session.location}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
         </Pressable>

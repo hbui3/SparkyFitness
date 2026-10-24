@@ -15,6 +15,8 @@ import { useCSSVariable } from 'uniwind';
 import BottomSheetPicker from './BottomSheetPicker';
 import Button from './ui/Button';
 import EquivalentsSection from './EquivalentsSection';
+import NamedFoodPortionsSection from './NamedFoodPortionsSection';
+import type { EditableFoodPortion } from '../utils/namedFoodPortions';
 import FormInput from './FormInput';
 import MarkdownNotesField from './MarkdownNotesField';
 import Icon from './Icon';
@@ -59,6 +61,10 @@ import {
 import { DECIMAL_INPUT_REGEX, parseDecimalInput } from '../utils/numericInput';
 import { localizeAiEstimateQuality } from '../utils/foodPhotoEstimate';
 import {
+  labelScanToNutritionPatch,
+  type NutritionLabelScan,
+} from '../utils/labelScanFood';
+import {
   CONFIDENCE_TONES,
   getConversionFactor,
   shouldOfferAiConversion,
@@ -70,6 +76,7 @@ export type { FoodFormData };
 
 export interface FoodFormProps {
   initialValues?: Partial<FoodFormData>;
+  nutritionLabelScan?: NutritionLabelScan;
   onSubmit: (data: FoodFormData) => void;
   submitRequestRef?: React.MutableRefObject<(() => void) | null>;
   onServingChange?: (servingSize: string, servingUnit: string) => void;
@@ -109,6 +116,10 @@ export interface FoodFormProps {
     onChange: (next: EquivalentUnit[]) => void;
     disabled?: boolean;
   };
+  portions?: {
+    items: EditableFoodPortion[];
+    onChange: (items: EditableFoodPortion[]) => void;
+  };
   /** Saved photos of the food, offered by the notes toolbar's insert-photo picker. */
   noteImages?: readonly string[];
   headerChildren?: React.ReactNode;
@@ -129,6 +140,7 @@ type AiToneColors = Record<ConfidenceTone, string>;
 
 const FoodForm: React.FC<FoodFormProps> = ({
   initialValues,
+  nutritionLabelScan,
   onSubmit,
   submitRequestRef,
   onServingChange,
@@ -141,6 +153,7 @@ const FoodForm: React.FC<FoodFormProps> = ({
   unitSelector,
   convertServingSizeOnUnitChange = false,
   equivalents,
+  portions,
   noteImages,
   headerChildren,
   children,
@@ -889,6 +902,23 @@ const FoodForm: React.FC<FoodFormProps> = ({
       ),
     });
 
+  useEffect(() => {
+    if (!nutritionLabelScan) return;
+    const patch = labelScanToNutritionPatch(nutritionLabelScan.result);
+    const displayValues = buildDisplayFormState(patch);
+    const displayPatch: Partial<FoodFormData> = {};
+    for (const field of Object.keys(patch) as (keyof FoodFormData)[]) {
+      displayPatch[field] = displayValues[field];
+    }
+    // Update both representations without triggering serving-size auto-scaling
+    // or replacing the selected variant and the rest of the live draft.
+    preciseNumericValuesRef.current = {
+      ...preciseNumericValuesRef.current,
+      ...buildPreciseNumericValues(patch),
+    };
+    setForm((previous) => ({ ...previous, ...displayPatch }));
+  }, [nutritionLabelScan]);
+
   const handleSubmitPress = () => {
     if (!showManualUpdateBanner) {
       submitForm();
@@ -1041,6 +1071,15 @@ const FoodForm: React.FC<FoodFormProps> = ({
               )}
             </View>
           </View>
+
+          {portions ? (
+            <NamedFoodPortionsSection
+              items={portions.items}
+              onChange={portions.onChange}
+              servingUnit={form.servingUnit}
+              disabled={isSubmitting}
+            />
+          ) : null}
 
           {equivalents ? (
             <EquivalentsSection

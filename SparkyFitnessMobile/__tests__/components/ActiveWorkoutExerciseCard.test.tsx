@@ -34,30 +34,54 @@ jest.mock('../../src/components/SafeImage', () => {
   };
 });
 
+// Committed renders per set id of the memoized row stub, so a test can assert
+// which rows a prop change reached.
+const mockRowRenders: Record<string, number> = {};
+
 // Surface state/mode/badge on the stub so tests can assert what the card
 // derived for each row. accessibilityValue carries the PREVIOUS-column prop:
 // 'hidden' = column omitted (undefined), 'dash' = no previous (null).
+// Memoized like the real row.
 jest.mock('../../src/components/ActiveWorkoutSetRow', () => {
+  const React = require('react');
   const { View } = require('react-native');
-  return {
-    __esModule: true,
-    default: ({
-      set,
-      state,
-      mode,
-      completedBadge,
-      isFocused,
-      nextSetId,
-      entryId,
-      previousSet,
-      assumed,
-      displayNumber,
-      distanceUnit,
-    }: any) => (
+  function SetRow({
+    set,
+    state,
+    mode,
+    completedBadge,
+    isFocused,
+    nextSetId,
+    entryId,
+    previousSet,
+    assumed,
+    displayNumber,
+    distanceUnit,
+    activeField,
+  }: {
+    set: { id: number | string };
+    state: string;
+    mode?: string;
+    completedBadge?: boolean;
+    isFocused?: boolean;
+    nextSetId?: string | null;
+    entryId?: string;
+    previousSet?: { weight: number | null; reps: number | null } | null;
+    assumed?: { weight?: number | null; reps?: number | null } | null;
+    displayNumber?: number;
+    distanceUnit?: string;
+    activeField?: string;
+  }) {
+    const key = String(set.id);
+    React.useEffect(() => {
+      mockRowRenders[key] = (mockRowRenders[key] ?? 0) + 1;
+    });
+    return (
       <View
         testID={`set-row-${set.id}`}
         displayNumber={displayNumber}
         distanceUnit={distanceUnit}
+        activeField={activeField ?? 'none'}
         assumed={assumed == null ? 'none' : `${assumed.weight}x${assumed.reps}`}
         accessibilityLabel={`row ${set.id} ${state}${mode === 'view' ? ' read-only' : ''}${completedBadge ? ' badged' : ''}${isFocused ? ' focused' : ''}`}
         accessibilityHint={`next:${nextSetId ?? 'none'} entry:${entryId ?? 'none'}`}
@@ -71,8 +95,9 @@ jest.mock('../../src/components/ActiveWorkoutSetRow', () => {
           }`,
         }}
       />
-    ),
-  };
+    );
+  }
+  return { __esModule: true, default: React.memo(SetRow) };
 });
 
 // Surface which set the note expand rendered for.
@@ -84,19 +109,41 @@ jest.mock('../../src/components/ActiveWorkoutSetDetail', () => {
   };
 });
 
+// Body weight only matters to bodyweight exercises; the card must not need a
+// QueryClient for it in these tests.
+const mockUseBodyWeightKg = jest.fn(
+  (_date: unknown, _enabled: boolean) => null
+);
+jest.mock('../../src/hooks/useBodyWeightKg', () => ({
+  useBodyWeightKg: (date: unknown, enabled: boolean) =>
+    mockUseBodyWeightKg(date, enabled),
+}));
+
 jest.mock('../../src/hooks/useExerciseStats', () => ({
   useExerciseStats: jest.fn(() => ({ data: null })),
 }));
 
 // The card only touches the store to capture the PR baseline; a selector-based
 // stub exposes a stable spy for that action.
+const mockUseLiveHeartRate = jest.fn(
+  (_entryId: string | null): number | null => null
+);
+jest.mock('../../src/stores/liveHeartRateStore', () => ({
+  useLiveHeartRate: (entryId: string | null) => mockUseLiveHeartRate(entryId),
+}));
+
 jest.mock('../../src/stores/activeWorkoutStore', () => {
   const capturePrBaseline = jest.fn();
   const capturePreviousSessionSets = jest.fn();
   const storeState = {
     capturePrBaseline,
     capturePreviousSessionSets,
+    setWeightUnit: jest.fn(),
     plannedSetValues: {},
+    exerciseConfigs: {},
+    workoutFormat: 'standard',
+    coachingSignals: {},
+    declinedAdaptive: {},
   };
   return {
     __esModule: true,
@@ -232,6 +279,29 @@ describe('ActiveWorkoutExerciseCard', () => {
       expect(utils.getByText('kg')).toBeTruthy();
       expect(utils.getByText('Reps')).toBeTruthy();
       expect(utils.queryByText('Sec')).toBeNull();
+    });
+
+    it('explains a bodyweight exercise with the body weight it counts', () => {
+      mockUseBodyWeightKg.mockReturnValue(90.7 as never);
+      const utils = renderCard(true, {
+        exercise: withModality('bodyweight_reps'),
+      });
+      expect(utils.getByTestId('bodyweight-banner')).toBeTruthy();
+      expect(utils.getByText(/counts your body weight \(/)).toBeTruthy();
+      expect(utils.getByText(/minus sign for assistance/)).toBeTruthy();
+      mockUseBodyWeightKg.mockReturnValue(null as never);
+    });
+
+    it('asks for a body weight when none is logged', () => {
+      const utils = renderCard(true, {
+        exercise: withModality('bodyweight_reps'),
+      });
+      expect(utils.getByText(/Log a body weight/)).toBeTruthy();
+    });
+
+    it('shows no bodyweight banner on a weighted exercise', () => {
+      const utils = renderCard(true, { exercise: withModality('weight_reps') });
+      expect(utils.queryByTestId('bodyweight-banner')).toBeNull();
     });
 
     it('drops the kg column for reps_only', () => {
@@ -562,6 +632,53 @@ describe('ActiveWorkoutExerciseCard', () => {
       expect(live.queryByText('150 kcal')).toBeNull();
     });
 
+    it('shows heart rate with the max in parentheses, view mode only', () => {
+      const exercise = makeExercise({
+        avg_heart_rate: 142,
+        max_heart_rate: 168,
+      });
+      const view = renderCard(true, { mode: 'view', exercise });
+      expect(view.getByText('142 (168) bpm')).toBeTruthy();
+
+      // Live mode never shows the saved average: it is only final once the
+      // workout is, and until then the chip shows the watch's live reading.
+      const live = renderCard(true, { mode: 'live', exercise });
+      expect(live.queryByText('142 (168) bpm')).toBeNull();
+    });
+
+    it('shows the live reading from the watch while the workout runs', () => {
+      mockUseLiveHeartRate.mockImplementation((entryId) =>
+        entryId === 'ex-uuid-1' ? 137 : null
+      );
+      try {
+        const live = renderCard(true, { mode: 'live' });
+        expect(live.getByText('137 bpm')).toBeTruthy();
+        expect(
+          live.getByLabelText('Current heart rate for Bench Press')
+        ).toBeTruthy();
+
+        // View mode asks for no live reading and keeps the saved figures.
+        mockUseLiveHeartRate.mockClear();
+        renderCard(true, { mode: 'view' });
+        expect(mockUseLiveHeartRate).toHaveBeenCalledWith(null);
+      } finally {
+        mockUseLiveHeartRate.mockImplementation(() => null);
+      }
+    });
+
+    it('shows a lone figure when max matches the average', () => {
+      const view = renderCard(true, {
+        mode: 'view',
+        exercise: makeExercise({ avg_heart_rate: 140, max_heart_rate: 140 }),
+      });
+      expect(view.getByText('140 bpm')).toBeTruthy();
+    });
+
+    it('shows no heart rate chip when the entry carries none', () => {
+      const view = renderCard(true, { mode: 'view' });
+      expect(view.queryByText(/bpm/)).toBeNull();
+    });
+
     it('skips the exercise stats fetch', () => {
       renderCard(true, { mode: 'view' });
       expect(mockUseExerciseStats).toHaveBeenCalledWith(
@@ -649,6 +766,67 @@ describe('ActiveWorkoutExerciseCard', () => {
       );
       expect(getByTestId('set-row-102').props.accessibilityHint).toBe(
         'next:none entry:ex-uuid-1'
+      );
+    });
+
+    it('hides the progression editor on forms that cannot save it', () => {
+      const { queryByLabelText } = renderCard(true, { mode: 'edit' });
+      expect(queryByLabelText('Toggle progression settings')).toBeNull();
+    });
+
+    it('commits the per-set ramp in kg, signed by direction', () => {
+      const onUpdateProgression = jest.fn();
+      const { getByLabelText, getByText } = renderCard(true, {
+        mode: 'edit',
+        weightUnit: 'lbs',
+        onUpdateProgression,
+      });
+      fireEvent.press(getByLabelText('Toggle progression settings'));
+      fireEvent.changeText(getByLabelText('Weight added per set (lbs)'), '10');
+      expect(onUpdateProgression).toHaveBeenLastCalledWith('ex-uuid-1', {
+        rampIncrement: expect.closeTo(4.5359, 3),
+      });
+
+      fireEvent.press(getByText('Down'));
+      expect(onUpdateProgression).toHaveBeenLastCalledWith('ex-uuid-1', {
+        rampIncrement: expect.closeTo(-4.5359, 3),
+      });
+
+      fireEvent.changeText(getByLabelText('Weight added per set (lbs)'), '');
+      expect(onUpdateProgression).toHaveBeenLastCalledWith('ex-uuid-1', {
+        rampIncrement: null,
+      });
+    });
+
+    it('re-stores the typed increment when the mode changes its meaning', () => {
+      const onUpdateProgression = jest.fn();
+      const { getByLabelText, getByText, getByPlaceholderText } = renderCard(
+        true,
+        { mode: 'edit', weightUnit: 'lbs', onUpdateProgression }
+      );
+      fireEvent.press(getByLabelText('Toggle progression settings'));
+      // Rep Goal: 5 lb stores as kg.
+      fireEvent.changeText(getByPlaceholderText('5'), '5');
+      expect(onUpdateProgression).toHaveBeenLastCalledWith('ex-uuid-1', {
+        incrementValue: expect.closeTo(2.268, 3),
+      });
+      // Step-Load counts reps: the same "5" is now 5 reps, not 2.27.
+      fireEvent.press(getByText('Step-Load'));
+      expect(onUpdateProgression).toHaveBeenLastCalledWith('ex-uuid-1', {
+        incrementValue: 5,
+      });
+    });
+
+    it("shows a stored kg ramp in the lifter's unit", () => {
+      const { getByLabelText } = renderCard(true, {
+        mode: 'edit',
+        weightUnit: 'lbs',
+        onUpdateProgression: jest.fn(),
+        exercise: { ...makeExercise(), ramp_increment: 4.54 },
+      });
+      fireEvent.press(getByLabelText('Toggle progression settings'));
+      expect(getByLabelText('Weight added per set (lbs)').props.value).toBe(
+        '10'
       );
     });
 
@@ -897,6 +1075,40 @@ describe('ActiveWorkoutExerciseCard', () => {
       expect(getByLabelText('Best 100 × 5')).toBeTruthy();
     });
 
+    it('shows an unweighted bodyweight rep PR as +0', () => {
+      mockUseExerciseStats.mockReturnValue({
+        data: {
+          bestSet: { weight: null, reps: 8, setNumber: 1 },
+          lastSet: null,
+        },
+      });
+      const exercise = makeExercise({
+        exercise_snapshot: {
+          ...makeExercise().exercise_snapshot!,
+          modality: 'bodyweight_reps',
+        } as never,
+        sets: [{ ...makeExercise().sets[0], id: 101, weight: null, reps: 12 }],
+      });
+      const { getByText, queryByText } = renderCard(true, {
+        mode: 'live',
+        exercise,
+        prSetIds: { '101': true },
+      });
+      expect(getByText('0 × 12')).toBeTruthy();
+      expect(queryByText('0 × 8')).toBeNull();
+    });
+
+    it('keeps a null-weight best hidden for a weighted exercise', () => {
+      mockUseExerciseStats.mockReturnValue({
+        data: {
+          bestSet: { weight: null, reps: 8, setNumber: 1 },
+          lastSet: null,
+        },
+      });
+      const { queryByTestId } = renderCard(true, { mode: 'live' });
+      expect(queryByTestId('icon-trophy-outline')).toBeNull();
+    });
+
     it('surfaces the stamped session record when a set earned a PR', () => {
       mockUseExerciseStats.mockReturnValue(STATS_WITH_BEST);
       const { getByText, queryByText } = renderCard(true, {
@@ -989,14 +1201,69 @@ describe('ActiveWorkoutExerciseCard', () => {
       expect(view.queryByText('Prev')).toBeNull();
     });
 
-    it('matches the most recent session to rows by position, dashing the overflow', () => {
+    it("matches working rows to last time's working sets, skipping its warm-up, and dashes the overflow", () => {
       mockUseExerciseStats.mockReturnValue(STATS_WITH_HISTORY);
       const utils = renderCard(true, { mode: 'live', exercise: threeSets() });
 
-      // recentSessions[0] has two sets; the third current row has no previous.
+      // recentSessions[0] is one warm-up (60x8) and one working set (100x5).
+      // The warm-up is not anyone's counterpart here: no row is a warm-up.
+      expect(prevOf(utils, 101)).toBe('prev:100x5');
+      expect(prevOf(utils, 102)).toBe('prev:dash');
+      expect(prevOf(utils, 103)).toBe('prev:dash');
+    });
+
+    it("matches a warm-up row to last time's warm-up and working rows to its working sets", () => {
+      mockUseExerciseStats.mockReturnValue(STATS_WITH_HISTORY);
+      const base = makeExercise();
+      const utils = renderCard(true, {
+        mode: 'live',
+        exercise: makeExercise({
+          sets: [
+            { ...base.sets[0], id: 101, set_number: 1, set_type: 'warmup' },
+            { ...base.sets[0], id: 102, set_number: 2 },
+            { ...base.sets[0], id: 103, set_number: 3 },
+          ],
+        }),
+      });
+
       expect(prevOf(utils, 101)).toBe('prev:60x8');
       expect(prevOf(utils, 102)).toBe('prev:100x5');
       expect(prevOf(utils, 103)).toBe('prev:dash');
+    });
+
+    it('keeps warm-ups added ahead of the working sets from taking their previous', () => {
+      mockUseExerciseStats.mockReturnValue({
+        data: {
+          bestSet: null,
+          lastSet: null,
+          recentSessions: [
+            {
+              entryDate: '2026-01-05',
+              sets: [
+                { setNumber: 1, setType: null, weight: 70, reps: 14 },
+                { setNumber: 2, setType: null, weight: 90, reps: 10 },
+              ],
+            },
+          ],
+        },
+      });
+      const base = makeExercise();
+      const utils = renderCard(true, {
+        mode: 'live',
+        exercise: makeExercise({
+          sets: [
+            { ...base.sets[0], id: 101, set_number: 1, set_type: 'warmup' },
+            { ...base.sets[0], id: 102, set_number: 2, set_type: 'warmup' },
+            { ...base.sets[0], id: 103, set_number: 3 },
+            { ...base.sets[0], id: 104, set_number: 4 },
+          ],
+        }),
+      });
+
+      expect(prevOf(utils, 101)).toBe('prev:dash');
+      expect(prevOf(utils, 102)).toBe('prev:dash');
+      expect(prevOf(utils, 103)).toBe('prev:70x14');
+      expect(prevOf(utils, 104)).toBe('prev:90x10');
     });
 
     it('dashes every row against an old server without recentSessions', () => {
@@ -1042,12 +1309,42 @@ describe('ActiveWorkoutExerciseCard', () => {
         'session-9',
         undefined
       );
-      expect(prevOf(utils, 101)).toBe('prev:60x8');
+      expect(prevOf(utils, 101)).toBe('prev:100x5');
     });
 
     it('captures the previous-session sets for adoption alongside the baseline', () => {
       mockUseExerciseStats.mockReturnValue(STATS_WITH_HISTORY);
       renderCard(true, { mode: 'live' });
+      expect(mockCapturePreviousSessionSets).toHaveBeenCalledWith(
+        'ex-1',
+        STATS_WITH_HISTORY.data.recentSessions[0].sets
+      );
+    });
+
+    it("holds the capture until the preset's history scope has settled", () => {
+      mockUseExerciseStats.mockReturnValue(STATS_WITH_HISTORY);
+      mockCapturePreviousSessionSets.mockClear();
+      const { rerender, callbacks } = renderCard(true, {
+        mode: 'live',
+        historyScopeSettled: false,
+      });
+      expect(mockCapturePreviousSessionSets).not.toHaveBeenCalled();
+      expect(mockCapturePrBaseline).not.toHaveBeenCalled();
+
+      rerender(
+        <ActiveWorkoutExerciseCard
+          exercise={makeExercise()}
+          expanded
+          completedSetIds={{}}
+          activeSetId="101"
+          metricColumn="rpe"
+          weightUnit="kg"
+          getImageSource={() => null}
+          {...callbacks}
+          mode="live"
+          historyScopeSettled
+        />
+      );
       expect(mockCapturePreviousSessionSets).toHaveBeenCalledWith(
         'ex-1',
         STATS_WITH_HISTORY.data.recentSessions[0].sets
@@ -1228,6 +1525,74 @@ describe('ActiveWorkoutExerciseCard', () => {
       const { queryByLabelText } = renderCard(true, { mode: 'view' });
       expect(queryByLabelText('Notes for Bench Press')).toBeNull();
       expect(queryByLabelText('Notes for set 1')).toBeNull();
+    });
+  });
+
+  describe('activeField scoping', () => {
+    const base = makeExercise();
+    // Created once, so between rerenders only the props a test passes change.
+    const stableProps: CardProps = {
+      exercise: makeExercise({
+        sets: [base.sets[0], { ...base.sets[0], id: 102, set_number: 2 }],
+      }),
+      expanded: true,
+      completedSetIds: {},
+      activeSetId: '101',
+      metricColumn: 'rpe',
+      weightUnit: 'kg',
+      getImageSource: () => null,
+      onToggleExpanded: jest.fn(),
+      onPressMetricHeader: jest.fn(),
+      mode: 'live',
+    };
+
+    beforeEach(() => {
+      for (const key of Object.keys(mockRowRenders)) delete mockRowRenders[key];
+    });
+
+    it('hands activeField only to the tap-focused live row', () => {
+      const { getByTestId } = render(
+        <ActiveWorkoutExerciseCard
+          {...stableProps}
+          focusedSetKey="102"
+          activeField="reps"
+        />
+      );
+      expect(getByTestId('set-row-102').props.activeField).toBe('reps');
+      expect(getByTestId('set-row-101').props.activeField).toBe('none');
+    });
+
+    it('hands activeField only to the cursor row in edit mode', () => {
+      const { getByTestId } = render(
+        <ActiveWorkoutExerciseCard
+          {...stableProps}
+          mode="edit"
+          activeSetId="102"
+          activeField="reps"
+        />
+      );
+      expect(getByTestId('set-row-102').props.activeField).toBe('reps');
+      expect(getByTestId('set-row-101').props.activeField).toBe('none');
+    });
+
+    it('re-renders only the focused row when its field moves', () => {
+      const { rerender } = render(
+        <ActiveWorkoutExerciseCard
+          {...stableProps}
+          focusedSetKey="101"
+          activeField="weight"
+        />
+      );
+      for (const key of Object.keys(mockRowRenders)) delete mockRowRenders[key];
+
+      rerender(
+        <ActiveWorkoutExerciseCard
+          {...stableProps}
+          focusedSetKey="101"
+          activeField="reps"
+        />
+      );
+      expect(mockRowRenders).toEqual({ '101': 1 });
     });
   });
 });

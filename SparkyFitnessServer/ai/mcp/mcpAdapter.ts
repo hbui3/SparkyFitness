@@ -2,7 +2,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolExecutionOptions } from 'ai';
 import { buildChatbotTools } from '../tools/index.js';
 import { buildDevTools } from '../tools/devTools.js';
-import { isToolErrorText } from '../tools/errors.js';
+import { isToolErrorText, toolError } from '../tools/errors.js';
+import {
+  isReadOnlyTool,
+  isToolAvailableReadOnly,
+  isToolCallAllowedReadOnly,
+} from './toolAccess.js';
 
 // Registry handlers read only rawArgs (no abortSignal/messages/context), so a
 // stub satisfies the execute() signature.
@@ -25,20 +30,52 @@ interface RegistryTool {
   ) => Promise<any> | any;
 }
 
+export interface RegisterToolsOptions {
+  /** The caller is a read-only API key: skip or refuse tools that write. */
+  readOnly?: boolean;
+}
+
 // Registers a name->tool map onto an McpServer, reusing each tool's zod-4 schema
 // and execute(). Shared by the registry and dev-tool registration so both wrap
 // the plain-string return into MCP { content: [...] } identically.
 function registerToolMap(
   mcpServer: McpServer,
-  tools: Record<string, RegistryTool>
+  tools: Record<string, RegistryTool>,
+  { readOnly = false }: RegisterToolsOptions = {}
 ): void {
   for (const [name, t] of Object.entries(tools)) {
+    // A read-only key only sees tools that read at least something.
+    if (readOnly && !isToolAvailableReadOnly(name)) continue;
     mcpServer.registerTool(
       name,
       // registerTool validates args against this flat schema, then execute()
       // re-parses with its strict per-action union — double-validation is fine.
-      { description: t.description, inputSchema: t.inputSchema },
+      {
+        description: t.description,
+        inputSchema: t.inputSchema,
+        ...(isReadOnlyTool(name)
+          ? { annotations: { readOnlyHint: true } }
+          : {}),
+      },
       async (args: unknown) => {
+        // Tools that mix reads and writes stay listed for a read-only key, so
+        // the action is checked per call.
+        if (readOnly && !isToolCallAllowedReadOnly(name, args)) {
+          const action = (args as { action?: unknown } | undefined)?.action;
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: toolError(
+                  'READ_ONLY_API_KEY',
+                  `This API key is read-only, so action '${String(action)}' of ${name} is not allowed.`,
+                  'Use a read action, or an API key with full access.'
+                ),
+              },
+            ],
+            isError: true,
+          };
+        }
         const out = await t.execute!(args, EXEC_STUB);
         // Registry handlers return plain strings; guard anyway.
         const text = typeof out === 'string' ? out : JSON.stringify(out);
@@ -61,7 +98,8 @@ export function registerRegistryTools(
   mcpServer: McpServer,
   userId: string,
   tz: string,
-  profile: 'full' | 'core' = 'full'
+  profile: 'full' | 'core' = 'full',
+  options: RegisterToolsOptions = {}
 ): void {
   // providerTuning=false: MCP publishes schemas over JSON-RPC, so the
   // chat-only provider settings (strict flag, Anthropic cache breakpoint)
@@ -72,16 +110,20 @@ export function registerRegistryTools(
     profile,
     false
   ) as unknown as Record<string, RegistryTool>;
-  registerToolMap(mcpServer, tools);
+  registerToolMap(mcpServer, tools, options);
 }
 
 // Registers the admin-only dev tools (kept out of buildChatbotTools so the
 // chatbot never sees them). The route gates this on DEV_TOOLS_ENABLED + an admin
 // caller, so non-admins never get these in tools/list.
-export function registerDevTools(mcpServer: McpServer, userId: string): void {
+export function registerDevTools(
+  mcpServer: McpServer,
+  userId: string,
+  options: RegisterToolsOptions = {}
+): void {
   const tools = buildDevTools(userId) as unknown as Record<
     string,
     RegistryTool
   >;
-  registerToolMap(mcpServer, tools);
+  registerToolMap(mcpServer, tools, options);
 }

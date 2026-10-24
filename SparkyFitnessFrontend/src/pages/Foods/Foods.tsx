@@ -79,10 +79,14 @@ import { formatServingLabel } from '@/utils/foodServing';
 import { usableFoodImages } from '@/utils/foodImages';
 import { MarkdownView } from '@/components/ui/MarkdownView';
 import { useImageLightbox } from '@/hooks/Foods/useImageLightbox';
-import ImageLightbox from '@/components/FoodSearch/ImageLightbox';
+import ImageLightbox from '@/components/ImageLightbox';
 import { useOpenFoodFactsContributionAvailability } from '@/hooks/Foods/useOpenFoodFactsContribution';
 import { isOpenFoodFactsContributionCandidate } from '@/utils/openFoodFactsContribution';
 import OpenFoodFactsContributionDialog from './OpenFoodFactsContributionDialog';
+import {
+  FOOD_PROVIDER_TYPES,
+  getProviderDisplayName,
+} from '@/utils/foodProviderLabels';
 
 const FoodDatabaseManager = () => {
   const { t } = useTranslation();
@@ -112,6 +116,8 @@ const FoodDatabaseManager = () => {
     currentPage,
     foodFilter,
     setFoodFilter,
+    providerFilter,
+    setProviderFilter,
     sortOrder,
     setSortOrder,
     foodData,
@@ -241,14 +247,14 @@ const FoodDatabaseManager = () => {
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }
-            aria-label="Select all"
+            aria-label={t('common.selectAll', 'Select all')}
           />
         ),
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
             onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label="Select row"
+            aria-label={t('common.selectRow', 'Select row')}
             disabled={!canEdit(row.original)}
           />
         ),
@@ -402,7 +408,9 @@ const FoodDatabaseManager = () => {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="h-8 w-8 p-0">
-                  <span className="sr-only">Open menu</span>
+                  <span className="sr-only">
+                    {t('foods.openMenu', 'Open menu')}
+                  </span>
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -600,6 +608,40 @@ const FoodDatabaseManager = () => {
                 </Select>
               </div>
 
+              {/* Data source dropdown */}
+              <div className="flex items-center gap-2 whitespace-nowrap">
+                <Select
+                  value={providerFilter}
+                  onValueChange={(value) => {
+                    setProviderFilter(value);
+                    clearSelection();
+                    setRowSelection({});
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-44"
+                    aria-label={t('common.source', 'Data source')}
+                  >
+                    <SelectValue
+                      placeholder={t('common.source', 'Data source')}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">
+                      {t('foodDatabaseManager.all', 'All')}
+                    </SelectItem>
+                    {FOOD_PROVIDER_TYPES.map((providerType) => (
+                      <SelectItem key={providerType} value={providerType}>
+                        {getProviderDisplayName(providerType)}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="manual">
+                      {t('foodDatabaseManager.manual', 'Manual')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex gap-2 shrink-0 ml-auto">
                 <Button
                   variant="outline"
@@ -648,7 +690,16 @@ const FoodDatabaseManager = () => {
           <DataTable
             titleColumnId="name"
             getRowId={(row) => row.id}
-            onRowDoubleClick={setViewingFood}
+            onRowDoubleClick={(food) => {
+              if (isEditMode) return;
+              if (canEdit(food)) {
+                handleEdit(food);
+              } else {
+                // Rows the user can't edit (public/family foods) open the
+                // read-only view panel instead.
+                setViewingFood(food);
+              }
+            }}
             onSortingChange={(sorting) => {
               if (sorting.length > 0) {
                 const sort = sorting[0];
@@ -716,6 +767,7 @@ const FoodDatabaseManager = () => {
         entityName={t('foodDatabaseManager.foods', 'foods')}
         description={t('foodDatabaseManager.bulkDeleteDescription', {
           count: selectedCount,
+          selectedCount,
           defaultValue: `Remove these ${selectedCount} foods from your library and from any meals and meal plans. Entries you have already logged are kept in your diary.`,
         })}
         onConfirm={handleBulkDeleteConfirm}
@@ -826,7 +878,7 @@ const FoodDatabaseManager = () => {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold flex items-center gap-3">
-              {viewingFood?.name}
+              <span>{viewingFood?.name}</span>
               {viewingFood?.brand && (
                 <Badge
                   variant="secondary"

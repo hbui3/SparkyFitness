@@ -3,6 +3,8 @@ import {
   clusterSleepStagesByGap,
   getPrimarySleepStageCluster,
   recomputeSleepAggregatesFromStages,
+  scoredStageRemaindersOutsideWindow,
+  sleepStageMergeWindow,
 } from '../utils/sleepStageAggregates.js';
 
 /**
@@ -103,5 +105,111 @@ describe('recomputeSleepAggregatesFromStages primary cluster (#1954)', () => {
           1000
       )
     );
+  });
+});
+
+describe('sleepStageMergeWindow', () => {
+  it('ignores in_bed and unknown when computing the overlap-delete window', () => {
+    const window = sleepStageMergeWindow([
+      {
+        stage_type: 'in_bed',
+        start_time: '2026-09-22T02:10:00Z',
+        end_time: '2026-09-22T10:03:00Z',
+      },
+      {
+        stage_type: 'light',
+        start_time: '2026-09-22T09:18:00Z',
+        end_time: '2026-09-22T09:43:00Z',
+      },
+      {
+        stage_type: 'rem',
+        start_time: '2026-09-22T09:43:00Z',
+        end_time: '2026-09-22T10:03:00Z',
+      },
+    ]);
+
+    expect(window).not.toBeNull();
+    expect(window?.start.toISOString()).toBe('2026-09-22T09:18:00.000Z');
+    expect(window?.end.toISOString()).toBe('2026-09-22T10:03:00.000Z');
+  });
+
+  it('returns null for an in_bed-only payload so overlap-delete is skipped', () => {
+    expect(
+      sleepStageMergeWindow([
+        {
+          stage_type: 'in_bed',
+          start_time: '2026-09-22T02:10:00Z',
+          end_time: '2026-09-22T10:03:00Z',
+        },
+        {
+          stage_type: 'unknown',
+          start_time: '2026-09-22T02:10:00Z',
+          end_time: '2026-09-22T03:00:00Z',
+        },
+      ])
+    ).toBeNull();
+  });
+});
+
+describe('scoredStageRemaindersOutsideWindow', () => {
+  const windowStart = new Date('2026-09-22T09:18:00Z');
+  const windowEnd = new Date('2026-09-22T10:03:00Z');
+
+  it('trims a scored stage that ends inside the window', () => {
+    expect(
+      scoredStageRemaindersOutsideWindow(
+        {
+          stage_type: 'light',
+          start_time: '2026-09-22T07:50:00Z',
+          end_time: '2026-09-22T09:45:00Z',
+        },
+        windowStart,
+        windowEnd
+      )
+    ).toEqual([
+      {
+        start_time: '2026-09-22T07:50:00.000Z',
+        end_time: '2026-09-22T09:18:00.000Z',
+        duration_in_seconds: 88 * 60,
+      },
+    ]);
+  });
+
+  it('splits a scored stage that covers the window', () => {
+    const pieces = scoredStageRemaindersOutsideWindow(
+      {
+        stage_type: 'deep',
+        start_time: '2026-09-22T08:00:00Z',
+        end_time: '2026-09-22T11:00:00Z',
+      },
+      windowStart,
+      windowEnd
+    );
+    expect(pieces).toEqual([
+      {
+        start_time: '2026-09-22T08:00:00.000Z',
+        end_time: '2026-09-22T09:18:00.000Z',
+        duration_in_seconds: 78 * 60,
+      },
+      {
+        start_time: '2026-09-22T10:03:00.000Z',
+        end_time: '2026-09-22T11:00:00.000Z',
+        duration_in_seconds: 57 * 60,
+      },
+    ]);
+  });
+
+  it('leaves an in_bed envelope that covers the window alone', () => {
+    expect(
+      scoredStageRemaindersOutsideWindow(
+        {
+          stage_type: 'in_bed',
+          start_time: '2026-09-22T02:10:00Z',
+          end_time: '2026-09-22T10:03:00Z',
+        },
+        windowStart,
+        windowEnd
+      )
+    ).toBeNull();
   });
 });

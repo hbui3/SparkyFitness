@@ -14,6 +14,7 @@ import { withOpenFoodFactsProductReadPermit } from '../services/openFoodFactsPro
 vi.mock('../integrations/openfoodfacts/openFoodFactsAuth.js', () => ({
   resolveOpenFoodFactsProvider: vi.fn(),
   invalidateOpenFoodFactsSession: vi.fn(),
+  resolveOffFetch: vi.fn(async () => fetch),
   DEFAULT_OFF_BASE_URL: 'https://world.openfoodfacts.org',
 }));
 vi.mock('../services/openFoodFactsProductReadRateLimitService.js', () => ({
@@ -1277,12 +1278,17 @@ describe('openFoodFactsService', () => {
       fetch.mockResolvedValueOnce({
         ok: false,
         status: 429,
-        text: () => Promise.resolve('rate limited'),
+        text: () => Promise.resolve('SINK-DETAIL-MARKER'),
       });
 
-      await expect(
-        searchOpenFoodFactsByBarcodeFields('12345678')
-      ).rejects.toThrow('OpenFoodFacts API error');
+      let errorThrown: Error | null = null;
+      try {
+        await searchOpenFoodFactsByBarcodeFields('12345678');
+      } catch (err) {
+        errorThrown = err as Error;
+      }
+      expect(errorThrown?.message).toBe('OpenFoodFacts API error (HTTP 429)');
+      expect(errorThrown?.message).not.toContain('SINK-DETAIL-MARKER');
       expect(fetch).toHaveBeenCalledTimes(1);
     });
   });
@@ -1830,6 +1836,30 @@ describe('openFoodFactsService', () => {
       const product = { ...milanoProduct, serving_size: '28 g (28 g)' };
       const result = mapOpenFoodFactsProduct(product);
       expect(result.variants).toBeUndefined();
+    });
+
+    it('does not add a household variant when serving_quantity is absent (no verified metric link)', () => {
+      // Synthetic (not a specific confirmed-live barcode), constructed to hit
+      // the gap: a parseable household descriptor with no serving_quantity.
+      const product = {
+        product_name: 'Synthetic No-Serving-Quantity Product',
+        brands: 'Test Brand',
+        code: '0000000000000',
+        serving_size: '2 tbsp (28 g)',
+        nutrition_data_per: '100g',
+        nutriments: {
+          'energy-kcal_100g': 462,
+          proteins_100g: 5,
+          carbohydrates_100g: 64,
+          fat_100g: 25,
+        },
+      };
+      const result = mapOpenFoodFactsProduct(product);
+
+      expect(result.variants).toBeUndefined();
+      expect(result.default_variant.serving_size).toBe(100);
+      expect(result.default_variant.serving_unit).toBe('g');
+      expect(result.default_variant.calories).toBe(462);
     });
   });
 });

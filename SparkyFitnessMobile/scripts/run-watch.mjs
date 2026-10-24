@@ -7,9 +7,16 @@ const bundleId = process.env.EXPO_DEV_BUNDLE_IDENTIFIER
   ? `${process.env.EXPO_DEV_BUNDLE_IDENTIFIER}.watchkitapp`
   : 'org.SparkyApps.SparkyFitnessMobile1.dev.watchkitapp';
 
-console.log('› Building SparkyFitness Watch scheme...');
+// Scheme and product name both come from `name` in
+// targets/watch/expo-target.config.js. They are one word — an earlier
+// "SparkyFitness Watch" (with a space) here matched no scheme at all, so this
+// script and `pnpm run watch:device` both failed with "the workspace does not
+// contain a scheme named ...".
+const SCHEME = 'SparkyFitnessWatch';
+
+console.log(`› Building ${SCHEME} scheme...`);
 execSync(
-  "xcodebuild -workspace ios/SparkyFitness.xcworkspace -scheme 'SparkyFitness Watch' -destination 'generic/platform=watchOS Simulator' build -quiet",
+  `xcodebuild -workspace ios/SparkyFitness.xcworkspace -scheme '${SCHEME}' -destination 'generic/platform=watchOS Simulator' build -quiet`,
   { stdio: 'inherit' }
 );
 
@@ -25,7 +32,7 @@ if (existsSync(derivedDataPath)) {
     const candidate = join(
       derivedDataPath,
       folder,
-      'Build/Products/Debug-watchsimulator/SparkyFitness Watch.app'
+      `Build/Products/Debug-watchsimulator/${SCHEME}.app`
     );
     if (existsSync(candidate)) {
       builtAppPath = candidate;
@@ -35,9 +42,7 @@ if (existsSync(derivedDataPath)) {
 }
 
 if (!builtAppPath) {
-  console.error(
-    '❌ Could not find built SparkyFitness Watch.app in DerivedData'
-  );
+  console.error(`❌ Could not find built ${SCHEME}.app in DerivedData`);
   process.exit(1);
 }
 

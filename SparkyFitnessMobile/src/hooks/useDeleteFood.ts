@@ -9,6 +9,7 @@ import {
   type FoodDeletionImpact,
 } from '../services/api/foodsApi';
 import {
+  caffeineActiveRootQueryKey,
   dailySummaryRootQueryKey,
   favoritesQueryKey,
   foodVariantsQueryKey,
@@ -55,6 +56,7 @@ export function useDeleteFood({ foodId, onSuccess }: UseDeleteFoodOptions) {
     queryClient.invalidateQueries({ queryKey: mealsQueryKey });
     queryClient.invalidateQueries({ queryKey: mealPlansQueryKey });
     queryClient.invalidateQueries({ queryKey: dailySummaryRootQueryKey });
+    queryClient.invalidateQueries({ queryKey: caffeineActiveRootQueryKey });
   };
 
   const mutation = useMutation({

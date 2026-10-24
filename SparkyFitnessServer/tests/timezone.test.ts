@@ -4,6 +4,7 @@ import {
   dayOfWeek,
   addDays,
   compareDays,
+  daysInRange,
   dayToPickerDate,
   localDateToDay,
   isValidTimeZone,
@@ -17,6 +18,7 @@ import {
   utcOffsetMinutesFromIsoString,
   dayToUtcRange,
   dayRangeToUtcRange,
+  instantForDay,
 } from '@workspace/shared';
 // ---------------------------------------------------------------------------
 // isDayString
@@ -82,6 +84,22 @@ describe('compareDays', () => {
     expect(compareDays('2024-01-01', '2024-01-01')).toBe(0);
     expect(compareDays('2024-01-02', '2024-01-01')).toBe(1);
     expect(compareDays('2023-12-31', '2024-01-01')).toBe(-1);
+  });
+});
+// ---------------------------------------------------------------------------
+// daysInRange
+// ---------------------------------------------------------------------------
+describe('daysInRange', () => {
+  it('lists every day from start to end inclusive, across a month end', () => {
+    expect(daysInRange('2024-02-28', '2024-03-01')).toEqual([
+      '2024-02-28',
+      '2024-02-29',
+      '2024-03-01',
+    ]);
+    expect(daysInRange('2024-05-05', '2024-05-05')).toEqual(['2024-05-05']);
+  });
+  it('is empty when end is before start', () => {
+    expect(daysInRange('2024-05-05', '2024-05-04')).toEqual([]);
   });
 });
 // ---------------------------------------------------------------------------
@@ -536,5 +554,45 @@ describe('utcOffsetMinutesFromIsoString', () => {
     expect(utcOffsetMinutesFromIsoString('2024-06-15 22:15:00-04:00')).toBe(
       -240
     );
+  });
+});
+// ---------------------------------------------------------------------------
+// instantForDay
+// ---------------------------------------------------------------------------
+describe('instantForDay', () => {
+  // 02:30 UTC on the 21st is still the evening of the 20th in Chicago (CDT).
+  const now = new Date('2026-10-21T02:30:00Z');
+
+  it('returns now when the day is today in the zone', () => {
+    expect(instantForDay('2026-10-20', 'America/Chicago', now)).toBe(now);
+  });
+  it('returns local noon for any other day, not UTC noon', () => {
+    expect(
+      instantForDay('2026-10-21', 'America/Chicago', now).toISOString()
+    ).toBe('2026-10-21T17:00:00.000Z');
+    expect(
+      instantForDay('2026-01-15', 'America/Chicago', now).toISOString()
+    ).toBe('2026-01-15T18:00:00.000Z');
+  });
+  it('lands on local noon on the days the clocks change', () => {
+    // 2026-03-08 springs forward to CDT; 2026-11-01 falls back to CST.
+    expect(
+      instantForDay('2026-03-08', 'America/Chicago', now).toISOString()
+    ).toBe('2026-03-08T17:00:00.000Z');
+    expect(
+      instantForDay('2026-11-01', 'America/Chicago', now).toISOString()
+    ).toBe('2026-11-01T18:00:00.000Z');
+  });
+  it('always falls on the requested day in the zone', () => {
+    for (const tz of [
+      'Pacific/Kiritimati',
+      'Pacific/Pago_Pago',
+      'Asia/Kolkata',
+      'UTC',
+    ]) {
+      expect(instantToDay(instantForDay('2026-06-01', tz, now), tz)).toBe(
+        '2026-06-01'
+      );
+    }
   });
 });

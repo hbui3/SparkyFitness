@@ -33,7 +33,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "sparkyfitness.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: server
+              sparkyfitness.io/server: "true"
       ports:
         - port: {{ .Values.server.port }}
     # → DNS
@@ -55,7 +55,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "sparkyfitness.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: server
+      sparkyfitness.io/server: "true"
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -171,7 +171,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "sparkyfitness.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: server
+              sparkyfitness.io/server: "true"
       ports:
         - port: {{ .Values.garmin.port }}
   egress:

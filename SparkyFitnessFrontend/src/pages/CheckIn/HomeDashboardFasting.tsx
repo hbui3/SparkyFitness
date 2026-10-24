@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Card,
   CardHeader,
@@ -7,9 +7,10 @@ import {
   CardDescription,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { DateTimeInput } from '@/components/ui/TimeInput';
 import FastingTimerRing from '../Fasting/FastingTimerRing';
-import { Play, Timer, Square } from 'lucide-react';
+import { Play, Timer, Square, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   Dialog,
@@ -27,10 +28,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { usePreferences } from '@/contexts/PreferencesContext';
+import { formatTimeWithPreference } from '@/utils/timeFormatters';
 import { FASTING_PRESETS } from '@/constants/fastingPresets';
 import { parseISO, addHours, differenceInMinutes } from 'date-fns';
 import EndFastDialog from '../Fasting/EndFastDialog';
 import FastingZoneBar from '../Fasting/FastingZoneBar';
+import EatingWindowBar from '../Fasting/EatingWindowBar';
 import {
   useCurrentFast,
   useEndFastMutation,
@@ -40,20 +44,52 @@ import {
 
 const HomeDashboardFasting = () => {
   const { t } = useTranslation();
+  const { timeFormat } = usePreferences();
 
   const [showStartDialog, setShowStartDialog] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('16-8');
   const [showEndDialog, setShowEndDialog] = useState(false);
   const [startLocal, setStartLocal] = useState<string>('');
+  const [now, setNow] = useState(() => Date.now());
 
   const formatForLocalInput = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  const { data: activeFast, isLoading } = useCurrentFast();
+  const {
+    data: activeFast,
+    isLoading,
+    refetch: refetchCurrentFast,
+  } = useCurrentFast();
   const { mutateAsync: startFast } = useStartFastMutation();
   const { mutate: endFast } = useEndFastMutation();
+
+  useEffect(() => {
+    if (!activeFast?.is_eating_window) return;
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [activeFast?.is_eating_window]);
+
+  const dynamicEatingRemainingMinutes = useMemo(() => {
+    if (!activeFast?.is_eating_window) return 0;
+    if (activeFast.target_end_time) {
+      const targetMs = parseISO(activeFast.target_end_time).getTime();
+      return Math.max(0, Math.floor((targetMs - now) / 60000));
+    }
+    return activeFast.eating_window_remaining_minutes ?? 0;
+  }, [activeFast, now]);
+
+  useEffect(() => {
+    if (activeFast?.is_eating_window && activeFast.target_end_time) {
+      const targetMs = parseISO(activeFast.target_end_time).getTime();
+      if (now >= targetMs) {
+        void refetchCurrentFast();
+      }
+    }
+  }, [now, activeFast, refetchCurrentFast]);
 
   const { data: stats } = useFastingStats();
   const averageDurationMinutes = Number(stats?.average_duration_minutes ?? 0);
@@ -112,19 +148,106 @@ const HomeDashboardFasting = () => {
   return (
     <Card className="flex flex-col h-full bg-card/50 backdrop-blur-sm border-primary/20">
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-xl">
-          <Timer className="w-5 h-5 text-primary" />
-          {t('fasting.checklistTitle', 'Fasting Timer')}
+        <CardTitle className="flex items-center justify-between text-xl">
+          <div className="flex items-center gap-2">
+            <Timer className="w-5 h-5 text-primary" />
+            {t('fasting.checklistTitle', 'Fasting Timer')}
+          </div>
+          {activeFast?.is_eating_window ? (
+            <Badge
+              variant="secondary"
+              className="flex items-center gap-1 text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+            >
+              <Sparkles className="w-3 h-3" />
+              {t('fasting.eatingWindowOpen', 'Eating Window Open')}
+            </Badge>
+          ) : (
+            activeFast?.is_auto_calculated && (
+              <Badge
+                variant="secondary"
+                className="flex items-center gap-1 text-xs bg-primary/10 text-primary border-primary/20"
+              >
+                <Sparkles className="w-3 h-3" />
+                {t('fasting.autoFromMeals', 'Auto (from meals)')}
+              </Badge>
+            )
+          )}
         </CardTitle>
         <CardDescription>
           {activeFast
-            ? t('fasting.currentlyFasting', 'You are currently fasting')
+            ? activeFast.is_eating_window
+              ? t('fasting.eatingWindowDescription', {
+                  defaultValue: `Eating window open · ${Math.floor((activeFast.eating_window_remaining_minutes ?? 0) / 60)}h ${(activeFast.eating_window_remaining_minutes ?? 0) % 60}m remaining (closes at ${activeFast.target_end_time ? formatTimeWithPreference(parseISO(activeFast.target_end_time), timeFormat) : ''})`,
+                  remaining: `${Math.floor((activeFast.eating_window_remaining_minutes ?? 0) / 60)}h ${(activeFast.eating_window_remaining_minutes ?? 0) % 60}m`,
+                  endTime: activeFast.target_end_time
+                    ? formatTimeWithPreference(
+                        parseISO(activeFast.target_end_time),
+                        timeFormat
+                      )
+                    : '',
+                })
+              : activeFast.is_auto_calculated && activeFast.start_meal_name
+                ? t('fasting.currentlyFastingAfterMeal', {
+                    meal: activeFast.start_meal_name,
+                    defaultValue: `Fasting since ${activeFast.start_meal_name}`,
+                  })
+                : t('fasting.currentlyFasting', 'You are currently fasting')
             : t('fasting.readyToStart', 'Ready to start a new fast?')}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col gap-6">
         <div className="flex flex-col items-center justify-center">
-          {activeFast && activeFast.start_time && activeFast.target_end_time ? (
+          {activeFast && activeFast.is_eating_window ? (
+            <div className="flex flex-col items-center justify-center py-2 text-center space-y-4 w-full">
+              <div className="w-24 h-24 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center text-4xl shadow-sm">
+                🍽️
+              </div>
+              <div>
+                <div className="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
+                  {Math.floor(dynamicEatingRemainingMinutes / 60)}h{' '}
+                  {dynamicEatingRemainingMinutes % 60}m
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t(
+                    'fasting.remainingInEatingWindow',
+                    'Remaining in your eating window'
+                  )}
+                </p>
+              </div>
+
+              {/* Eating Window Color Bands Bar */}
+              {activeFast.start_time && activeFast.target_end_time && (
+                <div className="w-full px-2">
+                  <EatingWindowBar
+                    startTime={activeFast.start_time}
+                    targetEndTime={activeFast.target_end_time}
+                    remainingMinutes={dynamicEatingRemainingMinutes}
+                  />
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground/80 max-w-xs">
+                {t(
+                  'fasting.eatingWindowHint',
+                  'Fasting will automatically resume after your eating window closes.'
+                )}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setStartLocal(formatForLocalInput(new Date()));
+                  setShowStartDialog(true);
+                }}
+                className="text-xs"
+              >
+                <Play className="w-3.5 h-3.5 mr-1" />
+                {t('fasting.startFastEarly', 'Start Fasting Now')}
+              </Button>
+            </div>
+          ) : activeFast &&
+            activeFast.start_time &&
+            activeFast.target_end_time ? (
             <div className="flex justify-center">
               <FastingTimerRing
                 startTime={parseISO(activeFast.start_time)}
@@ -151,10 +274,14 @@ const HomeDashboardFasting = () => {
           )}
         </div>
 
-        {activeFast && (
+        {activeFast && !activeFast.is_eating_window && (
           <>
             <div className="w-full">
-              <FastingZoneBar hoursFasted={fastDurationHours} />
+              <FastingZoneBar
+                hoursFasted={fastDurationHours}
+                startTime={activeFast.start_time}
+                targetEndTime={activeFast.target_end_time}
+              />
             </div>
 
             <Button
@@ -211,11 +338,13 @@ const HomeDashboardFasting = () => {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>{t('homeFasting.startTime', 'Start Time')}</Label>
-              <Input
-                type="datetime-local"
+              <Label id="home-fast-start-label">
+                {t('homeFasting.startTime', 'Start Time')}
+              </Label>
+              <DateTimeInput
+                aria-labelledby="home-fast-start-label"
                 value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
+                onChange={setStartLocal}
               />
             </div>
             <div className="space-y-2">

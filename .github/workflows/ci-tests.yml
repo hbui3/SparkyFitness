@@ -45,6 +45,7 @@ jobs:
       mobile: ${{ steps.filter.outputs.mobile }}
       server: ${{ steps.filter.outputs.server }}
       garmin: ${{ steps.filter.outputs.garmin }}
+      shared: ${{ steps.filter.outputs.shared }}
       migrations: ${{ steps.filter.outputs.migrations }}
       containers: ${{ steps.filter.outputs.containers }}
     steps:
@@ -64,6 +65,7 @@ jobs:
               - 'shared/**'
             mobile:
               - 'SparkyFitnessMobile/**'
+              - 'shared/**'
             server:
               - 'SparkyFitnessServer/**'
               - 'shared/**'
@@ -77,6 +79,8 @@ jobs:
               - 'deploy/unraid/**'
               - '.github/workflows/ci-tests.yml'
               - '.github/workflows/unraid-cd.yml'
+            shared:
+              - 'shared/**'
             # Files whose change can break a fresh-install migration run.
             # Includes the jobs' own execution path (workflow + script) so a
             # change there can't break migration CI while the jobs gate out.
@@ -86,9 +90,19 @@ jobs:
               - 'SparkyFitnessServer/db/grantPermissions.ts'
               - 'SparkyFitnessServer/utils/dbMigrations.ts'
               - 'SparkyFitnessServer/utils/applyRlsPolicies.ts'
+              - 'SparkyFitnessServer/utils/initializeDatabase.ts'
               - 'SparkyFitnessServer/tests/migrate.script.ts'
+              - 'SparkyFitnessServer/tests/initializeDatabase.integration.test.ts'
+              - 'SparkyFitnessServer/tests/migrationTransactions.integration.test.ts'
               - 'SparkyFitnessServer/tests/rlsPermissionMatrix.integration.test.ts'
               - 'SparkyFitnessServer/tests/stravaActivityDetailCleanup.integration.test.ts'
+              - 'SparkyFitnessServer/tests/oidcProviderRepository.integration.test.ts'
+              - 'SparkyFitnessServer/tests/providerSyncClaim.integration.test.ts'
+              - 'SparkyFitnessServer/tests/uniqueWrites.integration.test.ts'
+              - 'SparkyFitnessServer/tests/checkInConcurrentWrites.integration.test.ts'
+              - 'SparkyFitnessServer/tests/groupedWorkoutLockOrder.integration.test.ts'
+              - 'SparkyFitnessServer/services/exerciseEntryHistoryService.ts'
+              - 'SparkyFitnessServer/models/oidcProviderRepository.ts'
               - 'SparkyFitnessServer/package.json'
               - '.github/workflows/ci-tests.yml'
 
@@ -128,6 +142,39 @@ jobs:
           push: false
           cache-from: type=gha,scope=unraid-server
           cache-to: type=gha,mode=max,scope=unraid-server
+  shared-validate:
+    name: Shared Validate
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.shared == 'true'
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: shared
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run validation (Type Check, Format)
+        run: pnpm run validate
 
   frontend-tests:
     name: Frontend Tests
@@ -305,10 +352,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # First run applies every migration against empty DB
-      # Second run reapplies the always reapplied rls policies, simulating restart
-      - name: Apply migrations on an empty database (twice = restart simulation)
-        run: pnpm run test:migrations && pnpm run test:migrations
+      # One runner initializes the empty database; the other reapplies after the lock is released.
+      - name: Initialize an empty database from two processes
+        run: |
+          pnpm run test:migrations &
+          first_pid=$!
+          pnpm run test:migrations &
+          second_pid=$!
+          migration_status=0
+          wait "$first_pid" || migration_status=1
+          wait "$second_pid" || migration_status=1
+          exit "$migration_status"
         env:
           SPARKY_FITNESS_DB_HOST: localhost
           SPARKY_FITNESS_DB_PORT: "5432"
@@ -321,8 +375,12 @@ jobs:
       # The schema + RLS policies are now applied and the non-superuser app role
       # exists, so the permission matrix can verify every table's real RLS
       # behaviour as the app role (superuser DB user seeds, app role is enforced).
-      - name: Verify RLS permission matrix, Strava cleanup and Better Auth schema
-        run: pnpm exec vitest run tests/rlsPermissionMatrix.integration.test.ts tests/stravaActivityDetailCleanup.integration.test.ts tests/betterAuthSchemaCheck.integration.test.ts
+      - name: Verify RLS, Strava cleanup, OIDC providers, Better Auth schema, sign-in rate limits, provider sync claims, sleep entry and custom category uniqueness, concurrent check-ins, grouped workout locking, migration transactions and startup locking
+        run: |
+          # One file at a time: the cleanup migration tests and other files' fixture deletes lock the same tables and can deadlock.
+          pnpm exec vitest run --no-file-parallelism tests/rlsPermissionMatrix.integration.test.ts tests/stravaActivityDetailCleanup.integration.test.ts tests/betterAuthSchemaCheck.integration.test.ts tests/oidcProviderRepository.integration.test.ts tests/authRateLimitDatabase.integration.test.ts tests/providerSyncClaim.integration.test.ts tests/uniqueWrites.integration.test.ts tests/checkInConcurrentWrites.integration.test.ts tests/groupedWorkoutLockOrder.integration.test.ts tests/migrationTransactions.integration.test.ts
+          # Initialization reapplies policies, so run it after the other database tests.
+          RUN_DATABASE_INITIALIZATION_TEST=1 pnpm exec vitest run tests/initializeDatabase.integration.test.ts
         env:
           # Default-on (SKIP_RLS_MATRIX unset) — runs against the Postgres this
           # job provisions, with policies already applied by the steps above.

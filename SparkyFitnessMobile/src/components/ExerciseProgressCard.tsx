@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { View, Text } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import Animated, {
   useSharedValue,
   useDerivedValue,
@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useIsFocused } from '@react-navigation/native';
 import { useCSSVariable } from 'uniwind';
+import Icon from './Icon';
 
 interface ProgressBarProps {
   label: string;
@@ -143,6 +144,8 @@ interface ExerciseProgressCardProps {
   exerciseMinutesGoal: number;
   exerciseCalories: number;
   exerciseCaloriesGoal: number;
+  /** Opens exercise statistics from the card's header. */
+  onPressDetails?: () => void;
 }
 
 const ExerciseProgressCard: React.FC<ExerciseProgressCardProps> = ({
@@ -150,20 +153,39 @@ const ExerciseProgressCard: React.FC<ExerciseProgressCardProps> = ({
   exerciseMinutesGoal,
   exerciseCalories,
   exerciseCaloriesGoal,
+  onPressDetails,
 }) => {
   const { t } = useTranslation();
-  const [exerciseColor, trackColor] = useCSSVariable([
+  const [exerciseColor, trackColor, accentColor] = useCSSVariable([
     '--color-calories',
     '--color-progress-track',
-  ]) as [string, string];
+    '--color-accent-primary',
+  ]) as [string, string, string];
 
   const hasEntries = exerciseMinutes > 0 || exerciseCalories > 0;
 
   return (
     <View className="bg-surface rounded-xl p-4 mb-3 shadow-sm">
-      <Text className="text-md font-bold text-text-secondary mb-4">
-        {t('dashboard.exercise', { defaultValue: 'Exercise' })}
-      </Text>
+      <Pressable
+        onPress={onPressDetails}
+        disabled={!onPressDetails}
+        accessibilityRole={onPressDetails ? 'button' : undefined}
+        className="flex-row justify-between items-center mb-4"
+      >
+        <Text className="text-md font-bold text-text-secondary">
+          {t('dashboard.exercise', { defaultValue: 'Exercise' })}
+        </Text>
+        {onPressDetails ? (
+          <View className="flex-row items-center">
+            <Text className="text-xs font-semibold text-accent-primary mr-1">
+              {t('dashboard.exerciseStatistics', {
+                defaultValue: 'Statistics',
+              })}
+            </Text>
+            <Icon name="chevron-forward" size={14} color={accentColor} />
+          </View>
+        ) : null}
+      </Pressable>
       {hasEntries ? (
         <>
           <ProgressBar

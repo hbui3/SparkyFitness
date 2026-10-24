@@ -24,8 +24,18 @@ import {
   EXERCISE_MODALITY_OPTIONS,
 } from '@/constants/exercises';
 import { useEditExerciseForm } from '@/hooks/Exercises/useEditExerciseForm';
-import { isExerciseModality } from '@workspace/shared';
+import {
+  isExerciseModality,
+  CANONICAL_MUSCLES,
+  CANONICAL_EQUIPMENT,
+  isCanonicalMuscle,
+  isCanonicalEquipment,
+  resolveCanonicalOrCustomMuscle,
+  resolveCanonicalOrCustomEquipment,
+} from '@workspace/shared';
 import { resolveExerciseImageSrc } from '@/utils/exercises';
+import { TagInput } from '@/components/ui/TagInput';
+import { localizeMuscle, localizeEquipment } from '@/utils/exerciseTaxonomy';
 
 interface EditExerciseDialogProps {
   form: ReturnType<typeof useEditExerciseForm>;
@@ -33,6 +43,7 @@ interface EditExerciseDialogProps {
 
 export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
   const { t } = useTranslation();
+  const isDuplicate = form.dialogMode === 'duplicate';
 
   return (
     <Dialog
@@ -42,16 +53,26 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
       <DialogContent className="sm:max-w-[625px] overflow-y-auto max-h-[80vh]">
         <DialogHeader>
           <DialogTitle>
-            {t(
-              'exercise.databaseManager.editExerciseDialogTitle',
-              'Edit Exercise'
-            )}
+            {isDuplicate
+              ? t(
+                  'exercise.databaseManager.duplicateExerciseDialogTitle',
+                  'Duplicate Exercise'
+                )
+              : t(
+                  'exercise.databaseManager.editExerciseDialogTitle',
+                  'Edit Exercise'
+                )}
           </DialogTitle>
           <DialogDescription>
-            {t(
-              'exercise.databaseManager.editExerciseDialogDescription',
-              'Edit the details of the selected exercise.'
-            )}
+            {isDuplicate
+              ? t(
+                  'exercise.databaseManager.duplicateExerciseDialogDescription',
+                  'Save a copy as your own exercise. The original is not changed.'
+                )
+              : t(
+                  'exercise.databaseManager.editExerciseDialogDescription',
+                  'Edit the details of the selected exercise.'
+                )}
           </DialogDescription>
         </DialogHeader>
 
@@ -246,24 +267,19 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
             {/* Equipment */}
             <div className="grid grid-cols-4 items-start gap-4">
               <Label htmlFor="edit-equipment" className="text-right mt-1">
-                {t(
-                  'exercise.addExerciseDialog.equipmentLabel',
-                  'Equipment (comma-separated)'
-                )}
+                {t('exercise.addExerciseDialog.equipmentLabel', 'Equipment')}
               </Label>
-              <Input
-                id="edit-equipment"
-                value={form.editExerciseEquipment.join(', ')}
-                onChange={(e) =>
-                  form.setEditExerciseEquipment(
-                    e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  )
-                }
-                className="col-span-3"
-              />
+              <div className="col-span-3">
+                <TagInput
+                  id="edit-equipment"
+                  value={form.editExerciseEquipment}
+                  onChange={form.setEditExerciseEquipment}
+                  suggestions={CANONICAL_EQUIPMENT}
+                  resolveValue={resolveCanonicalOrCustomEquipment}
+                  getLabel={(eq) => localizeEquipment(t, eq)}
+                  isCanonical={isCanonicalEquipment}
+                />
+              </div>
             </div>
 
             {/* Primary Muscles */}
@@ -271,19 +287,21 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
               <Label htmlFor="edit-primary-muscles" className="text-right mt-1">
                 {t(
                   'exercise.addExerciseDialog.primaryMusclesLabel',
-                  'Primary Muscles (comma-separated)'
+                  'Primary Muscles'
                 )}
               </Label>
-              <Input
-                id="edit-primary-muscles"
-                value={form.editExercisePrimaryMuscles.join(', ')}
-                onChange={(e) =>
-                  form.setEditExercisePrimaryMuscles(
-                    e.target.value.split(',').map((s) => s.trim())
-                  )
-                }
-                className="col-span-3"
-              />
+              <div className="col-span-3">
+                <TagInput
+                  id="edit-primary-muscles"
+                  value={form.editExercisePrimaryMuscles}
+                  onChange={form.setEditExercisePrimaryMuscles}
+                  suggestions={CANONICAL_MUSCLES}
+                  resolveValue={resolveCanonicalOrCustomMuscle}
+                  getLabel={(m) => localizeMuscle(t, m)}
+                  isCanonical={isCanonicalMuscle}
+                  showBodyMapHint
+                />
+              </div>
             </div>
 
             {/* Secondary Muscles */}
@@ -294,19 +312,21 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
               >
                 {t(
                   'exercise.addExerciseDialog.secondaryMusclesLabel',
-                  'Secondary Muscles (comma-separated)'
+                  'Secondary Muscles'
                 )}
               </Label>
-              <Input
-                id="edit-secondary-muscles"
-                value={form.editExerciseSecondaryMuscles.join(', ')}
-                onChange={(e) =>
-                  form.setEditExerciseSecondaryMuscles(
-                    e.target.value.split(',').map((s) => s.trim())
-                  )
-                }
-                className="col-span-3"
-              />
+              <div className="col-span-3">
+                <TagInput
+                  id="edit-secondary-muscles"
+                  value={form.editExerciseSecondaryMuscles}
+                  onChange={form.setEditExerciseSecondaryMuscles}
+                  suggestions={CANONICAL_MUSCLES}
+                  resolveValue={resolveCanonicalOrCustomMuscle}
+                  getLabel={(m) => localizeMuscle(t, m)}
+                  isCanonical={isCanonicalMuscle}
+                  showBodyMapHint
+                />
+              </div>
             </div>
 
             {/* Instructions */}
@@ -359,7 +379,11 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
                     >
                       <img
                         src={resolveExerciseImageSrc(url)}
-                        alt={`existing ${index}`}
+                        alt={t(
+                          'exercises.editExerciseDialog.existing',
+                          'existing {{index}}',
+                          { index }
+                        )}
                         className="w-full h-full object-cover rounded"
                       />
                       <Button
@@ -394,7 +418,11 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
                     >
                       <img
                         src={url}
-                        alt={`preview ${index}`}
+                        alt={t(
+                          'exercises.editExerciseDialog.preview',
+                          'preview {{index}}',
+                          { index }
+                        )}
                         className="w-full h-full object-cover rounded"
                       />
                       <Button
@@ -433,7 +461,9 @@ export default function EditExerciseDialog({ form }: EditExerciseDialogProps) {
         )}
 
         <Button onClick={form.handleEditExercise}>
-          {t('common.saveChanges', 'Save Changes')}
+          {isDuplicate
+            ? t('exercise.databaseManager.saveCopy', 'Save Copy')
+            : t('common.saveChanges', 'Save Changes')}
         </Button>
       </DialogContent>
     </Dialog>

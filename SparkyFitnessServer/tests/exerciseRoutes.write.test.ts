@@ -59,6 +59,31 @@ describe('exercise create/update array-field normalization', () => {
   });
 
   describe('POST /exercises', () => {
+    it('keeps image references carried over by a duplicate, dropping unsafe ones', async () => {
+      const res = await request(app)
+        .post('/exercises')
+        .field(
+          'exerciseData',
+          JSON.stringify({
+            name: 'Bench Press (copy)',
+            images: [
+              'Bench_Press/0.jpg',
+              'https://example.com/bench.png',
+              '../../etc/passwd',
+              '/abs/path.jpg',
+            ],
+          })
+        );
+
+      expect(res.statusCode).toBe(201);
+      expect(exerciseService.createExercise).toHaveBeenCalledWith(
+        'test-user-id',
+        expect.objectContaining({
+          images: ['Bench_Press/0.jpg', 'https://example.com/bench.png'],
+        })
+      );
+    });
+
     it('passes an already-correct array through unchanged', async () => {
       const res = await request(app)
         .post('/exercises')

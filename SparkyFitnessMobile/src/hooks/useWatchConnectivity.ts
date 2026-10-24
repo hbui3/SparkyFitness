@@ -12,7 +12,9 @@ export interface WatchLinkStatus {
   isReachable: boolean;
 }
 
-const isSupported = Platform.OS === 'ios' && WatchConnectivity != null;
+const isSupported =
+  (Platform.OS === 'ios' || Platform.OS === 'android') &&
+  WatchConnectivity != null;
 
 /**
  * Subscribes to the one native event that can change either flag.

@@ -18,6 +18,13 @@ if (!newVersion) {
 
 const cleanVersion = newVersion.replace(/^v/, "");
 
+if (/^[0-9]+\.[0-9]+\.[0-9]+\.0[0-9]+$/.test(cleanVersion)) {
+  console.error(
+    "Error: numeric fourth version segments must not contain leading zeros (e.g. use 1.7.3.1, not 1.7.3.01).",
+  );
+  process.exit(1);
+}
+
 /**
  * Writes JSON back in the exact shape Prettier would produce for that file.
  *
@@ -73,6 +80,30 @@ if (fs.existsSync(appJsonPath)) {
     );
     updatedCount++;
   }
+}
+
+// Also update helm/chart/Chart.yaml (version and appVersion)
+const chartYamlPath = path.join(rootDir, "helm/chart/Chart.yaml");
+if (fs.existsSync(chartYamlPath)) {
+  let chartVersion = cleanVersion;
+  const fourSegmentMatch = cleanVersion.match(
+    /^([0-9]+\.[0-9]+\.[0-9]+)\.(.+)$/,
+  );
+  if (fourSegmentMatch) {
+    chartVersion = `${fourSegmentMatch[1]}-${fourSegmentMatch[2]}`;
+  }
+
+  let content = fs.readFileSync(chartYamlPath, "utf8");
+  content = content.replace(/^version:\s*.+$/m, `version: ${chartVersion}`);
+  content = content.replace(
+    /^appVersion:\s*.+$/m,
+    `appVersion: "v${cleanVersion}"`,
+  );
+  fs.writeFileSync(chartYamlPath, content, "utf8");
+  console.log(
+    `✓ Updated helm/chart/Chart.yaml -> version: ${chartVersion}, appVersion: "v${cleanVersion}"`,
+  );
+  updatedCount++;
 }
 
 console.log(

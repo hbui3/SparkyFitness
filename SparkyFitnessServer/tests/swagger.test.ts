@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import specs from '../config/swagger.js';
 import fs from 'fs';
 import path from 'path';
@@ -143,6 +143,25 @@ describe('Swagger Documentation Validation', () => {
     expect(specs.openapi).toBe('3.0.0');
     expect(specs.info).toBeTypeOf('object');
     expect(specs.paths).toBeTypeOf('object');
+  });
+
+  // swagger-jsdoc only logs a JSDoc block that is not valid YAML and leaves
+  // its paths out of the spec, so the build has to be watched for that report.
+  it('should parse every @swagger block without YAML errors', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      vi.resetModules();
+      const { default: freshSpecs } = await import('../config/swagger.js');
+      const reports = errorSpy.mock.calls
+        .map((args) => args.join(' '))
+        .filter((message) => message.includes('Error in '));
+      expect(reports).toEqual([]);
+      expect(freshSpecs.paths['/v2/run-program/custom']).toHaveProperty('get');
+    } finally {
+      errorSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
   });
 
   it('should contain only valid properties inside components', () => {

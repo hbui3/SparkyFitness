@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useCSSVariable } from 'uniwind';
 import { formatDose, type Medication } from '@workspace/shared';
+import { countNutrients } from '../../utils/supplements';
 import { localizedDescribeSchedules } from '../../utils/medicationScheduleLocalization';
 import Icon from '../Icon';
 
@@ -20,8 +21,18 @@ const MedicationRow: React.FC<MedicationRowProps> = ({
   const [iconDecorative] = useCSSVariable(['--color-icon-decorative']) as [
     string,
   ];
+  const nutrientCount = medication.is_supplement
+    ? countNutrients(medication.nutrients)
+    : 0;
   const summary = [
     formatDose(medication),
+    nutrientCount > 0
+      ? t('medications.supplement.nutrientCount', {
+          defaultValue: '{{count}} nutrients',
+          defaultValue_one: '{{count}} nutrient',
+          count: nutrientCount,
+        })
+      : null,
     localizedDescribeSchedules(t, medication.schedules ?? []),
   ]
     .filter((part) => part != null && part !== '')

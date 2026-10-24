@@ -1,3 +1,7 @@
+import {
+  getMockDataSource,
+  isMockCaptureEnabled,
+} from '../../utils/mockDataContext.js';
 import http from 'http';
 import https from 'https';
 import { log } from '../../config/logging.js';
@@ -146,48 +150,61 @@ async function garminResumeLogin(
   }
 }
 
+async function prepareGarminTokens(
+  userId: string,
+  tokensObj: GarminTokenPayload
+) {
+  if (!tokensObj.di_token) {
+    throw new Error('Unexpected token structure: missing di_token.');
+  }
+
+  let expiresAt: Date | null = null;
+  let externalUserId: string = `garmin_user_${userId}`;
+
+  try {
+    // JWTs themselves are always base64 encoded, so this split/decode stays
+    const payloadBase64 = tokensObj.di_token.split('.')[1];
+    const payloadJson = JSON.parse(
+      Buffer.from(payloadBase64, 'base64').toString('utf8')
+    ) as GarminJwtPayload;
+
+    if (payloadJson.exp) {
+      expiresAt = new Date(payloadJson.exp * 1000);
+    }
+    if (payloadJson.garmin_guid) {
+      externalUserId = payloadJson.garmin_guid;
+    }
+  } catch {
+    log(
+      'warn',
+      `Failed to decode JWT payload from di_token for user ${userId}`
+    );
+  }
+
+  log('debug', 'handleGarminTokens: Extracted Tokens', {
+    di_client_id: tokensObj.di_client_id,
+    expires_at: expiresAt,
+    external_user_id: externalUserId,
+  });
+
+  // Stringify the pure JSON object for encryption/storage
+  const tokensString = JSON.stringify(tokensObj);
+  const encryptedGarthDump = await encrypt(tokensString, ENCRYPTION_KEY);
+  return {
+    encrypted_garth_dump: encryptedGarthDump.encryptedText,
+    garth_dump_iv: encryptedGarthDump.iv,
+    garth_dump_tag: encryptedGarthDump.tag,
+    token_expires_at: expiresAt,
+    external_user_id: externalUserId,
+  };
+}
+
 async function handleGarminTokens(
   userId: string,
   tokensObj: GarminTokenPayload
 ) {
   try {
-    if (!tokensObj.di_token) {
-      throw new Error('Unexpected token structure: missing di_token.');
-    }
-
-    let expiresAt: Date | null = null;
-    let externalUserId: string = `garmin_user_${userId}`;
-
-    try {
-      // JWTs themselves are always base64 encoded, so this split/decode stays
-      const payloadBase64 = tokensObj.di_token.split('.')[1];
-      const payloadJson = JSON.parse(
-        Buffer.from(payloadBase64, 'base64').toString('utf8')
-      ) as GarminJwtPayload;
-
-      if (payloadJson.exp) {
-        expiresAt = new Date(payloadJson.exp * 1000);
-      }
-      if (payloadJson.garmin_guid) {
-        externalUserId = payloadJson.garmin_guid;
-      }
-    } catch {
-      log(
-        'warn',
-        `Failed to decode JWT payload from di_token for user ${userId}`
-      );
-    }
-
-    log('debug', 'handleGarminTokens: Extracted Tokens', {
-      di_client_id: tokensObj.di_client_id,
-      expires_at: expiresAt,
-      external_user_id: externalUserId,
-    });
-
-    // Stringify the pure JSON object for encryption/storage
-    const tokensString = JSON.stringify(tokensObj);
-    const encryptedGarthDump = await encrypt(tokensString, ENCRYPTION_KEY);
-
+    const tokens = await prepareGarminTokens(userId, tokensObj);
     const provider =
       await externalProviderRepository.getExternalDataProviderByUserIdAndProviderName(
         userId,
@@ -200,11 +217,7 @@ async function handleGarminTokens(
       user_id: userId,
       is_active: true,
       base_url: 'https://connect.garmin.com',
-      encrypted_garth_dump: encryptedGarthDump.encryptedText,
-      garth_dump_iv: encryptedGarthDump.iv,
-      garth_dump_tag: encryptedGarthDump.tag,
-      token_expires_at: expiresAt,
-      external_user_id: externalUserId,
+      ...tokens,
     };
 
     let savedProvider;
@@ -230,6 +243,43 @@ async function handleGarminTokens(
       errorMessage
     );
     throw new Error(`Failed to handle Garmin tokens: ${errorMessage}`, {
+      cause: error,
+    });
+  }
+}
+
+/**
+ * Saves tokens the Garmin service refreshed while serving a request made with
+ * sentTokens. Skips the save when newer tokens were stored in the meantime, so
+ * a slower overlapping request cannot overwrite them with older ones.
+ */
+async function saveRefreshedGarminTokens(
+  userId: string,
+  sentTokens: string,
+  newTokens: GarminTokenPayload
+) {
+  try {
+    const tokens = await prepareGarminTokens(userId, newTokens);
+    const saved =
+      await externalProviderRepository.replaceGarminTokensIfUnchanged(
+        userId,
+        sentTokens,
+        tokens
+      );
+    if (!saved) {
+      log(
+        'info',
+        `Skipped saving refreshed Garmin tokens for user ${userId}: newer tokens were saved in the meantime.`
+      );
+    }
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(
+      'error',
+      `Error saving refreshed Garmin tokens for user ${userId}:`,
+      errorMessage
+    );
+    throw new Error(`Failed to save refreshed Garmin tokens: ${errorMessage}`, {
       cause: error,
     });
   }
@@ -275,6 +325,23 @@ async function getDecryptedGarminTokens(userId: string): Promise<string> {
 /**
  * Fetches a single chunk of Health and Wellness data from the Garmin microservice.
  */
+/**
+ * The microservice takes the mock-data options per request rather than from its
+ * own env, so each call forwards whatever the current sync's context holds.
+ * Both are absent on a normal sync.
+ */
+function mockDataPayload(): {
+  data_source?: string;
+  save_mock_data?: boolean;
+} {
+  const dataSource = getMockDataSource();
+  const saveMockData = isMockCaptureEnabled();
+  return {
+    ...(dataSource ? { data_source: dataSource } : {}),
+    ...(saveMockData ? { save_mock_data: true } : {}),
+  };
+}
+
 async function fetchGarminHealthAndWellnessChunk(
   userId: string,
   startDate: string,
@@ -295,6 +362,7 @@ async function fetchGarminHealthAndWellnessChunk(
       start_date: startDate,
       end_date: endDate,
       metric_types: metricTypes || [],
+      ...mockDataPayload(),
     });
 
     const result = response.data;
@@ -303,7 +371,7 @@ async function fetchGarminHealthAndWellnessChunk(
         'info',
         `Detected token refresh during health sync chunk for user ${userId}. Updating...`
       );
-      await handleGarminTokens(userId, result.new_tokens);
+      await saveRefreshedGarminTokens(userId, tokens, result.new_tokens);
     }
     return {
       data: result.data || {},
@@ -348,6 +416,7 @@ async function fetchGarminActivitiesAndWorkoutsChunk(
       start_date: startDate,
       end_date: endDate,
       activity_type: activityType,
+      ...mockDataPayload(),
     });
 
     const result = response.data;
@@ -356,7 +425,7 @@ async function fetchGarminActivitiesAndWorkoutsChunk(
         'info',
         `Detected token refresh during activity sync chunk for user ${userId}. Updating...`
       );
-      await handleGarminTokens(userId, result.new_tokens);
+      await saveRefreshedGarminTokens(userId, tokens, result.new_tokens);
     }
     return {
       activities: Array.isArray(result.activities) ? result.activities : [],
@@ -398,6 +467,7 @@ async function fetchGarminNutritionDiaryChunk(
       tokens,
       start_date: startDate,
       end_date: endDate,
+      ...mockDataPayload(),
     });
 
     const result = response.data;
@@ -406,7 +476,7 @@ async function fetchGarminNutritionDiaryChunk(
         'info',
         `Detected token refresh during nutrition sync chunk for user ${userId}. Updating...`
       );
-      await handleGarminTokens(userId, result.new_tokens);
+      await saveRefreshedGarminTokens(userId, tokens, result.new_tokens);
     }
     return {
       nutrition_data: Array.isArray(result.nutrition_data)

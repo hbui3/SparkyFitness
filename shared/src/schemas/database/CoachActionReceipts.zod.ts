@@ -1,9 +1,9 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachActionReceiptStatusSchema = z.enum([
-  "completed",
-  "undone",
-  "expired",
+  'completed',
+  'undone',
+  'expired',
 ]);
 
 export const coachActionReceiptsSchema = z.object({

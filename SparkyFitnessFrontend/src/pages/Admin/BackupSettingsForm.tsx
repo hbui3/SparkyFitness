@@ -1,8 +1,9 @@
 import type React from 'react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { Loader2, Save, Play, Upload, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { TimeInput } from '@/components/ui/TimeInput';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { BackupSettings, BackupSettingsMutator } from '@workspace/shared';
@@ -161,7 +162,7 @@ export const BackupSettingsForm: React.FC<BackupSettingsFormProps> = ({
           <div className="mb-4">
             <label
               className="block text-foreground text-sm font-bold mb-2"
-              htmlFor="backupTime"
+              id="backup-time-label"
             >
               {t('admin.backupSettings.backupTime', {
                 timezone: new Date()
@@ -170,10 +171,10 @@ export const BackupSettingsForm: React.FC<BackupSettingsFormProps> = ({
                 defaultValue: `Backup Time (${new Date().toLocaleTimeString('en-us', { timeZoneName: 'short' }).split(' ')[2]}):`,
               })}
             </label>
-            <Input
-              type="time"
+            <TimeInput
+              aria-labelledby="backup-time-label"
               value={backupTime}
-              onChange={(e) => setBackupTime(e.target.value)}
+              onChange={setBackupTime}
               className="bg-muted shadow appearance-none border rounded w-full py-2 px-3 leading-tight focus:outline-none focus:shadow-outline"
             />
           </div>
@@ -261,22 +262,18 @@ export const BackupSettingsForm: React.FC<BackupSettingsFormProps> = ({
           {t('admin.backupSettings.restoreBackup', 'Restore Backup')}
         </h3>
         <p className="text-orange-500 mb-2">
-          <strong>
-            {t(
-              'admin.backupSettings.restoreWarningImportant',
-              'Important Note:'
-            )}
-          </strong>{' '}
-          {t(
-            'admin.backupSettings.restoreWarningImportantText',
-            "This backup functionality is new and should be used with caution. While it creates a backup, it's highly recommended to create additional backups independently of this application. Always follow the 3-2-1 backup strategy (3 copies of your data, on 2 different media, with 1 copy offsite) to ensure data safety. The functionality of restore may not work properly in all scenarios, so do not rely solely on this in-app backup."
-          )}
+          <Trans
+            i18nKey="admin.backupSettings.importantNoteThisBackupFunctionality"
+            defaults={
+              "<strong>Important Note:</strong> This backup functionality is new and should be used with caution. While it creates a backup, it's highly recommended to create additional backups independently of this application. Always follow the 3-2-1 backup strategy (3 copies of your data, on 2 different media, with 1 copy offsite) to ensure data safety. The functionality of restore may not work properly in all scenarios, so do not rely solely on this in-app backup."
+            }
+            components={{ strong: <strong /> }}
+          />
         </p>
         <p className="text-red-600 mb-2">
-          {t('admin.backupSettings.restoreWarningCaution', 'WARNING:')}{' '}
           {t(
-            'admin.backupSettings.restoreWarningCautionText',
-            'Restoring a backup will wipe all current data and replace it with the backup content. Proceed with extreme caution. Restart the server manually after restoring.'
+            'admin.backupSettings.warningRestoringABackupWill',
+            'WARNING: Restoring a backup will wipe all current data and replace it with the backup content. Proceed with extreme caution. Restart the server manually after restoring.'
           )}
         </p>
         <div className="relative">

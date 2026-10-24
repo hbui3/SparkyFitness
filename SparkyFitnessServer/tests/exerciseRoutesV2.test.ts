@@ -34,6 +34,13 @@ vi.mock('../config/logging.js', () => ({
   log: vi.fn(),
 }));
 
+// Alternatives have their own suite (exerciseAlternativesRoutes.test.ts);
+// stub the service so this file never reaches its repository.
+vi.mock('../services/exerciseAlternativesService.js', () => ({
+  getExerciseAlternatives: vi.fn(),
+  ExerciseNotFoundError: class ExerciseNotFoundError extends Error {},
+}));
+
 // Mock authenticate to inject userId. Tests can override the implementation
 // per-case (e.g. to return 401).
 const authenticateMock = vi.fn(

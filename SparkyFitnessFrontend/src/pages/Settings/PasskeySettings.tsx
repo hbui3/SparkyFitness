@@ -19,6 +19,7 @@ import {
   useDeletePasskeyMutation,
   usePasskeys,
 } from '@/hooks/Settings/usePasskeys';
+import { useAuthSettings } from '@/hooks/Auth/useAuth';
 
 const PasskeySettings = () => {
   const { t } = useTranslation();
@@ -26,6 +27,8 @@ const PasskeySettings = () => {
   const [newPasskeyName, setNewPasskeyName] = useState('');
 
   const { data: passkeys = [], isLoading: loading } = usePasskeys();
+  const { data: loginSettings } = useAuthSettings();
+  const passkeyEnabled = loginSettings?.passkey?.enabled !== false;
   const { mutateAsync: addPasskey, isPending: registering } =
     useAddPasskeyMutation();
   const { mutate: deletePasskey } = useDeletePasskeyMutation();
@@ -58,34 +61,36 @@ const PasskeySettings = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1 space-y-2">
-              <Label htmlFor="passkey-name">
-                {t('settings.passkey.newName', 'Passkey Name (Optional)')}
-              </Label>
-              <Input
-                id="passkey-name"
-                placeholder={t(
-                  'settings.passkey.namePlaceholder',
-                  'e.g. My MacBook, Work Phone'
+          {passkeyEnabled && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="passkey-name">
+                  {t('settings.passkey.newName', 'Passkey Name (Optional)')}
+                </Label>
+                <Input
+                  id="passkey-name"
+                  placeholder={t(
+                    'settings.passkey.namePlaceholder',
+                    'e.g. My MacBook, Work Phone'
+                  )}
+                  value={newPasskeyName}
+                  onChange={(e) => setNewPasskeyName(e.target.value)}
+                />
+              </div>
+              <Button
+                className="sm:mt-8"
+                onClick={handleAddPasskey}
+                disabled={registering}
+              >
+                {registering ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-2" />
                 )}
-                value={newPasskeyName}
-                onChange={(e) => setNewPasskeyName(e.target.value)}
-              />
+                {t('settings.passkey.add', 'Add Passkey')}
+              </Button>
             </div>
-            <Button
-              className="sm:mt-8"
-              onClick={handleAddPasskey}
-              disabled={registering}
-            >
-              {registering ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4 mr-2" />
-              )}
-              {t('settings.passkey.add', 'Add Passkey')}
-            </Button>
-          </div>
+          )}
 
           <div className="space-y-3 pt-4">
             <h4 className="text-sm font-medium">
@@ -115,9 +120,10 @@ const PasskeySettings = () => {
                           t('settings.passkey.unnamed', 'Unnamed Passkey')}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {t('settings.passkey.addedOn', 'Added on')}{' '}
-                        {format(new Date(pk.createdAt), 'PPp', {
-                          locale: getDateLocale(language),
+                        {t('settings.passkey.addedOn2', 'Added on {{format}}', {
+                          format: format(new Date(pk.createdAt), 'PPp', {
+                            locale: getDateLocale(language),
+                          }),
                         })}
                       </p>
                     </div>

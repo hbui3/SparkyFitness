@@ -118,6 +118,82 @@ describe('foodEntryToNutritionRecord', () => {
       new Date(field(record, 'startTime')).getTime()
     );
   });
+
+  it('uses entry_time when provided on the food entry', () => {
+    const record = foodEntryToNutritionRecord(
+      { ...baseEntry, entry_time: '14:25' },
+      1
+    )!;
+    const start = new Date(field(record, 'startTime'));
+    expect(start.getHours()).toBe(14);
+    expect(start.getMinutes()).toBe(25);
+    expect(start.getSeconds()).toBe(0);
+  });
+
+  it('handles entry_time with seconds', () => {
+    const record = foodEntryToNutritionRecord(
+      { ...baseEntry, entry_time: '14:25:45' },
+      1
+    )!;
+    const start = new Date(field(record, 'startTime'));
+    expect(start.getHours()).toBe(14);
+    expect(start.getMinutes()).toBe(25);
+    expect(start.getSeconds()).toBe(45);
+  });
+
+  it('falls back to meal default time when entry_time is absent or invalid', () => {
+    const lunchRecord = foodEntryToNutritionRecord(
+      { ...baseEntry, meal_type: 'lunch', entry_time: null },
+      1
+    )!;
+    const lunchStart = new Date(field(lunchRecord, 'startTime'));
+    expect(lunchStart.getHours()).toBe(12);
+    expect(lunchStart.getMinutes()).toBe(30);
+
+    const invalidTimeRecord = foodEntryToNutritionRecord(
+      { ...baseEntry, meal_type: 'breakfast', entry_time: 'invalid-time' },
+      1
+    )!;
+    const breakfastStart = new Date(field(invalidTimeRecord, 'startTime'));
+    expect(breakfastStart.getHours()).toBe(8);
+    expect(breakfastStart.getMinutes()).toBe(0);
+  });
+
+  it('defers when entry_time is still in the future for today', () => {
+    const now = new Date('2026-06-01T14:00:00');
+    // 14:30 is in the future relative to 14:00 on the same date
+    expect(
+      foodEntryToNutritionRecord(
+        { ...baseEntry, entry_date: '2026-06-01', entry_time: '14:30' },
+        1,
+        now
+      )
+    ).toBeNull();
+
+    // 13:30 is in the past relative to 14:00
+    expect(
+      foodEntryToNutritionRecord(
+        { ...baseEntry, entry_date: '2026-06-01', entry_time: '13:30' },
+        1,
+        now
+      )
+    ).not.toBeNull();
+  });
+
+  it('clamps interval end to now when the 1-minute window extends past now', () => {
+    // start is 14:25:45, now is 14:26:00 -> 15 seconds after start
+    const now = new Date('2026-06-01T14:26:00');
+    const record = foodEntryToNutritionRecord(
+      { ...baseEntry, entry_date: '2026-06-01', entry_time: '14:25:45' },
+      1,
+      now
+    )!;
+    expect(record).not.toBeNull();
+    expect(new Date(field(record, 'endTime')).getTime()).toBe(now.getTime());
+    expect(new Date(field(record, 'startTime')).getTime()).toBeLessThan(
+      new Date(field(record, 'endTime')).getTime()
+    );
+  });
 });
 
 describe('waterMlToHydrationRecord', () => {

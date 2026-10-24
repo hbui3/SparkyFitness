@@ -86,9 +86,9 @@ export const getPhotoDates = async (userId: string): Promise<string[]> => {
 
 /**
  * Every progress photo the user can see, newest day first, each paired with the
- * weight logged on that day. Backs the mobile gallery, the side-by-side
- * comparison, and the time-lapse player, which would otherwise need one request
- * per day plus a separate measurements-range call.
+ * weight logged on that day. Backs the mobile gallery and the side-by-side
+ * comparison and time-lapse player on mobile and web, which would otherwise
+ * need one request per day plus a separate measurements-range call.
  *
  * The join is on (user_id, entry_date) rather than the stored
  * check_in_measurement_id: that FK is only populated if a measurement row

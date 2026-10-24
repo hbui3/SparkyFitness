@@ -3,6 +3,9 @@ import '@testing-library/jest-dom';
 import ExercisePresetEntryDisplay from '@/pages/Diary/ExercisePresetEntryDisplay';
 import type { ExerciseEntry, PresetSessionEntry } from '@/types/exercises';
 
+jest.mock('@/contexts/ActiveUserContext', () => ({
+  useActiveUser: () => ({ hasWritePermission: () => false }),
+}));
 jest.mock('@/contexts/PreferencesContext', () => ({
   usePreferences: () => ({
     weightUnit: 'kg',

@@ -257,7 +257,6 @@
     "editPresetTooltip": "Muokkaa tätä harjoitetta",
     "deletePresetTooltip": "Poista tämä harjoite",
     "loading": "Ladataan...",
-    "loadMore": "Lataa lisää",
     "noExercisesInPreset": "Ei harjoituksia tässä harjoitteessa",
     "failedToLoadPresets": "Harjoitteiden lataaminen epäonnistui.",
     "createSuccess": "Harjoite luotiin onnistuneesti.",
@@ -853,7 +852,6 @@
     "searchFoodsToYour": "Etsi ruokia lisättäväksi ateriaan"
   },
   "checkIn": {
-    "howAreYouFeelingToday": "Kuinka voit tänään?",
     "neutral": "Neutraali",
     "anyThoughtsOrFeelings": "Onko mitään ajatuksia tai tuntemuksia joita haluaisit lisätä?",
     "sleepTracking": "Unen seuranta",
@@ -1137,5 +1135,10 @@
       "presetCore": "Ydin",
       "clearAll": "Tyhjennä kaikki"
     }
+  },
+  "onboarding": {
+    "activityLight": "Kevyt (1-2 päivää/viikko)",
+    "activityLightDesc": "Kevyt liikunta tai urheilu.",
+    "planReady": "Sinuun räätälöity suunitelma on valmis käyttöön."
   }
 }

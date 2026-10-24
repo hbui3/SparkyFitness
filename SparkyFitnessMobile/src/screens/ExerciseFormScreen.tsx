@@ -9,9 +9,17 @@ import BottomSheetPicker from '../components/BottomSheetPicker';
 import FormInput from '../components/FormInput';
 import FormScreenChrome from '../components/FormScreenChrome';
 import Icon from '../components/Icon';
+import { TagInput } from '../components/TagInput';
 import { useCreateExercise, useUpdateExercise } from '../hooks';
 import { DECIMAL_INPUT_REGEX, parseDecimalInput } from '../utils/numericInput';
-import { deriveExerciseModality, isExerciseModality } from '@workspace/shared';
+import {
+  deriveExerciseModality,
+  isExerciseModality,
+  CANONICAL_MUSCLES,
+  CANONICAL_EQUIPMENT,
+  resolveCanonicalOrCustomMuscle,
+  resolveCanonicalOrCustomEquipment,
+} from '@workspace/shared';
 import { localizeExerciseTaxonomyValue } from '../localization/exerciseTaxonomy';
 import type { Exercise } from '../types/exercise';
 import type {
@@ -39,6 +47,9 @@ const CATEGORY_OPTIONS = [
 const MODALITY_OPTIONS = [
   { value: 'weight_reps' },
   { value: 'reps_only' },
+  { value: 'bodyweight_reps' },
+  { value: 'weight_distance' },
+  { value: 'weight_duration' },
   { value: 'duration' },
   { value: 'duration_distance' },
 ] as const;
@@ -107,9 +118,9 @@ interface ExerciseFormState {
   modalityManuallySet: boolean;
   caloriesPerHourText: string;
   description: string;
-  equipment: string;
-  primaryMuscles: string;
-  secondaryMuscles: string;
+  equipment: string[];
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
   instructions: string;
   level: string | null;
   force: string | null;
@@ -124,9 +135,9 @@ interface ExerciseFormBodyProps {
 
 const hasAdvancedContent = (state: ExerciseFormState): boolean =>
   Boolean(
-    state.equipment ||
-    state.primaryMuscles ||
-    state.secondaryMuscles ||
+    state.equipment.length > 0 ||
+    state.primaryMuscles.length > 0 ||
+    state.secondaryMuscles.length > 0 ||
     state.instructions ||
     state.level ||
     state.force ||
@@ -349,16 +360,17 @@ const ExerciseFormBody: React.FC<ExerciseFormBodyProps> = ({
             <Text className="text-text-secondary text-sm font-medium">
               {t('workout.primaryMuscles', { defaultValue: 'Primary muscles' })}
             </Text>
-            <FormInput
-              placeholder={t('workout.commaSeparatedMuscles', {
-                defaultValue: 'Comma-separated (e.g. quadriceps, glutes)',
-              })}
+            <TagInput
               value={state.primaryMuscles}
-              onChangeText={(primaryMuscles) =>
+              onChange={(primaryMuscles) =>
                 setState((prev) => ({ ...prev, primaryMuscles }))
               }
-              autoCapitalize="none"
-              autoCorrect={false}
+              suggestions={CANONICAL_MUSCLES}
+              resolveValue={resolveCanonicalOrCustomMuscle}
+              getLabel={(m) => localizeExerciseTaxonomyValue(t, 'muscle', m)}
+              placeholder={t('workout.tagPlaceholder', {
+                defaultValue: 'Type to add or search...',
+              })}
             />
           </View>
 
@@ -368,16 +380,17 @@ const ExerciseFormBody: React.FC<ExerciseFormBodyProps> = ({
                 defaultValue: 'Secondary muscles',
               })}
             </Text>
-            <FormInput
-              placeholder={t('workout.commaSeparated', {
-                defaultValue: 'Comma-separated',
-              })}
+            <TagInput
               value={state.secondaryMuscles}
-              onChangeText={(secondaryMuscles) =>
+              onChange={(secondaryMuscles) =>
                 setState((prev) => ({ ...prev, secondaryMuscles }))
               }
-              autoCapitalize="none"
-              autoCorrect={false}
+              suggestions={CANONICAL_MUSCLES}
+              resolveValue={resolveCanonicalOrCustomMuscle}
+              getLabel={(m) => localizeExerciseTaxonomyValue(t, 'muscle', m)}
+              placeholder={t('workout.tagPlaceholder', {
+                defaultValue: 'Type to add or search...',
+              })}
             />
           </View>
 
@@ -425,16 +438,19 @@ const ExerciseFormBody: React.FC<ExerciseFormBodyProps> = ({
             <Text className="text-text-secondary text-sm font-medium">
               {t('workout.equipment', { defaultValue: 'Equipment' })}
             </Text>
-            <FormInput
-              placeholder={t('workout.commaSeparatedEquipment', {
-                defaultValue: 'Comma-separated (e.g. dumbbell, bench)',
-              })}
+            <TagInput
               value={state.equipment}
-              onChangeText={(equipment) =>
+              onChange={(equipment) =>
                 setState((prev) => ({ ...prev, equipment }))
               }
-              autoCapitalize="none"
-              autoCorrect={false}
+              suggestions={CANONICAL_EQUIPMENT}
+              resolveValue={resolveCanonicalOrCustomEquipment}
+              getLabel={(eq) =>
+                localizeExerciseTaxonomyValue(t, 'equipment', eq)
+              }
+              placeholder={t('workout.tagPlaceholder', {
+                defaultValue: 'Type to add or search...',
+              })}
             />
           </View>
 
@@ -489,9 +505,6 @@ const buildCreatePayload = (
   caloriesValue: number | undefined
 ): CreateExercisePayload => {
   const trimmedDescription = state.description.trim();
-  const equipmentList = splitCsvList(state.equipment);
-  const primaryList = splitCsvList(state.primaryMuscles);
-  const secondaryList = splitCsvList(state.secondaryMuscles);
   const stepsList = splitLines(state.instructions);
 
   const payload: CreateExercisePayload = {
@@ -503,9 +516,11 @@ const buildCreatePayload = (
   if (isExerciseModality(state.modality)) payload.modality = state.modality;
 
   if (caloriesValue !== undefined) payload.calories_per_hour = caloriesValue;
-  if (equipmentList.length > 0) payload.equipment = equipmentList;
-  if (primaryList.length > 0) payload.primary_muscles = primaryList;
-  if (secondaryList.length > 0) payload.secondary_muscles = secondaryList;
+  if (state.equipment.length > 0) payload.equipment = state.equipment;
+  if (state.primaryMuscles.length > 0)
+    payload.primary_muscles = state.primaryMuscles;
+  if (state.secondaryMuscles.length > 0)
+    payload.secondary_muscles = state.secondaryMuscles;
   if (stepsList.length > 0) payload.instructions = stepsList;
   if (state.level) payload.level = state.level;
   if (state.force) payload.force = state.force;
@@ -514,29 +529,63 @@ const buildCreatePayload = (
   return payload;
 };
 
+/** Form state seeded from an existing exercise (edit, or duplicate). */
+const formStateFromExercise = (
+  exercise: Exercise,
+  name: string = exercise.name
+): ExerciseFormState => ({
+  name,
+  category: exercise.category,
+  modality: exercise.modality ?? deriveExerciseModality(exercise.category),
+  modalityManuallySet: true,
+  caloriesPerHourText:
+    exercise.calories_per_hour > 0 ? String(exercise.calories_per_hour) : '',
+  description: exercise.description ?? '',
+  equipment: exercise.equipment ?? [],
+  primaryMuscles: exercise.primary_muscles ?? [],
+  secondaryMuscles: exercise.secondary_muscles ?? [],
+  instructions: joinLines(exercise.instructions),
+  level: exercise.level ?? null,
+  force: exercise.force ?? null,
+  mechanic: exercise.mechanic ?? null,
+});
+
 interface CreateExerciseModeProps {
   navigation: Navigation;
+  /** When set, the form starts as a copy of this exercise. */
+  duplicateOf?: Exercise;
 }
 
 const CreateExerciseMode: React.FC<CreateExerciseModeProps> = ({
   navigation,
+  duplicateOf,
 }) => {
   const { t } = useTranslation();
-  const [state, setState] = useState<ExerciseFormState>({
-    name: '',
-    category: 'general',
-    modality: deriveExerciseModality('general'),
-    modalityManuallySet: false,
-    caloriesPerHourText: '',
-    description: '',
-    equipment: '',
-    primaryMuscles: '',
-    secondaryMuscles: '',
-    instructions: '',
-    level: null,
-    force: null,
-    mechanic: null,
-  });
+  const [state, setState] = useState<ExerciseFormState>(() =>
+    duplicateOf
+      ? formStateFromExercise(
+          duplicateOf,
+          t('exerciseDetail.duplicateName', {
+            name: duplicateOf.name,
+            defaultValue: '{{name}} (copy)',
+          })
+        )
+      : {
+          name: '',
+          category: 'general',
+          modality: deriveExerciseModality('general'),
+          modalityManuallySet: false,
+          caloriesPerHourText: '',
+          description: '',
+          equipment: [],
+          primaryMuscles: [],
+          secondaryMuscles: [],
+          instructions: '',
+          level: null,
+          force: null,
+          mechanic: null,
+        }
+  );
   const { createExerciseAsync, isPending } = useCreateExercise();
 
   const handleSave = async () => {
@@ -556,6 +605,10 @@ const CreateExerciseMode: React.FC<CreateExerciseModeProps> = ({
     if (!calories.ok) return;
 
     const payload = buildCreatePayload(trimmedName, state, calories.value);
+    // A copy keeps the original's images (by reference).
+    if (duplicateOf && duplicateOf.images.length > 0) {
+      payload.images = duplicateOf.images;
+    }
 
     try {
       const created = await createExerciseAsync(payload);
@@ -573,7 +626,13 @@ const CreateExerciseMode: React.FC<CreateExerciseModeProps> = ({
 
   return (
     <FormScreenChrome
-      title={t('screens.newExercise', { defaultValue: 'New Exercise' })}
+      title={
+        duplicateOf
+          ? t('screens.duplicateExercise', {
+              defaultValue: 'Duplicate Exercise',
+            })
+          : t('screens.newExercise', { defaultValue: 'New Exercise' })
+      }
       saveLabel={t('common.save', { defaultValue: 'Save' })}
       savingLabel={t('common.saving', { defaultValue: 'Saving…' })}
       isSaving={isPending}
@@ -633,27 +692,24 @@ const buildEditPayload = (
     payload.description = trimmedDescription;
   }
 
-  const equipmentList = splitCsvList(state.equipment);
   if (
-    JSON.stringify(equipmentList) !== JSON.stringify(initial.equipment ?? [])
+    JSON.stringify(state.equipment) !== JSON.stringify(initial.equipment ?? [])
   ) {
-    payload.equipment = equipmentList;
+    payload.equipment = state.equipment;
   }
 
-  const primaryList = splitCsvList(state.primaryMuscles);
   if (
-    JSON.stringify(primaryList) !==
+    JSON.stringify(state.primaryMuscles) !==
     JSON.stringify(initial.primary_muscles ?? [])
   ) {
-    payload.primary_muscles = primaryList;
+    payload.primary_muscles = state.primaryMuscles;
   }
 
-  const secondaryList = splitCsvList(state.secondaryMuscles);
   if (
-    JSON.stringify(secondaryList) !==
+    JSON.stringify(state.secondaryMuscles) !==
     JSON.stringify(initial.secondary_muscles ?? [])
   ) {
-    payload.secondary_muscles = secondaryList;
+    payload.secondary_muscles = state.secondaryMuscles;
   }
 
   const stepsList = splitLines(state.instructions);
@@ -682,22 +738,9 @@ const EditExerciseMode: React.FC<EditExerciseModeProps> = ({
 }) => {
   const { t } = useTranslation();
   const { exercise, returnKey } = params;
-  const [state, setState] = useState<ExerciseFormState>(() => ({
-    name: exercise.name,
-    category: exercise.category,
-    modality: exercise.modality ?? deriveExerciseModality(exercise.category),
-    modalityManuallySet: true,
-    caloriesPerHourText:
-      exercise.calories_per_hour > 0 ? String(exercise.calories_per_hour) : '',
-    description: exercise.description ?? '',
-    equipment: joinCsvList(exercise.equipment),
-    primaryMuscles: joinCsvList(exercise.primary_muscles),
-    secondaryMuscles: joinCsvList(exercise.secondary_muscles),
-    instructions: joinLines(exercise.instructions),
-    level: exercise.level ?? null,
-    force: exercise.force ?? null,
-    mechanic: exercise.mechanic ?? null,
-  }));
+  const [state, setState] = useState<ExerciseFormState>(() =>
+    formStateFromExercise(exercise)
+  );
   const { updateExerciseAsync, isPending } = useUpdateExercise();
 
   const handleSave = async () => {
@@ -764,7 +807,12 @@ const ExerciseFormScreen: React.FC<ExerciseFormScreenProps> = ({
   if (route.params.mode === 'edit-exercise') {
     return <EditExerciseMode navigation={navigation} params={route.params} />;
   }
-  return <CreateExerciseMode navigation={navigation} />;
+  return (
+    <CreateExerciseMode
+      navigation={navigation}
+      duplicateOf={route.params.duplicateOf}
+    />
+  );
 };
 
 export default ExerciseFormScreen;

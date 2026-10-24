@@ -3,6 +3,7 @@ import { getSystemClient } from '../../db/poolManager.js';
 import { encrypt, decrypt, ENCRYPTION_KEY } from '../../security/encryption.js';
 import { log } from '../../config/logging.js';
 import { logRawResponse } from '../../utils/diagnosticLogger.js';
+import { withProviderTokenLock } from '../../models/externalProviderRepository.js';
 const STRAVA_API_BASE_URL = 'https://www.strava.com/api/v3';
 const STRAVA_AUTH_BASE_URL = 'https://www.strava.com/oauth';
 /**
@@ -125,86 +126,88 @@ async function exchangeCodeForTokens(userId: any, code: any) {
 /**
  * Refresh an expired access token
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function refreshAccessToken(userId: any) {
+async function refreshAccessToken(userId: string) {
   const client = await getSystemClient();
   try {
-    const providerResult = await client.query(
-      `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
+    return await withProviderTokenLock(client, async () => {
+      const providerResult = await client.query(
+        `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
               encrypted_refresh_token, refresh_token_iv, refresh_token_tag
        FROM external_data_providers
-       WHERE user_id = $1 AND provider_type = 'strava'`,
-      [userId]
-    );
-    if (providerResult.rows.length === 0) {
-      throw new Error('Strava credentials not found for token refresh.');
-    }
-    const {
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-    } = providerResult.rows[0];
-    const clientId = await decrypt(
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      ENCRYPTION_KEY
-    );
-    const clientSecret = await decrypt(
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      ENCRYPTION_KEY
-    );
-    const refreshToken = await decrypt(
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-      ENCRYPTION_KEY
-    );
-    // Strava uses POST body params for token refresh
-    const response = await axios.post(`${STRAVA_AUTH_BASE_URL}/token`, {
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-    });
-    const {
-      access_token,
-      refresh_token: newRefreshToken,
-      expires_at,
-    } = response.data;
-    const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
-    const encryptedNewRefreshToken = await encrypt(
-      newRefreshToken,
-      ENCRYPTION_KEY
-    );
-    // Strava returns expires_at as Unix epoch seconds
-    const tokenExpiresAt = new Date(expires_at * 1000);
-    const updateQuery = `
+       WHERE user_id = $1 AND provider_type = 'strava'
+       FOR UPDATE`,
+        [userId]
+      );
+      if (providerResult.rows.length === 0) {
+        throw new Error('Strava credentials not found for token refresh.');
+      }
+      const {
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+      } = providerResult.rows[0];
+      const clientId = await decrypt(
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        ENCRYPTION_KEY
+      );
+      const clientSecret = await decrypt(
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        ENCRYPTION_KEY
+      );
+      const refreshToken = await decrypt(
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+        ENCRYPTION_KEY
+      );
+      // Strava uses POST body params for token refresh
+      const response = await axios.post(`${STRAVA_AUTH_BASE_URL}/token`, {
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      });
+      const {
+        access_token,
+        refresh_token: newRefreshToken,
+        expires_at,
+      } = response.data;
+      const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
+      const encryptedNewRefreshToken = await encrypt(
+        newRefreshToken,
+        ENCRYPTION_KEY
+      );
+      // Strava returns expires_at as Unix epoch seconds
+      const tokenExpiresAt = new Date(expires_at * 1000);
+      const updateQuery = `
       UPDATE external_data_providers
       SET encrypted_access_token = $1, access_token_iv = $2, access_token_tag = $3,
           encrypted_refresh_token = $4, refresh_token_iv = $5, refresh_token_tag = $6,
           token_expires_at = $7, updated_at = NOW()
       WHERE user_id = $8 AND provider_type = 'strava'
     `;
-    await client.query(updateQuery, [
-      encryptedAccessToken.encryptedText,
-      encryptedAccessToken.iv,
-      encryptedAccessToken.tag,
-      encryptedNewRefreshToken.encryptedText,
-      encryptedNewRefreshToken.iv,
-      encryptedNewRefreshToken.tag,
-      tokenExpiresAt,
-      userId,
-    ]);
-    return access_token;
+      await client.query(updateQuery, [
+        encryptedAccessToken.encryptedText,
+        encryptedAccessToken.iv,
+        encryptedAccessToken.tag,
+        encryptedNewRefreshToken.encryptedText,
+        encryptedNewRefreshToken.iv,
+        encryptedNewRefreshToken.tag,
+        tokenExpiresAt,
+        userId,
+      ]);
+      return access_token;
+    });
   } catch (error) {
     // @ts-expect-error TS(2571): Object is of type 'unknown'.
     log('error', `Error refreshing Strava access token: ${error.message}`);

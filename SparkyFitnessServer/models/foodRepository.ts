@@ -7,6 +7,7 @@ export const getFoodOwnerId = foodDb.getFoodOwnerId;
 export const getFoodsNeedingReview = foodDb.getFoodsNeedingReview;
 export const clearUserIgnoredUpdate = foodDb.clearUserIgnoredUpdate;
 export const getFoodEntryById = foodEntryDb.getFoodEntryById;
+export const updateFoodEntryTime = foodEntryDb.updateFoodEntryTime;
 export const deleteFoodAndDependencies = foodDb.deleteFoodAndDependencies;
 export const deleteFoodEntriesForUser = foodDb.deleteFoodEntriesForUser;
 export default {

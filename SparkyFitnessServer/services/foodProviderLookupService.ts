@@ -6,6 +6,11 @@ import {
   type ProviderType,
 } from './externalFoodSearchService.js';
 import { VALID_PROVIDER_TYPES } from '../constants/foodProviders.js';
+import {
+  rankProviderMatches,
+  type ProviderFoodItem,
+  type ProviderFoodVariant,
+} from '../utils/foodRanking.js';
 
 /**
  * The external half of the food-lookup cascade: the user's configured food
@@ -88,80 +93,8 @@ export async function resolveFoodProviderOrder(
   return targets;
 }
 
-export interface ProviderFoodVariant {
-  id?: string;
-  serving_size?: number | string | null;
-  serving_unit?: string | null;
-  calories?: number | string | null;
-  energy?: number | string | null;
-  protein?: number | string | null;
-  carbs?: number | string | null;
-  fat?: number | string | null;
-  saturated_fat?: number | string | null;
-  polyunsaturated_fat?: number | string | null;
-  monounsaturated_fat?: number | string | null;
-  trans_fat?: number | string | null;
-  cholesterol?: number | string | null;
-  sodium?: number | string | null;
-  potassium?: number | string | null;
-  dietary_fiber?: number | string | null;
-  fiber?: number | string | null;
-  sugars?: number | string | null;
-  sugar?: number | string | null;
-  vitamin_a?: number | string | null;
-  vitamin_c?: number | string | null;
-  calcium?: number | string | null;
-  iron?: number | string | null;
-  caffeine_mg?: number | string | null;
-  water_ml?: number | string | null;
-  alcohol_g?: number | string | null;
-  abv_percent?: number | string | null;
-  glycemic_index?: string | null;
-  is_default?: boolean | null;
-  [key: string]: unknown;
-}
-
-export interface ProviderFoodItem {
-  id?: string;
-  name: string;
-  brand?: string | null;
-  images?: unknown[];
-  provider_type?: string | null;
-  provider_external_id?: string | null;
-  variants?: ProviderFoodVariant[];
-  default_variant?: ProviderFoodVariant | null;
-  [key: string]: unknown;
-}
-
-/**
- * Ranks provider results so plain whole foods beat branded products.
- *
- * Providers return branded items ("EGG (SNICKERS)", "BANANA (BETTER'N PEANUT
- * BUTTER)") ahead of the plain whole food a user almost always means, and small
- * models just take the first result. Stable within each tier, so the provider's
- * own relevance order is otherwise preserved.
- */
-export function rankProviderMatches<T extends ProviderFoodItem>(
-  foods: T[],
-  query: string
-): T[] {
-  const q = query.trim().toLowerCase();
-  const qStem = q.replace(/s$/, '');
-  const score = (f: T): number => {
-    const name = String(f?.name ?? '').toLowerCase();
-    const branded = Boolean(f?.brand && String(f.brand).trim());
-    const firstSegment = name.split(',')[0].trim();
-    let s = branded ? 0 : 100; // whole foods first
-    if (firstSegment === q || firstSegment === qStem) s += 20;
-    else if (firstSegment.startsWith(qStem)) s += 10;
-    else if (name.includes(q)) s += 5;
-    return s;
-  };
-  return foods
-    .map((f, i) => ({ f, i, s: score(f) }))
-    .sort((a, b) => b.s - a.s || a.i - b.i)
-    .map((x) => x.f);
-}
+export type { ProviderFoodVariant, ProviderFoodItem };
+export { rankProviderMatches };
 
 /**
  * Sub-gram units a provider sometimes reports as the serving. Quoting a food
@@ -193,8 +126,10 @@ export function pickBestVariant(
 
 export interface ProviderLookupResult {
   source: string;
+  provider_id?: string;
   food: ProviderFoodItem | null;
   alternatives?: ProviderFoodItem[];
+  failed_providers?: string[];
 }
 
 /**
@@ -205,8 +140,10 @@ export interface ProviderLookupResult {
 export async function lookupFoodFromProviders(
   userId: string,
   foodName: string,
-  targets: ProviderLookupTarget[]
+  targets: ProviderLookupTarget[],
+  externalId?: string
 ): Promise<ProviderLookupResult> {
+  const failedProviders: string[] = [];
   for (const provider of targets) {
     try {
       log(
@@ -219,18 +156,21 @@ export async function lookupFoodFromProviders(
         foodName,
         { providerId: provider.id }
       );
-      if (result.foods.length > 0) {
-        const ranked = rankProviderMatches(
-          result.foods as ProviderFoodItem[],
-          foodName
-        );
+      const foods = (result.foods as ProviderFoodItem[]).filter(
+        (food) =>
+          !externalId || String(food.provider_external_id) === externalId
+      );
+      if (foods.length > 0) {
+        const ranked = rankProviderMatches(foods, foodName);
         return {
           source: provider.provider_type,
+          provider_id: provider.id,
           food: ranked[0],
           alternatives: ranked.slice(1),
         };
       }
     } catch (error) {
+      failedProviders.push(provider.provider_type);
       log(
         'warn',
         `[foodProviderLookup] provider ${provider.provider_name} failed:`,
@@ -238,7 +178,11 @@ export async function lookupFoodFromProviders(
       );
     }
   }
-  return { source: 'ai_estimate', food: null };
+  return {
+    source: failedProviders.length ? 'unavailable' : 'not_found',
+    food: null,
+    failed_providers: failedProviders,
+  };
 }
 
 export default {

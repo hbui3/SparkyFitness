@@ -1,19 +1,33 @@
 import { tool } from 'ai';
 import {
   dayToUtcRange,
+  instantForDay,
   todayInZone,
   utcOffsetMinutesFromIsoString,
   BUILT_IN_MOODS,
+  chatScoreToMoodValue,
+  moodValueToChatScore,
+  instantHourMinute,
 } from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import measurementService from '../../services/measurementService.js';
+import { CustomCategoryExistsError } from '../../utils/errors.js';
 import preferenceService from '../../services/preferenceService.js';
-import moodRepository from '../../models/moodRepository.js';
+import moodRepository, {
+  hasMoodContent,
+  type MoodEntryRow,
+} from '../../models/moodRepository.js';
 import fastingRepository from '../../models/fastingRepository.js';
+import fastingAutoCalculationService from '../../services/fastingAutoCalculationService.js';
 import sleepRepository from '../../models/sleepRepository.js';
 import { ERRORS, formatZodError } from './errors.js';
 import { normalizeActionArgs } from './dates.js';
-import { formatConfirmation, formatList, formatSuccess } from './formatting.js';
+import {
+  formatConfirmation,
+  formatJsonResult,
+  formatList,
+  formatSuccess,
+} from './formatting.js';
 import { convertWeight, convertMeasurement } from './unitConversion.js';
 import {
   manageCheckinSchema,
@@ -83,11 +97,40 @@ const VALID_ACTIONS = [
   'list_checkin_diary',
   'get_fasting_status',
   'get_biometrics_history',
+  'get_custom_metrics_history',
 ];
 
 // Optional inputs and nullable DB columns are treated alike: absent.
 function isSet<T>(value: T | null | undefined): value is T {
   return value !== null && value !== undefined;
+}
+
+function formatMoodRatings(
+  energy?: number | null,
+  focus?: number | null
+): string {
+  let out = '';
+  if (isSet(energy)) out += `, energy ${energy}/5`;
+  if (isSet(focus)) out += `, focus ${focus}/5`;
+  return out;
+}
+
+function formatClock(ts: Date | string, tz: string): string {
+  const { hour, minute } = instantHourMinute(ts, tz);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+// `<score>/10<ratings><tags>` followed by ` — notes` when there are notes. The
+// score is omitted for a check-in with no mood, so the ratings' leading ", " is
+// dropped. Each part carries its own leading space, so any may be absent.
+function formatCheckinDetail(row: MoodEntryRow): string {
+  const score =
+    row.mood_value === null ? '' : `${moodValueToChatScore(row.mood_value)}/10`;
+  const body =
+    `${score}${formatMoodRatings(row.energy_value, row.focus_value)}${formatMoodTags(row.mood_tags)}`
+      .replace(/^, /, '')
+      .trim();
+  return `${body ? ' ' + body : ''}${row.notes ? ' — ' + row.notes : ''}`;
 }
 
 function formatMoodTags(tags?: string[] | null): string {
@@ -147,11 +190,11 @@ export async function getBiometricsHistoryRows(
 export function buildCheckinTools(userId: string, tz: string) {
   return {
     sparky_manage_checkin: tool({
-      description: `Health tracking: weight, steps, body measurements, mood, sleep, fasting, custom metrics.
+      description: `Health tracking: weight, steps, body measurements, mood (with optional energy and focus), sleep, fasting, custom metrics.
 
 Actions:
 - log_biometrics(entry_date, weight?, steps?, height?, neck?, waist?, hips?, body_fat?, muscle_mass?, bone_mass?, body_water?, bmr?, weight_unit?:"kg"|"lbs", height_unit?:"cm"|"in", measurements_unit?:"cm"|"in")
-- log_mood(entry_date, mood_value:1-10, notes?)
+- log_mood(entry_date?, mood_value?:1-10, energy_value?:1-5, focus_value?:1-5, notes?, mood_tags?) -- each call logs a NEW check-in (several per day are fine); every field is optional but at least one is required
 - log_sleep(entry_date, duration_seconds?, sleep_score?:0-100, bedtime?, wake_time?, source?)
 - log_fasting(start_time:ISO8601, end_time?, fasting_status?:"ACTIVE"|"COMPLETED"|"CANCELLED", fasting_type?)
 - log_custom_metric(entry_date, category_name, value:string|number, unit?, notes?)
@@ -159,7 +202,8 @@ Actions:
 - list_categories()
 - list_checkin_diary(entry_date?)
 - get_fasting_status() — returns the currently active fasting session if any
-- get_biometrics_history(start_date?, end_date?) — returns weight and measurements history`,
+- get_biometrics_history(start_date?, end_date?) — returns standard measurement history
+- get_custom_metrics_history(start_date?, end_date?) — returns custom measurement history with category metadata and source dates`,
       inputSchema: manageCheckinInput,
       execute: async (rawArgs) => {
         const normalized = normalizeActionArgs(
@@ -169,6 +213,8 @@ Actions:
           (args) => {
             if (
               args.mood_value !== undefined ||
+              args.energy_value !== undefined ||
+              args.focus_value !== undefined ||
               (args.notes !== undefined && args.category_name === undefined)
             ) {
               return 'log_mood';
@@ -412,16 +458,31 @@ Actions:
             }
 
             case 'log_mood': {
-              await moodRepository.createOrUpdateMoodEntry(
-                userId,
-                args.mood_value,
-                args.notes || null,
-                args.entry_date,
-                args.mood_tags || null
-              );
-              const tagsStr = formatMoodTags(args.mood_tags);
+              const checkin = {
+                // The tool speaks in 1-10; the column holds 10-100.
+                moodValue:
+                  args.mood_value === undefined
+                    ? null
+                    : chatScoreToMoodValue(args.mood_value),
+                notes: args.notes?.trim() || null,
+                moodTags: args.mood_tags || null,
+                energyValue: args.energy_value,
+                focusValue: args.focus_value,
+              };
+              if (!hasMoodContent(checkin)) {
+                return ERRORS.VALIDATION(
+                  'A check-in needs at least one of mood, energy, focus, notes or tags.'
+                );
+              }
+              const row = await moodRepository.createCheckin(userId, {
+                ...checkin,
+                entryDate: args.entry_date,
+                // Now for today; local noon for another day, so the time
+                // stays on the day it was logged for.
+                entryTimestamp: instantForDay(args.entry_date, tz),
+              });
               return formatConfirmation(
-                `Mood logged for ${args.entry_date}: ${args.mood_value}/10${tagsStr}${args.notes ? ' — ' + args.notes : ''}.`
+                `Check-in logged for ${args.entry_date} at ${formatClock(row.entry_timestamp, tz)}:${formatCheckinDetail(row)}.`
               );
             }
 
@@ -477,6 +538,10 @@ Actions:
                 wakeTime = wake.toISOString();
               }
 
+              if (!bedtime || !wakeTime) {
+                throw new Error('Could not resolve bedtime and wake time.');
+              }
+
               await measurementService.processSleepEntry(userId, userId, {
                 entry_date: args.entry_date,
                 bedtime,
@@ -506,15 +571,31 @@ Actions:
               const date = args.entry_date || todayInZone(tz);
               const dateLabel = args.entry_date || 'today';
 
-              const bioRow = await measurementService.getCheckInMeasurements(
-                userId,
+              // A daily diary must show only values measured on that day.
+              // getCheckInMeasurements carries older values forward for web/mobile
+              // editors, which would otherwise mislabel their source date here.
+              const exactBiometricRows =
+                await measurementService.getCheckInMeasurementsByDateRange(
+                  userId,
+                  userId,
+                  date,
+                  date
+                );
+              const bioRow = exactBiometricRows[0] ?? null;
+              const checkins = await moodRepository.getCheckinsForDate(
                 userId,
                 date
               );
-              const moodEntry = await moodRepository.getMoodEntryByDate(
-                userId,
-                date
-              );
+              // A derived mood (Garmin, import) only stands in when no manual
+              // check-in that day has a mood.
+              const hasManualMood = checkins.some((c) => c.mood_value !== null);
+              const legacyMood = hasManualMood
+                ? undefined
+                : await moodRepository.getLegacyMoodEntryForDate(userId, date);
+              const derivedMood =
+                legacyMood && legacyMood.source !== 'manual'
+                  ? legacyMood
+                  : undefined;
               const sleepRows =
                 await sleepRepository.getSleepEntriesByUserIdAndDateRange(
                   userId,
@@ -567,7 +648,6 @@ Actions:
                 };
               }
 
-              const moods = moodEntry ? [moodEntry] : [];
               const sleeps = [...sleepRows]
                 .sort(
                   (a: SleepEntryRow, b: SleepEntryRow) =>
@@ -644,13 +724,13 @@ Actions:
               }
 
               // Mood
-              if (moods.length > 0) {
+              if (checkins.length > 0 || derivedMood) {
                 text += '## Mood\n';
-                for (const m of moods) {
-                  const tagsStr = formatMoodTags(m.mood_tags);
-                  text += `- ${m.mood_value}/10${tagsStr}`;
-                  if (m.notes) text += ` — ${m.notes}`;
-                  text += '\n';
+                for (const c of checkins) {
+                  text += `- ${formatClock(c.entry_timestamp, tz)}${formatCheckinDetail(c)}\n`;
+                }
+                if (derivedMood) {
+                  text += `- Derived mood (${derivedMood.source}): ${moodValueToChatScore(derivedMood.mood_value)}/10\n`;
                 }
                 text += '\n';
               }
@@ -702,7 +782,8 @@ Actions:
               // Check if empty
               if (
                 !bio &&
-                moods.length === 0 &&
+                checkins.length === 0 &&
+                !derivedMood &&
                 sleeps.length === 0 &&
                 fasts.length === 0 &&
                 customs.length === 0
@@ -714,7 +795,40 @@ Actions:
             }
 
             case 'get_fasting_status': {
-              const fast = await fastingRepository.getCurrentFast(userId);
+              let fast = await fastingRepository.getCurrentFast(userId);
+              let isAuto = false;
+              let isEatingWindow = false;
+              let eatingWindowRemainingMinutes: number | undefined;
+              let startMealName: string | undefined;
+
+              if (!fast) {
+                try {
+                  const autoFast =
+                    await fastingAutoCalculationService.getCurrentAutoFast(
+                      userId,
+                      tz
+                    );
+                  if (autoFast) {
+                    isAuto = true;
+                    startMealName = autoFast.start_meal_name;
+                    isEatingWindow = Boolean(autoFast.is_eating_window);
+                    eatingWindowRemainingMinutes =
+                      autoFast.eating_window_remaining_minutes;
+                    fast = {
+                      id: autoFast.id,
+                      user_id: autoFast.user_id,
+                      start_time: autoFast.start_time,
+                      end_time: autoFast.end_time,
+                      status: autoFast.status,
+                      fasting_type: autoFast.fasting_type,
+                      created_at: new Date(autoFast.start_time),
+                    } as unknown as typeof fast;
+                  }
+                } catch {
+                  // Fall back gracefully if auto-calculation cannot query
+                }
+              }
+
               if (!fast) {
                 return 'No active fasting session.';
               }
@@ -724,33 +838,63 @@ Actions:
                   user_id: fast.user_id,
                   start_time: fast.start_time,
                   end_time: fast.end_time,
-                  fasting_status: fast.status,
+                  fasting_status: isEatingWindow
+                    ? 'EATING_WINDOW'
+                    : fast.status,
                   fasting_type: fast.fasting_type,
                   created_at: fast.created_at,
+                  ...(isAuto ? { is_auto_calculated: true } : {}),
+                  ...(startMealName ? { start_meal_name: startMealName } : {}),
+                  ...(isEatingWindow
+                    ? {
+                        is_eating_window: true,
+                        eating_window_remaining_minutes:
+                          eatingWindowRemainingMinutes,
+                      }
+                    : {}),
                 },
                 'Fasting Status'
               );
             }
 
             case 'get_biometrics_history': {
-              const history = await getBiometricsHistoryRows(
-                userId,
-                args.start_date,
-                args.end_date
-              );
-              return formatList(
-                history,
-                'Biometrics History',
-                (h: BiometricsRow) => {
-                  const hw = h.weight_unit || 'kg';
-                  let text = `**${h.entry_date}**: `;
-                  if (h.weight) text += `Weight: ${h.weight}${hw} `;
-                  if (h.body_fat_percentage)
-                    text += `| BF: ${h.body_fat_percentage}% `;
-                  if (h.steps) text += `| Steps: ${h.steps}`;
-                  return text;
-                }
-              );
+              const startDate = args.start_date || '1970-01-01';
+              const endDate = args.end_date || '9999-12-31';
+              const [history, customMeasurements] = await Promise.all([
+                getBiometricsHistoryRows(userId, startDate, endDate),
+                measurementService.getCustomMeasurementEntriesByDateRange(
+                  userId,
+                  userId,
+                  startDate,
+                  endDate
+                ),
+              ]);
+              return formatJsonResult({
+                start_date: startDate,
+                end_date: endDate,
+                standard_measurements: history.map((measurement) => ({
+                  ...measurement,
+                  measurement_type: 'standard',
+                  value_date: measurement.entry_date,
+                })),
+                custom_measurements: customMeasurements.map(
+                  (measurement: Record<string, unknown>) => ({
+                    ...measurement,
+                    value_date: measurement.entry_date,
+                  })
+                ),
+              });
+            }
+
+            case 'get_custom_metrics_history': {
+              const history =
+                await measurementService.getCustomMeasurementEntriesByDateRange(
+                  userId,
+                  userId,
+                  args.start_date || '1970-01-01',
+                  args.end_date || '9999-12-31'
+                );
+              return formatSuccess(history, 'Custom Metrics History');
             }
 
             default: {
@@ -762,7 +906,10 @@ Actions:
           }
         } catch (error) {
           log('error', '[Checkin Tool] Error:', error);
-          if (error instanceof Error && error.message.includes('not found')) {
+          if (
+            error instanceof CustomCategoryExistsError ||
+            (error instanceof Error && error.message.includes('not found'))
+          ) {
             return ERRORS.VALIDATION(error.message);
           }
           return ERRORS.DB_ERROR(error);

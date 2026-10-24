@@ -3,6 +3,7 @@ import { instantHourMinute, dayToUtcRange } from '@workspace/shared';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { TimeInput } from '@/components/ui/TimeInput';
 import {
   Droplet,
   ChevronLeft,
@@ -427,7 +428,10 @@ const WaterIntake = ({ selectedDate }: WaterIntakeProps) => {
                       </span>
                       {preset.hydration_factor === 0 && (
                         <span className="text-[9px] text-amber-600 dark:text-amber-400 font-mono">
-                          0% water
+                          {t(
+                            'foodDiary.waterIntake.zeroPercentWater',
+                            '0% water'
+                          )}
                         </span>
                       )}
                     </div>
@@ -449,8 +453,11 @@ const WaterIntake = ({ selectedDate }: WaterIntakeProps) => {
               className="flex items-center justify-between w-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
             >
               <span>
-                {t('foodDiary.waterIntake.logTitle', "Today's drinks")} (
-                {logEntries.length})
+                {t(
+                  'foodDiary.waterIntake.todaySDrinks',
+                  "Today's drinks ({{logEntriesCount}})",
+                  { logEntriesCount: logEntries.length }
+                )}
               </span>
               {showLog ? (
                 <ChevronUp className="h-3.5 w-3.5" />
@@ -468,26 +475,22 @@ const WaterIntake = ({ selectedDate }: WaterIntakeProps) => {
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {editingTimeId === entry.id ? (
-                        <input
-                          type="time"
-                          className="text-xs tabular-nums bg-white dark:bg-slate-700 border border-blue-300 dark:border-blue-600 rounded px-1 py-0.5 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[72px]"
+                        <TimeInput
+                          aria-label={t(
+                            'foodDiary.waterIntake.logTime',
+                            'Drink time'
+                          )}
+                          className="h-auto w-auto text-xs bg-white dark:bg-slate-700 border border-blue-300 dark:border-blue-600 rounded px-1 py-0.5 text-gray-700 dark:text-gray-200 focus-within:ring-1 focus-within:ring-blue-400 focus-within:ring-offset-0"
                           defaultValue={getTimeInputValue(
                             entry.logged_at || entry.created_at
                           )}
-                          onBlur={(e) =>
-                            handleTimeChange(
-                              entry.id,
-                              entry.entry_date,
-                              e.target.value
-                            )
+                          onBlur={(value) =>
+                            handleTimeChange(entry.id, entry.entry_date, value)
                           }
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
-                              handleTimeChange(
-                                entry.id,
-                                entry.entry_date,
-                                (e.target as HTMLInputElement).value
-                              );
+                              // Leaving the field saves through onBlur.
+                              (e.target as HTMLElement).blur();
                             } else if (e.key === 'Escape') {
                               setEditingTimeId(null);
                             }

@@ -2,12 +2,16 @@ import { toast } from '@/hooks/use-toast';
 import * as logging from '@/utils/logging';
 import { getUserLoggingLevel } from '@/utils/userPreferences';
 
+import i18n from 'i18next';
 interface ApiCallOptions extends RequestInit {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body?: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params?: Record<string, any>;
   suppress404Toast?: boolean; // New option to suppress toast for 404 errors
+  // Still throws, but shows no toast for an HTTP or network error: for
+  // secondary requests whose failure the caller already shows in place.
+  suppressErrorToast?: boolean;
   externalApi?: boolean;
   isFormData?: boolean; // New option to indicate if the body is FormData
   responseType?: 'json' | 'text' | 'blob'; // Add responseType option
@@ -226,7 +230,12 @@ export async function apiCall<T = any>(
         try {
           errorData = await response.json();
         } catch (e) {
-          errorData = { message: 'Failed to parse JSON error response.' };
+          errorData = {
+            message: i18n.t(
+              'hooks.api.failedToParseJSONError',
+              'Failed to parse JSON error response.'
+            ),
+          };
         }
       } else {
         errorData = { message: await response.text() };
@@ -295,9 +304,12 @@ export async function apiCall<T = any>(
         // makes real errors impossible to spot. Only reads are silenced --
         // a write is something the visitor just clicked, and swallowing that
         // leaves them staring at a button that appears to do nothing.
-        if (!isDemoRestriction || method !== 'GET') {
+        if (
+          (!isDemoRestriction || method !== 'GET') &&
+          !options?.suppressErrorToast
+        ) {
           toast({
-            title: 'API Error',
+            title: i18n.t('hooks.api.apiError', 'API Error'),
             description: errorMessage,
             variant: 'destructive',
           });
@@ -332,17 +344,26 @@ export async function apiCall<T = any>(
     //console.log(`API Call: Returning JSON response for ${url}:`, jsonResponse); // Added console.log
     return jsonResponse;
   } catch (err: unknown) {
-    if (err instanceof HttpApiError) {
+    // Cancellation (navigation, dismissed recording, etc.) is not a network
+    // failure. Preserve AbortError and let the caller handle timeouts locally.
+    if (options?.signal?.aborted || err instanceof HttpApiError) {
       throw err;
     }
 
     const errorMessage = err instanceof Error ? err.message : String(err);
     logging.error(userLoggingLevel, 'API call network error:', err); // Log the raw error object for better debugging
-    toast({
-      title: 'Network Error',
-      description: errorMessage || 'Could not connect to the server.',
-      variant: 'destructive',
-    });
+    if (!options?.suppressErrorToast) {
+      toast({
+        title: i18n.t('hooks.api.networkError', 'Network Error'),
+        description:
+          errorMessage ||
+          i18n.t(
+            'hooks.api.couldNotConnectToThe',
+            'Could not connect to the server.'
+          ),
+        variant: 'destructive',
+      });
+    }
     throw new Error(errorMessage, { cause: err });
   }
 }

@@ -130,6 +130,31 @@ describe('collectHealthData', () => {
     expect(outcomes[0].data).toEqual(rawRecords);
   });
 
+  test('workouts are read from the start of the local day, not the mid-day session start', async () => {
+    const provider = fakeProvider({
+      readRaw: jest.fn().mockResolvedValue({ records: [{ id: 'w1' }] }),
+    });
+    const workouts = metric({
+      id: 'exerciseSession',
+      recordType: 'Workout',
+      type: 'exercise_session',
+    });
+
+    await collectHealthData(provider, [workouts], windows, {
+      timeoutLabelPrefix: 'Test query',
+      telemetry: createTelemetryRunContext(),
+    });
+
+    // The server drops a source's workouts for each day an upload touches,
+    // except the ones re-sent, so a mid-day start would erase the morning's.
+    expect(provider.readRaw).toHaveBeenCalledWith(
+      'Workout',
+      windows.aggregatedStart,
+      windows.end,
+      expect.anything()
+    );
+  });
+
   test('cumulative-day error envelope propagates WITHOUT a raw fallback (null-vs-error contract)', async () => {
     const provider = fakeProvider({
       readCumulativeByDay: jest

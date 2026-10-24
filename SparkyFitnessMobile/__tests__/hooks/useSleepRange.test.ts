@@ -162,6 +162,41 @@ describe('useSleepRange', () => {
       ]);
     });
 
+    test('drops in_bed envelopes and plots only scored stages', () => {
+      const night = nightOn(DAY, {
+        stage_events: [
+          buildStageEvent({
+            id: 'envelope',
+            stage_type: 'in_bed',
+            start_time: `${addDays(DAY, -1)}T22:10:00.000Z`,
+            end_time: `${DAY}T06:03:00.000Z`,
+          }),
+          buildStageEvent({
+            id: 'rem',
+            stage_type: 'rem',
+            start_time: `${DAY}T02:20:00.000Z`,
+            end_time: `${DAY}T03:50:00.000Z`,
+          }),
+          buildStageEvent({
+            id: 'light',
+            stage_type: 'light',
+            start_time: `${DAY}T03:50:00.000Z`,
+            end_time: `${DAY}T05:45:00.000Z`,
+          }),
+        ],
+      });
+
+      const summary = buildSleepTimelineSummary([night], DAY, 1);
+
+      expect(summary.days[0].segments.map((segment) => segment.stage)).toEqual([
+        'rem',
+        'light',
+      ]);
+      expect(summary.days[0].segments[0].startMs).toBe(
+        msOf(`${DAY}T02:20:00.000Z`)
+      );
+    });
+
     test('merges back-to-back events of the same stage into one block', () => {
       // Sources emit a fresh event per sampling interval, so an unbroken stretch of light
       // sleep arrives as dozens of adjacent events.

@@ -8,8 +8,12 @@ import {
   type DraftExercisesAction,
 } from './draftExercisesSlice';
 import { getTodayDate, normalizeDate } from '../utils/dateUtils';
-import { weightFromKg, distanceFromKm } from '../utils/unitConversions';
-import { buildExercisesPayload } from '../utils/workoutSession';
+import { weightFromKg } from '../utils/unitConversions';
+import {
+  buildExercisesPayload,
+  resolveSnapshotModality,
+  setDistanceFromKm,
+} from '../utils/workoutSession';
 import type { WorkoutDraft, WorkoutDraftExercise } from '../types/drafts';
 import { getAppLocale } from '../localization';
 import type { PresetSessionResponse } from '@workspace/shared';
@@ -155,6 +159,7 @@ export function workoutFormReducer(
           supersetGroup: exercise.superset_group ?? null,
           notes: exercise.notes,
           snapshot: exercise.exercise_snapshot ?? null,
+          exerciseEquipment: exercise.exercise_snapshot?.equipment ?? null,
           durationMinutes: exercise.duration_minutes ?? 0,
           calories:
             (exercise.calories_burned ?? 0) > 0
@@ -169,6 +174,7 @@ export function workoutFormReducer(
             duration: set.duration,
             notes: set.notes,
             rpe: set.rpe,
+            rir: set.rir ?? null,
             completedAt: set.completed_at,
             isPr: set.is_pr,
             weight:
@@ -184,9 +190,11 @@ export function workoutFormReducer(
               set.distance != null
                 ? String(
                     parseFloat(
-                      distanceFromKm(set.distance, action.distanceUnit).toFixed(
-                        2
-                      )
+                      setDistanceFromKm(
+                        set.distance,
+                        action.distanceUnit,
+                        resolveSnapshotModality(exercise.exercise_snapshot)
+                      ).toFixed(2)
                     )
                   )
                 : '',
@@ -207,6 +215,7 @@ export function workoutFormReducer(
           exerciseCategory: exercise.category ?? null,
           exerciseModality: exercise.modality ?? null,
           images: exercise.image_url ? [exercise.image_url] : [],
+          exerciseEquipment: exercise.equipment ?? null,
           supersetGroup: exercise.superset_group ?? null,
           sets: exercise.sets.map((set, setIdx) => ({
             clientId: action.clientIds[exerciseIdx].setClientIds[setIdx],
@@ -230,9 +239,14 @@ export function workoutFormReducer(
               set.distance != null
                 ? String(
                     parseFloat(
-                      distanceFromKm(set.distance, action.distanceUnit).toFixed(
-                        2
-                      )
+                      setDistanceFromKm(
+                        set.distance,
+                        action.distanceUnit,
+                        resolveSnapshotModality({
+                          modality: exercise.modality,
+                          category: exercise.category,
+                        })
+                      ).toFixed(2)
                     )
                   )
                 : '',
@@ -274,6 +288,7 @@ export function useWorkoutForm(options?: UseWorkoutFormOptions) {
     replaceExercise,
     clearExerciseCompletions,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,
@@ -283,7 +298,9 @@ export function useWorkoutForm(options?: UseWorkoutFormOptions) {
     supersetWith,
     ungroupExercise,
     reorderExercises,
-  } = useDraftExerciseActions(dispatch, state.exercises);
+  } = useDraftExerciseActions(dispatch, state.exercises, {
+    preserveSetsOnReplace: true,
+  });
 
   const { clearPersistedDraft } = useDraftPersistence({
     state,
@@ -361,6 +378,7 @@ export function useWorkoutForm(options?: UseWorkoutFormOptions) {
     replaceExercise,
     clearExerciseCompletions,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,

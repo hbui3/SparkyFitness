@@ -76,7 +76,7 @@ jobs:
             if (
               areaSection.includes('Integrations') ||
               /\bintegrations?\b/i.test(areaSection) ||
-              /\b(garmin|google health|oura|polar|whoop|suunto|strava|cronometer|resmed|amazfit)\b/i.test(title)
+              /\b(garmin|google health|oura|polar|whoop|suunto|strava|cronometer|resmed|amazfit|coros)\b/i.test(title)
             ) {
               desiredManagedLabels.add('integrations');
             }

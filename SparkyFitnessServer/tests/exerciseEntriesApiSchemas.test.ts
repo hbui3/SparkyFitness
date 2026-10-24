@@ -531,6 +531,54 @@ describe('Exercise entry API schemas', () => {
     });
   });
 
+  describe('set RIR (reps in reserve)', () => {
+    const baseSetRequest = { set_number: 1, reps: 8, weight: 100 };
+
+    it('accepts 0-10 and null', () => {
+      for (const rir of [0, 2.5, 10, null]) {
+        expect(
+          runSchema('exerciseEntrySetRequestSchema', { ...baseSetRequest, rir })
+            .success
+        ).toBe(true);
+      }
+    });
+
+    it('rejects values outside 0-10 (numeric(3,1) column)', () => {
+      for (const rir of [-1, 11, 150]) {
+        expect(
+          runSchema('exerciseEntrySetRequestSchema', { ...baseSetRequest, rir })
+            .success
+        ).toBe(false);
+      }
+    });
+  });
+
+  describe('session location', () => {
+    const baseSession = { workout_preset_id: 42, entry_date: '2026-09-24' };
+
+    it('trims the location and stores blank as null', () => {
+      const trimmed = runSchema('createPresetSessionRequestSchema', {
+        ...baseSession,
+        location: '  Home Gym  ',
+      });
+      expect(trimmed.success).toBe(true);
+      expect(trimmed.data.location).toBe('Home Gym');
+
+      const blank = runSchema('updatePresetSessionRequestSchema', {
+        location: '   ',
+      });
+      expect(blank.success).toBe(true);
+      expect(blank.data.location).toBeNull();
+    });
+
+    it('rejects a location longer than the varchar(255) column', () => {
+      const result = runSchema('updatePresetSessionRequestSchema', {
+        location: 'x'.repeat(256),
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe('set distance (km)', () => {
     const baseSetRequest = {
       set_number: 1,

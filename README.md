@@ -1,32 +1,25 @@
-<div align="right">
-  <details>
-    <summary >🌐 Language</summary>
-    <div>
-      <div align="right">
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=en">English</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=zh-CN">简体中文</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=zh-TW">繁體中文</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=ja">日本語</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=ko">한국어</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=hi">हिन्दी</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=th">ไทย</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=fr">Français</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=de">Deutsch</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=es">Español</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=it">Italiano</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=ru">Русский</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=pt">Português</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=nl">Nederlands</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=pl">Polski</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=ar">العربية</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=fa">فارسی</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=tr">Türkçe</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=vi">Tiếng Việt</a></p>
-        <p><a href="https://openaitx.github.io/view.html?user=CodeWithCJ&project=SparkyFitness&lang=id">Bahasa Indonesia</a></p>
-      </div>
-    </div>
-  </details>
-</div>
+<p align="center">
+  <b>English</b> ·
+  <a href="docs/readme/README_zh-CN.md">简体中文</a> ·
+  <a href="docs/readme/README_zh-TW.md">繁體中文</a> ·
+  <a href="docs/readme/README_ja.md">日本語</a> ·
+  <a href="docs/readme/README_ko.md">한국어</a> ·
+  <a href="docs/readme/README_hi.md">हिन्दी</a> ·
+  <a href="docs/readme/README_th.md">ไทย</a> ·
+  <a href="docs/readme/README_fr.md">Français</a> ·
+  <a href="docs/readme/README_de.md">Deutsch</a> ·
+  <a href="docs/readme/README_es.md">Español</a> ·
+  <a href="docs/readme/README_it.md">Italiano</a> ·
+  <a href="docs/readme/README_ru.md">Русский</a> ·
+  <a href="docs/readme/README_pt-BR.md">Português (Brasil)</a> ·
+  <a href="docs/readme/README_nl.md">Nederlands</a> ·
+  <a href="docs/readme/README_pl.md">Polski</a> ·
+  <a href="docs/readme/README_ar.md">العربية</a> ·
+  <a href="docs/readme/README_fa.md">فارسی</a> ·
+  <a href="docs/readme/README_tr.md">Türkçe</a> ·
+  <a href="docs/readme/README_vi.md">Tiếng Việt</a> ·
+  <a href="docs/readme/README_id.md">Bahasa Indonesia</a>
+</p>
 
 # SparkyFitness
 
@@ -39,6 +32,7 @@ SparkyFitness is a self-hosted fitness tracking platform made up of:
 - A backend server (API + data storage)
 - A web-based frontend
 - Native mobile apps for iOS and Android
+- Companion apps for Apple Watch and Wear OS
 
 It stores and manages health data on infrastructure you control, without relying on third party services.
 
@@ -46,6 +40,7 @@ It stores and manages health data on infrastructure you control, without relying
 
 - Nutrition, exercise, hydration, sleep, fasting, mood and body measurement tracking
 - Goal setting and daily check-ins
+- [Apple Watch and Wear OS apps](https://codewithcj.github.io/SparkyFitness/mobile-app/watch-apps): goals, water, weight, fasting, medications, workouts and watch face complications
 - Interactive charts and long-term reports
 - Multiple user profiles and family access
 - Light and dark themes
@@ -53,7 +48,7 @@ It stores and manages health data on infrastructure you control, without relying
 
 ## How SparkyFitness Compares
 
-**SparkyFitness is source-available, not open source** — the [licence](LICENSE) is non-commercial and requires permission for commercial use.
+**SparkyFitness is source-available, not open source** — the [license](LICENSE) is non-commercial and requires permission for commercial use.
 
 Most apps do one thing. One good nutrition app runs $40–$100 a year; covering everything SparkyFitness covers means three or four subscriptions, per person, and still no single report across them. SparkyFitness does it in one app, free, for the whole household.
 
@@ -98,9 +93,12 @@ SparkyFitness can sync data from multiple health and fitness platforms:
 - **Mealie**
 - **Tandoor**
 - **Strava** (partially tested)
+- **COROS**
 - **Norish**
 - **Yazio** (uses unofficial API)
 - **Swiss Food Database**
+- **Canadian Nutrient File (Health Canada)**
+- **Swedish Food Agency (Livsmedelsverket)**
 - **Free Exercise DB** (Github)
 - **Wger**
 
@@ -128,19 +126,36 @@ Get a SparkyFitness server running in minutes using Docker Compose:
 # 1. Create a new folder
 mkdir sparkyfitness && cd sparkyfitness
 
-# 2. Download Docker files only
-curl -L -o docker-compose.yml https://github.com/CodeWithCJ/SparkyFitness/releases/latest/download/docker-compose.prod.yml
-curl -L -o .env https://github.com/CodeWithCJ/SparkyFitness/releases/latest/download/default.env.example
+# 2. Download docker-compose.yml
+curl -L -o docker-compose.yml https://raw.githubusercontent.com/CodeWithCJ/SparkyFitness/main/docker/docker-compose.prod.yml
 
-# 3. (Optional) Edit .env to customize database credentials, ports, etc.
+# 3. Set up your .env configuration (Choose one option):
+# Option A (Recommended): Generate custom .env with 1-click secure keys in browser:
+# 👉 https://codewithcj.github.io/SparkyFitness/install/env-generator
 
-# 4. Start the app
+# Option B: Minimal template — 5 values, everything else uses the defaults
+# docker-compose already applies. Fine for most self-hosted installs.
+curl -L -o .env https://raw.githubusercontent.com/CodeWithCJ/SparkyFitness/main/docker/.env.simple.example
+
+# Option C: Full reference — every supported variable, commented out with its
+# default. Start here for SSO, SMTP, an external database or a reverse proxy.
+# curl -L -o .env https://raw.githubusercontent.com/CodeWithCJ/SparkyFitness/main/docker/.env.example
+
+# 4. Replace the placeholders (skip if you used Option A — the generator
+# already filled these in). The server refuses to start while they are left
+# as-is, and the database would otherwise initialize with a published password.
+#   SPARKY_FITNESS_DB_PASSWORD        any strong password
+#   SPARKY_FITNESS_API_ENCRYPTION_KEY openssl rand -hex 32     (64 hex chars)
+#   BETTER_AUTH_SECRET                openssl rand -base64 32  (44 chars)
+#   SPARKY_FITNESS_FRONTEND_URL       the URL you will open the app at
+
+# 5. Start the app
 docker compose pull && docker compose up -d
 
-# Access application at http://localhost:8080
+# Access application at http://localhost:3004
 ```
 
-_Note: For other self-hosted installation methods, refer to the documentation at [https://codewithcj.github.io/SparkyFitness/](https://codewithcj.github.io/SparkyFitness/)._
+_Note: For complete configuration options, reverse proxies, and alternative install methods, visit the [Documentation Site](https://codewithcj.github.io/SparkyFitness/)._
 
 ### 2. Cloud (for non-technical users)
 
@@ -171,6 +186,7 @@ For full installation guides, configuration options, and development docs, pleas
 ### Quick Links
 
 - **[Installation Guide](https://codewithcj.github.io/SparkyFitness/install/docker-compose)** - Deployment and configurations
+- **[Interactive .env Generator](https://codewithcj.github.io/SparkyFitness/install/env-generator)** - Client-side `.env` configuration builder
 - **[Features Overview](https://codewithcj.github.io/SparkyFitness/features)** - Complete feature documentation
 - **[Development Workflow](https://codewithcj.github.io/SparkyFitness/developer/getting-started)** - Developer guide and contribution process
 - **[iOS App Info](https://github.com/CodeWithCJ/SparkyFitness/wiki/Apple-Health-Integration)** and **[Android App Info](https://github.com/CodeWithCJ/SparkyFitness/wiki/Android-Mobile-App)**
@@ -210,7 +226,7 @@ For full installation guides, configuration options, and development docs, pleas
 ## Contributors
 
 <a href="https://github.com/CodeWithCJ/SparkyFitness/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=CodeWithCJ/SparkyFitness" width="100%"/>
+  <img src="https://contrib.rocks/image?repo=CodeWithCJ/SparkyFitness" width="100%" alt="SparkyFitness contributors"/>
 </a>
 
 ## ⚠️ Known Issues / Beta Features ⚠️

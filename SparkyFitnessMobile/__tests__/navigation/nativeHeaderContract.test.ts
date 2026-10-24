@@ -47,12 +47,16 @@ const NATIVE_TABS_ROUTE_EXCLUSIONS = {
     'Root-stack activity detail route presented above the tab host.',
   FastingDetail:
     'Root-stack dashboard detail route presented above the tab host.',
+  MindfulnessDetail:
+    'Root-stack dashboard detail route presented above the tab host.',
   SleepDetail: 'Root-stack diary detail route presented above the tab host.',
   Logs: 'Root-stack settings route presented above the tab host.',
   Sync: 'Root-stack settings route presented above the tab host.',
   MeasurementsAdd: 'Root-stack measurement modal presented from the tab host.',
   CalorieSettings: 'Root-stack settings route presented above the tab host.',
   FoodSettings: 'Root-stack settings route presented above the tab host.',
+  AllergenSettings: 'Root-stack settings route presented above the tab host.',
+  ChatSettings: 'Root-stack voice settings route presented above the tab host.',
   DashboardSettings: 'Root-stack settings route presented above the tab host.',
   WorkoutSettings: 'Root-stack settings route presented above the tab host.',
   ServerSettings: 'Root-stack settings route presented above the tab host.',
@@ -66,6 +70,14 @@ const NATIVE_TABS_ROUTE_EXCLUSIONS = {
     'Root-stack main cycle and wellness dashboard presented above the tab host.',
   PregnancySetup:
     'Root-stack setup wizard for pregnancy parameters presented above the tab host.',
+  SymptomLog:
+    'Root-stack symptom create/edit modal presented above the tab host.',
+  SymptomHistory:
+    'Root-stack symptom history route presented above the tab host.',
+  ManageSymptoms:
+    'Root-stack symptom settings route presented above the tab host.',
+  SymptomDefinitionEditor:
+    'Root-stack symptom definition modal presented above the tab host.',
 } satisfies Record<string, string>;
 
 function readMobileFile(relativePath: string): string {

@@ -17,6 +17,9 @@ import {
 } from '../integrations/fatsecret/fatsecretService.js';
 import { searchYazioFoods } from '../integrations/yazio/yazioService.js';
 import { searchSwissFoods } from '../integrations/swissfood/swissFoodService.js';
+import { searchCanadianNutrientFoods } from '../integrations/cnf/cnfService.js';
+import { searchLivsmedelsverketFoods } from '../integrations/livsmedelsverket/livsmedelsverketService.js';
+import { isPublicFoodProvider } from '@workspace/shared';
 import {
   searchFatSecretFoods,
   getFatSecretNutrients,
@@ -24,6 +27,10 @@ import {
   searchTandoorFoods,
   searchNorishFoods,
 } from './foodIntegrationService.js';
+import {
+  rankProviderMatches,
+  type ProviderFoodItem,
+} from '../utils/foodRanking.js';
 
 import type { ProviderType } from '../constants/foodProviders.js';
 import type { OpenFoodFactsCredentialScope } from '../integrations/openfoodfacts/openFoodFactsAuth.js';
@@ -90,11 +97,7 @@ export async function resolveProviderCredentials(
   providerId: string | undefined,
   providerType: ProviderType
 ): Promise<ProviderCredentials> {
-  if (providerType === 'openfoodfacts') {
-    return {};
-  }
-
-  if (providerType === 'swissfood' && !providerId) {
+  if (isPublicFoodProvider(providerType) && !providerId) {
     return {};
   }
 
@@ -352,8 +355,10 @@ export async function searchProviderFoods(
         .filter(
           (x): x is NonNullable<typeof x> => x !== null && x !== undefined
         );
+      // Only the first few results get a detail call, so they must be the
+      // ones that will rank first.
       foods = await enrichFatSecretResults(
-        mapped,
+        rankProviderMatches(mapped as ProviderFoodItem[], query),
         credentials.app_id,
         credentials.app_key
       );
@@ -440,7 +445,36 @@ export async function searchProviderFoods(
       pagination = result.pagination;
       break;
     }
+
+    case 'canadian-nutrient-file': {
+      const result = await searchCanadianNutrientFoods(
+        query,
+        page,
+        pageSize,
+        language,
+        credentials.base_url || undefined
+      );
+      foods = result.foods || [];
+      pagination = result.pagination;
+      break;
+    }
+
+    case 'livsmedelsverket': {
+      const result = await searchLivsmedelsverketFoods(
+        query,
+        page,
+        pageSize,
+        language,
+        credentials.base_url || undefined
+      );
+      foods = result.foods || [];
+      pagination = result.pagination;
+      break;
+    }
   }
 
-  return { foods, pagination };
+  // All VALID_PROVIDER_TYPES are food providers, so this covers every case above.
+  const ranked = rankProviderMatches(foods as ProviderFoodItem[], query);
+
+  return { foods: ranked, pagination };
 }

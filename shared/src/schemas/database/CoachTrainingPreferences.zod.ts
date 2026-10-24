@@ -1,24 +1,24 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachTrainingPreferenceKindSchema = z.enum([
-  "exercise",
-  "equipment",
-  "training_style",
-  "schedule",
-  "constraint",
+  'exercise',
+  'equipment',
+  'training_style',
+  'schedule',
+  'constraint',
 ]);
 
 export const coachTrainingPreferenceSentimentSchema = z.enum([
-  "prefer",
-  "avoid",
-  "require",
-  "neutral",
+  'prefer',
+  'avoid',
+  'require',
+  'neutral',
 ]);
 
 export const coachTrainingPreferenceSourceSchema = z.enum([
-  "user",
-  "feedback",
-  "coach",
+  'user',
+  'feedback',
+  'coach',
 ]);
 
 export const coachTrainingPreferencesSchema = z.object({

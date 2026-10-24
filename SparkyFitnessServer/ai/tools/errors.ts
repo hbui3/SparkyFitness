@@ -116,14 +116,22 @@ export function isToolErrorText(text: string): boolean {
 
 /**
  * Renders a zod parse failure as a chat-visible VALIDATION error,
- * formatted as "path: message; path2: message2".
+ * formatted as "path: message; path2: message2". `fieldNames` renames path
+ * keys, for a tool that validates with a shared schema whose fields it
+ * publishes under other names.
  */
-export function formatZodError(error: ZodError): string {
+export function formatZodError(
+  error: ZodError,
+  fieldNames: Readonly<Record<string, string>> = {}
+): string {
   return ERRORS.VALIDATION(
     error.issues
-      .map((i) =>
-        i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message
-      )
+      .map((i) => {
+        const path = i.path.map((key) =>
+          typeof key === 'string' ? (fieldNames[key] ?? key) : key
+        );
+        return path.length > 0 ? `${path.join('.')}: ${i.message}` : i.message;
+      })
       .join('; ')
   );
 }

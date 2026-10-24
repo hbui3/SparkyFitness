@@ -58,12 +58,24 @@ Any hit in section A is blocking until explained. Say what you found and where; 
 - **Rule of two**: If the PR is the *second* copy of non-trivial logic, it should extract a shared helper, not paste. Duplicated copies drift.
 - **Cross-package contracts**: An API request/response change needs the shared Zod schema, the server route/schema, **and both** web and mobile consumers. A PR that updates only one side is incomplete.
 - **Migrations**: Every step of [new-migration-checklist.md](new-migration-checklist.md) — migration file, `db/rls_policies.sql`, `shared/src/schemas/database/<Table>.zod.ts`, and the two docs files (family-friends-sharing + database-security-tiers with a Tier 1/2/3 classification). `db_schema_backup.sql` must **not** be hand-edited in the PR; CI regenerates it after merge.
-- **Typing**: No new `any`, no new `// eslint-disable-next-line @typescript-eslint/no-explicit-any`, no copying a legacy `any` signature forward.
+- **Environment Variables**: When new env vars are added or existing ones modified, verify that all downstream locations are updated in tandem: `docker/.env.example` (and `docker/.env.simple.example` if mandatory), `docker/docker-compose.*.yml`, `docs/src/install/environment-variables.md`, `docs/components/EnvGenerator.vue`, and `helm/chart/` (templates and `values.yaml` if applicable).
+- **Typing**: No new `any`, no new `// eslint-disable-next-line @typescript-eslint/no-explicit-any`, and no copying a legacy `any` signature forward. When modifying existing files, proactively eliminate old `any` declarations in the touched functions/scopes and update them to reflect their proper data types, explicit interfaces, or schemas from `@workspace/shared`.
 - **Dates**: No `toISOString().split('T')[0]` on user-facing or business-logic dates. `YYYY-MM-DD` stays a calendar-day string until a DB/external-API boundary; use the shared timezone helpers.
 - **Guide upkeep**: A new domain, route family, or table should update the affected `AGENTS.md` in the same PR.
 
-## C. Logic & Correctness
+## C. Logic, Validity & Cross-Platform Blast Radius
 
+- **Problem & Solution Validity**: Is the reported issue real, reproducible, and accurately diagnosed? Does the PR address the true root cause rather than applying a superficial band-aid or introducing unnecessary churn?
+- **Cross-Platform & Multi-Client Impact**:
+  - **Server**: Database connection leaks, unindexed queries on large tables, lock contention, RLS bypasses, breaking changes to existing data or migrations.
+  - **Frontend Web**: Browser compatibility, responsive layout regressions, stale TanStack query caches, broken dev/production proxy routes.
+  - **Mobile (Expo/React Native)**: Backward compatibility (old app builds in the wild talking to updated server endpoints), offline sync, platform differences (iOS vs. Android).
+- **Deployment & Installation Blast Radius**:
+  - **Docker Compose**: Container networking, DNS resolution, volume bind mounts, non-root user permissions (`PUID`/`GUID`).
+  - **NixOS (`nix/module.nix`)**: Systemd unit compatibility, local PostgreSQL provisioning, loopback proxying.
+  - **Bare-Metal**: File paths and port assumptions that fail outside containerized setups.
+  - **Kubernetes / Helm**: Ingress definitions, health/readiness probe routes, ConfigMap/Secret mounts.
+  - **Reverse Proxies / CDNs**: Real client IP headers (`CF-Connecting-IP`, `X-Forwarded-For`), SSL headers (`X-Forwarded-Ssl`), CORS on LAN/private subnets.
 - **Error paths**: What happens on a rejected promise, a 4xx/5xx from an upstream, a failed transaction? Is the client released in a `finally`?
 - **Boundaries**: null/undefined, empty arrays, zero, pagination bounds, off-by-one, division by a possibly-zero total.
 - **Cache invalidation**: Does every write path invalidate what the matching read path caches?

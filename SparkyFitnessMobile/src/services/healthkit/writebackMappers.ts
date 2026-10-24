@@ -1,3 +1,4 @@
+import { isEntryTimeString } from '@workspace/shared';
 import type {
   QuantitySampleForSaving,
   QuantityTypeIdentifierWriteable,
@@ -93,13 +94,22 @@ export const DIETARY_WRITE_IDENTIFIERS: QuantityTypeIdentifierWriteable[] = [
   ...Object.values(DIETARY_HK_MAP).map((m) => m.identifier),
 ];
 
-// Food entries carry only a calendar date; HealthKit needs an instant. Anchor each
-// meal to a representative local time so records order sensibly within the day.
+// Default meal start times when an entry does not have a recorded entry_time.
+// Anchor each meal to a representative local time so records order sensibly within the day.
 const MEAL_START_HM: Record<string, [number, number]> = {
   breakfast: [8, 0],
   lunch: [12, 30],
   dinner: [19, 0],
   snacks: [15, 0],
+};
+
+const resolveFoodEntryTime = (entry: FoodEntry): [number, number, number] => {
+  if (entry.entry_time && isEntryTimeString(entry.entry_time)) {
+    const parts = entry.entry_time.split(':').map(Number);
+    return [parts[0], parts[1], parts[2] || 0];
+  }
+  const [hour, minute] = MEAL_START_HM[entry.meal_type] ?? MEAL_START_HM.snacks;
+  return [hour, minute, 0];
 };
 
 // Consumed amount of a per-serving snapshot value — same formula the diary uses. For
@@ -115,15 +125,20 @@ const scaleConsumed = (
   return (value * quantity) / servingSize;
 };
 
-const localDayInstant = (date: string, hour: number, minute: number): Date => {
+const localDayInstant = (
+  date: string,
+  hour: number,
+  minute: number,
+  second = 0
+): Date => {
   // Construct from parts in local time. `new Date('YYYY-MM-DDT00:00:00')` is parsed
   // as UTC in some JS engines, which shifts the calendar day for non-UTC offsets.
   const [year, month, day] = date.split('-').map(Number);
-  return new Date(year, month - 1, day, hour, minute, 0, 0);
+  return new Date(year, month - 1, day, hour, minute, second, 0);
 };
 
-// A point-in-time anchor at a representative local meal time, returned as an equal
-// start/end pair. HealthKit dietary samples are instantaneous (start === end), so —
+// A point-in-time anchor at the entry's logged time or a representative local meal time,
+// returned as an equal start/end pair. HealthKit dietary samples are instantaneous (start === end), so —
 // unlike Android's interval records — we emit a zero-length sample, matching how
 // MyFitnessPal writes nutrition (Apple Health then shows a single time, not a range).
 // Returns null when the anchor is still in the future, so a snack logged early defers
@@ -132,9 +147,10 @@ const recordInterval = (
   date: string,
   hour: number,
   minute: number,
+  second = 0,
   now: Date = new Date()
 ): { start: Date; end: Date } | null => {
-  const start = localDayInstant(date, hour, minute);
+  const start = localDayInstant(date, hour, minute, second);
   if (start.getTime() > now.getTime()) return null;
   return { start, end: start };
 };
@@ -163,7 +179,7 @@ export interface WaterSampleDescriptor {
 
 /**
  * Map one Sparky food entry to a HealthKit Food-correlation descriptor.
- * Returns null when the entry can't be scaled (serving_size === 0), its meal-time
+ * Returns null when the entry can't be scaled (serving_size === 0), its time
  * anchor is still in the future (deferred to a later sync), or it has no positive
  * nutrient values (a correlation needs at least one contained sample).
  */
@@ -173,8 +189,8 @@ export const foodEntryToNutrientSamples = (
 ): NutrientSampleDescriptor | null => {
   if (!entry.serving_size) return null; // 0 / null / undefined — can't scale
 
-  const [hour, minute] = MEAL_START_HM[entry.meal_type] ?? MEAL_START_HM.snacks;
-  const interval = recordInterval(entry.entry_date, hour, minute, now);
+  const [hour, minute, second] = resolveFoodEntryTime(entry);
+  const interval = recordInterval(entry.entry_date, hour, minute, second, now);
   if (!interval) return null; // anchor still in the future — defer to a later sync
 
   const { start, end } = interval;
@@ -240,7 +256,7 @@ export const waterMlToSample = (
 ): WaterSampleDescriptor | null => {
   if (ml <= 0) return null;
 
-  const interval = recordInterval(date, 12, 0, now); // noon anchor
+  const interval = recordInterval(date, 12, 0, 0, now); // noon anchor
   if (!interval) return null; // noon anchor still in the future — defer to a later sync
 
   return {

@@ -1,16 +1,16 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachMemoryCategorySchema = z.enum([
-  "preference",
-  "routine",
-  "constraint",
-  "injury",
-  "goal",
-  "achievement",
-  "context",
+  'preference',
+  'routine',
+  'constraint',
+  'injury',
+  'goal',
+  'achievement',
+  'context',
 ]);
 
-export const coachMemorySourceSchema = z.enum(["user", "coach", "import"]);
+export const coachMemorySourceSchema = z.enum(['user', 'coach', 'import']);
 
 export const coachMemoriesSchema = z.object({
   id: z.string().uuid(),

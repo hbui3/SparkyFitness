@@ -37,6 +37,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+import { useTranslation } from 'react-i18next';
 interface ExternalProviderListProps {
   showAddForm: boolean;
   isAdminMode?: boolean;
@@ -53,6 +54,7 @@ const SortableProviderRow = ({
   children,
   disabled = false,
 }: SortableProviderRowProps) => {
+  const { t } = useTranslation();
   const {
     attributes,
     listeners,
@@ -80,7 +82,10 @@ const SortableProviderRow = ({
       <div className="flex items-start gap-3">
         <button
           type="button"
-          aria-label="Drag to reorder provider"
+          aria-label={t(
+            'settings.externalProviderList.dragToReorderProvider',
+            'Drag to reorder provider'
+          )}
           className="mt-1 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing disabled:opacity-40"
           {...attributes}
           {...listeners}
@@ -98,6 +103,7 @@ const ExternalProviderList = ({
   showAddForm,
   isAdminMode = false,
 }: ExternalProviderListProps) => {
+  const { t } = useTranslation();
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<ExternalDataProvider>>({});
 
@@ -235,10 +241,12 @@ const ExternalProviderList = ({
         editData.provider_type === 'mealie' ||
         editData.provider_type === 'tandoor' ||
         editData.provider_type === 'norish' ||
+        editData.provider_type === 'valhalla' ||
         editData.provider_type === 'free-exercise-db' ||
         editData.provider_type === 'openfoodfacts' ||
         editData.provider_type === 'speediance' ||
-        editData.provider_type === 'igpsport'
+        editData.provider_type === 'igpsport' ||
+        editData.provider_type === 'coros_mcp'
           ? editData.base_url || null
           : null,
       withings_last_sync_at:
@@ -267,6 +275,14 @@ const ExternalProviderList = ({
         editData.provider_type === 'polar'
           ? editData.polar_token_expires
           : null,
+      coros_last_sync_at:
+        editData.provider_type === 'coros_mcp'
+          ? editData.coros_last_sync_at
+          : null,
+      coros_token_expires:
+        editData.provider_type === 'coros_mcp'
+          ? editData.coros_token_expires
+          : null,
       strava_last_sync_at:
         editData.provider_type === 'strava'
           ? editData.strava_last_sync_at
@@ -284,8 +300,10 @@ const ExternalProviderList = ({
         editData.provider_type === 'hevy' ||
         editData.provider_type === 'speediance' ||
         editData.provider_type === 'igpsport' ||
+        editData.provider_type === 'liftosaur' ||
         editData.provider_type === 'strava' ||
-        editData.provider_type === 'polar'
+        editData.provider_type === 'polar' ||
+        editData.provider_type === 'coros_mcp'
           ? editData.sync_frequency
           : undefined,
     };
@@ -402,6 +420,9 @@ const ExternalProviderList = ({
       oura_token_expires: provider.oura_token_expires || '',
       polar_last_sync_at: provider.polar_last_sync_at || '',
       polar_token_expires: provider.polar_token_expires || '',
+      coros_last_sync_at: provider.coros_last_sync_at || '',
+      coros_token_expires: provider.coros_token_expires || '',
+      liftosaur_last_sync_at: provider.liftosaur_last_sync_at || '',
     });
   };
 
@@ -414,9 +435,17 @@ const ExternalProviderList = ({
     return (
       <div className="text-center py-8 text-muted-foreground">
         <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>No data providers configured yet.</p>
+        <p>
+          {t(
+            'settings.externalProviderList.noDataProvidersConfiguredYet',
+            'No data providers configured yet.'
+          )}
+        </p>
         <p className="text-sm">
-          Add your first data provider to enable search from external sources.
+          {t(
+            'settings.externalProviderList.addYourFirstDataProvider',
+            'Add your first data provider to enable search from external sources.'
+          )}
         </p>
       </div>
     );

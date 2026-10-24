@@ -184,9 +184,11 @@ router.post(
       'info',
       `Uploaded backup file: ${originalFileName} -> ${safeFileName} at ${uploadedFilePath}`
     );
+    // Assigned before the copy so a partial copy is removed as well.
+    let finalBackupPath: string | undefined;
     try {
       // Move the uploaded file to the designated backup directory for processing
-      const finalBackupPath = path.join(BACKUP_DIR, safeFileName);
+      finalBackupPath = path.join(BACKUP_DIR, safeFileName);
       await fs.copyFile(uploadedFilePath, finalBackupPath);
       await fs.unlink(uploadedFilePath);
       log('info', `Moved uploaded file to: ${finalBackupPath}`);
@@ -217,6 +219,17 @@ router.post(
           `Failed to clean up temporary uploaded file ${uploadedFilePath}:`,
           cleanupError
         );
+      }
+      if (finalBackupPath) {
+        try {
+          await fs.rm(finalBackupPath, { force: true });
+        } catch (cleanupError) {
+          log(
+            'warn',
+            `Failed to remove restore archive ${finalBackupPath}:`,
+            cleanupError
+          );
+        }
       }
     }
   }

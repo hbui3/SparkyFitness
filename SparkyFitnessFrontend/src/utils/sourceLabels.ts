@@ -19,6 +19,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   manual: 'Manual',
   ai_estimate: 'AI estimate',
   local: 'Local',
+  coros_mcp: 'COROS',
   imported: 'Imported',
   csv: 'CSV Import',
   csv_import: 'CSV Import',

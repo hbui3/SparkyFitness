@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-09-01_
+*Last updated: 2026-10-24*
 
 This is the repo-root monorepo guide for SparkyFitness. Use it to choose the right package, understand shared repo-level rules, and find the next guide to read.
 
@@ -36,7 +36,8 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - `SparkyFitnessServer/` - Express 5 + PostgreSQL backend API.
 - `SparkyFitnessMobile/` - Expo SDK 57 / React Native 0.86 app.
 - `shared/` - source-first TypeScript workspace package for `@workspace/shared` schemas, constants, and timezone/day helpers.
-- `docs/` - Nuxt / Docus docs site.
+- `docs/` - VitePress documentation site.
+- `docs/readme/` - translated copies of the root `README.md` (`README_<lang>.md`), outside the VitePress `srcDir`. The language bar at the top of `README.md` links to them; when the root README changes substantially, the translations go stale.
 - `SparkyFitnessGarmin/` - standalone Python integration service outside the current `pnpm` workspace.
 - The persistent AI coach spans `shared` contracts, owner-only profiles/memories/structured workout feedback/training preferences/undo receipts, canonical onboarding/goal/daily/trend/recovery context, configurable proactive messages, a durable system-only Telegram inbox plus owner-scoped delivery outbox, bidirectional text/photo/voice Telegram chat with deterministic quick actions, the encrypted system-only bot credential, meal-safety enforcement, and the frontend Nutrition & Diet settings with live cross-channel refresh. Its owner-only meal-planning domain persists pantry balances with an append-only ledger, derived shopping needs and partial purchases, retailer-product snapshots, and one-to-seven-day recipe plans whose ingredients are reserved until a confirmed preparation consumes stock. Web and Telegram share the same feedback-aware workout-planning and meal-planning tools and persisted immediate-turn domain/model context; underspecified replies must continue only the immediately preceding assistant turn.
 - Cross-provider workout reads are canonicalized by `SparkyFitnessServer/services/workoutDeduplicationService.ts` using the shared overlap rule: provider-owned raw rows remain stored, while lower-fidelity HealthKit/Health Connect mirrors are excluded from reports, calorie totals, daily views, and coach aggregates.
@@ -45,6 +46,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - Report tables expose stored provider provenance for food, canonical workouts, sleep, custom measurements, and body measurements. Because one daily `check_in_measurements` row can combine providers, its `source_provenance` is keyed per metric rather than represented by one row-level source.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
 - `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook.
+- `umbrel/sparkyfitness/` - Umbrel App Store package (manifest, compose, derived secrets), submitted to `getumbrel/umbrel-apps`. See `umbrel/README.md`.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.
 - `docker/.env.example` - tracked env template commonly copied to repo-root `.env`.
 
@@ -52,7 +54,7 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 
 - `pnpm-workspace.yaml` currently lists `frontend`, `SparkyFitnessFrontend`, `shared`, `SparkyFitnessMobile`, `SparkyFitnessServer`, and `docs`.
 - Only `SparkyFitnessFrontend/` exists on disk right now; treat `frontend` as a legacy workspace entry unless the task is specifically about workspace cleanup.
-- `shared/` is a library package, not an app. Validate shared changes from the consuming package(s), not in isolation.
+- `shared/` is a library package, not an app; its `pnpm run validate` runs typecheck, a hardcoded-string audit, and the Prettier check. CI runs that in a `Shared Validate` job and also re-runs the frontend, mobile, and server jobs whenever `shared/` changes, so validate shared changes from the consuming package(s), not in isolation.
 - `SparkyFitnessGarmin/` is outside the current workspace. Inspect its own manifest and scripts before working there.
 
 ## Agent Efficiency (read this before searching)
@@ -64,12 +66,12 @@ Do not read or search these paths; they burn context for nothing:
 - `pnpm-lock.yaml` (~1.3 MB) - never read; check `package.json` files instead.
 - `db_schema_backup.sql` (~330 KB) - never read whole; grep for the one `CREATE TABLE` you need.
 - `SparkyFitnessFrontend/dist/` - build output.
-- `SparkyFitnessFrontend/public/locales/` except `en/` - 27 machine-synced translations. Only `en/translation.json` is ever hand-edited, and even that (~120 KB) should be grepped, not read whole.
+- `SparkyFitnessFrontend/public/locales/` except `en/` - 35 machine-synced translations. Only `en/translation.json` is ever hand-edited, and even that (~120 KB) should be grepped, not read whole.
 
 Cheap ways to learn things:
 
-- Database table index: read `docs/content/8.developer/4.database.md` (quick reference of all ~120 tables with one-line purpose). For detailed schema, read `shared/src/schemas/database/<Table>.zod.ts` (one small Zod file per table).
-- Database security & permissions: `docs/content/8.developer/11.database-security-tiers.md` (security tier, permission type, and RLS rules for every table).
+- Database table index: read `docs/src/developer/database.md` (quick reference of all ~120 tables with one-line purpose). For detailed schema, read `shared/src/schemas/database/<Table>.zod.ts` (one small Zod file per table).
+- Database security & permissions: `docs/src/developer/database-security-tiers.md` (security tier, permission type, and RLS rules for every table).
 - API request/response contract: `shared/src/schemas/api/<Name>.api.zod.ts`.
 - Definition of done: CI (`.github/workflows/ci-tests.yml`) runs `pnpm run validate` (which includes Knip unused export & dead code checks in frontend and mobile) plus the package's CI test script for each changed package. Run those locally before declaring work complete.
 
@@ -81,18 +83,25 @@ Cheap ways to learn things:
   3. **Restart the server** (`pnpm start` from `SparkyFitnessServer/`) to apply the migration.
   4. Leave `db_schema_backup.sql` alone — after merge, CI regenerates it from the migrations and opens an automated sync PR (`.github/workflows/schema-backup.yml`). Never manually edit the backup file or commit a locally generated copy.
   5. Add or update the matching Zod schema in `shared/src/schemas/database/`.
-  6. Update the user-facing documentation in `docs/content/2.features/9.family-friends-sharing.md`.
-  7. Update the developer documentation in `docs/content/8.developer/11.database-security-tiers.md` to classify the table as Tier 1, Tier 2, or Tier 3.
+  6. Update the user-facing documentation in `docs/src/features/family-friends-sharing.md`.
+  7. Update the developer documentation in `docs/src/developer/database-security-tiers.md` to classify the table as Tier 1, Tier 2, or Tier 3.
+- **Heart rate zones have one source of truth:** `shared/src/utils/heartRateZones.ts` (`resolveHeartRateZones`, `heartRateZoneRange`, `computeTimeInZones`). Never re-derive max heart rate or zone floors in a package; server stored zones, training load, mobile suggested ranges and the web/mobile charts and settings all call it. Max heart rate is the person's own value, else Nes (211 - 0.64 x age) from date of birth, else 190. Settings never rewrite stored `exercise_entry_hr_zones` rows. iOS 27 can fill custom floors from Apple Health (`floorsFromAppleHeartRateZones`); that does not change max heart rate. A finished Apple workout's own zone group (`bucketsFromAppleWorkoutZones`) is stored as `device` zones instead of recomputing, so the chart matches Apple, including time below the first boundary.
 - Prefer the shared timezone helpers from `@workspace/shared` and `SparkyFitnessServer/utils/timezoneLoader.ts` for day-string logic. Avoid `toISOString().split('T')[0]` for user-facing or business-logic dates.
 - Keep `YYYY-MM-DD` values as calendar-day strings until you reach a database or external API boundary that needs UTC instants.
 - Auth or API contract changes usually need a quick check in both web and mobile because they share the same backend.
 - Preserve provider provenance across ingest, persistence, report responses, and CSV exports. Mixed aggregate rows must retain provenance per field; never assign one provider to unrelated values in the same row.
 - Frontend local dev proxies `/api`, `/health-data`, and `/uploads` to the server on `3010`. The `/health-data` proxy is rewritten to `/api/health-data`, while server APIs remain rooted at `/api`.
 - Server runtime secrets are usually sourced from repo-root `.env`, commonly created from `docker/.env.example`. The server can also load secret files via `SparkyFitnessServer/utils/secretLoader.ts`.
-- Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract _behavior_, not coincidental shape. See `agent-docs/anti-patterns.md`.
-- **Strict TypeScript Typing:** Never use `any` or `// eslint-disable-next-line @typescript-eslint/no-explicit-any` when creating new functions or editing existing code. Always define explicit TypeScript interfaces, types, or import schemas from `@workspace/shared`. Do NOT copy legacy `any` parameter signatures when refactoring or extending legacy service/repository files.
+- Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract *behavior*, not coincidental shape. See `agent-docs/anti-patterns.md`.
+- **Strict TypeScript Typing:** Never use `any` or `// eslint-disable-next-line @typescript-eslint/no-explicit-any` when creating new functions or editing existing code. When modifying existing files, proactively update legacy `any` declarations in the touched code to reflect their proper TypeScript data types, interfaces, or schemas from `@workspace/shared`. Do NOT copy legacy `any` parameter signatures forward when refactoring or extending service/repository files.
 - **Library Deletes vs Diary Snapshots:** `exercise_entries` and `food_entries` are self-contained snapshots, not pointers (`exercise_id` and `food_id` are `ON DELETE SET NULL`). Deleting an exercise or food from the library (`mode: 'delete'`) preserves past and current diary history, cascades from presets and plan templates, cleans up future scheduled workout plan entries (`entry_date >= today`), and cleans up empty parent preset entries. Only explicit `delete_with_history` (force delete) purges diary logs for that user. If an item is referenced by other users (`otherUserReferences > 0`), the backend falls back to hiding (`is_quick_exercise` / `is_quick_food`).
 - **Comprehensive Cache Invalidation:** When mutating library items (foods, exercises, presets, meals, plans), always invalidate the entire family of dependent query keys across library search, counts, templates, and daily diary summaries (`dailySummary` / `dailyProgress` / `exerciseEntries`) in both web and mobile.
+- **Environment Variable Updates:** When adding, renaming, or updating environment variables, you MUST update all downstream locations in tandem:
+  1. `docker/.env.example` (and `docker/.env.simple.example` if it is a core mandatory variable).
+  2. `docker/docker-compose.prod.yml` and `docker/docker-compose.dev.yml` (if consumed by container environments).
+  3. `docs/src/install/environment-variables.md` (the comprehensive documentation reference).
+  4. `docs/components/EnvGenerator.vue` (the interactive web `.env` generator component).
+  5. `helm/chart/templates/` and `helm/chart/values.yaml` (if passed through Helm charts).
 
 ## Commit & PR Conventions
 

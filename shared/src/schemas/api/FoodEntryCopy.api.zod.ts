@@ -1,9 +1,9 @@
-import { z } from "zod";
-import { isDayString } from "../../utils/timezone.ts";
+import { z } from 'zod';
+import { isDayString } from '../../utils/timezone.ts';
 
 const dayString = z
   .string()
-  .refine(isDayString, { message: "Expected YYYY-MM-DD" });
+  .refine(isDayString, { message: 'Expected YYYY-MM-DD' });
 
 const selectedFoodEntrySchema = z
   .object({
@@ -23,14 +23,14 @@ const reviewedFoodEntrySchema = z
 function rejectDuplicateEntryIds(
   entries: Array<{ entryId: string }>,
   context: z.RefinementCtx,
-  message: string,
+  message: string
 ) {
   const seen = new Set<string>();
   entries.forEach(({ entryId }, index) => {
     if (seen.has(entryId)) {
       context.addIssue({
-        code: "custom",
-        path: ["entries", index, "entryId"],
+        code: 'custom',
+        path: ['entries', index, 'entryId'],
         message,
       });
     }
@@ -51,7 +51,7 @@ export const CopySelectedFoodEntriesFromUserBodySchema = z
     rejectDuplicateEntryIds(
       entries,
       context,
-      "Source entry IDs must be unique",
+      'Source entry IDs must be unique'
     );
   });
 
@@ -75,7 +75,7 @@ export const CopyReviewedFoodEntriesFromUserBodySchema = z
     rejectDuplicateEntryIds(
       entries,
       context,
-      "Reviewed source entry IDs must be unique",
+      'Reviewed source entry IDs must be unique'
     );
   });
 

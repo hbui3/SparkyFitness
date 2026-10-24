@@ -8,6 +8,21 @@
 
 export const SLEEP_STAGE_CLUSTER_GAP_MS = 4 * 60 * 60 * 1000;
 
+/**
+ * Stages that define a partial re-sync's overlap-delete window.
+ *
+ * `in_bed` / `unknown` are HealthKit envelopes, not scored stages. Apple Health
+ * writes one InBed sample covering bedtime→wake, so a 6h observer window still
+ * returns that full-night sample. Using it as the merge window would delete
+ * every scored stage contained in the night.
+ */
+export const SLEEP_STAGE_MERGE_WINDOW_TYPES = new Set([
+  'awake',
+  'rem',
+  'light',
+  'deep',
+]);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function sumAsleepSeconds(stages: any[]): number {
   if (!Array.isArray(stages)) return 0;
@@ -21,6 +36,143 @@ export function sumAsleepSeconds(stages: any[]): number {
     }
     return sum;
   }, 0);
+}
+
+/**
+ * Overlap-delete window for a sleep stage merge payload.
+ *
+ * Returns null when the payload has no scored/awake stages so a later InBed-only
+ * retry cannot wipe previously stored detailed stages.
+ */
+export function sleepStageMergeWindow(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  stages: any[]
+): { start: Date; end: Date } | null {
+  if (!Array.isArray(stages) || stages.length === 0) return null;
+
+  let minStart = Infinity;
+  let maxEnd = -Infinity;
+  for (const stage of stages) {
+    const type = String(stage?.stage_type ?? '').toLowerCase();
+    if (!SLEEP_STAGE_MERGE_WINDOW_TYPES.has(type)) continue;
+    const start = new Date(stage.start_time).getTime();
+    const end = new Date(stage.end_time).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    if (start < minStart) minStart = start;
+    if (end > maxEnd) maxEnd = end;
+  }
+  if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd)) return null;
+  return { start: new Date(minStart), end: new Date(maxEnd) };
+}
+
+function stageInstant(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  const ms = new Date(String(value)).getTime();
+  return ms;
+}
+
+/**
+ * Portions of a scored stage that sit outside a replacement window.
+ *
+ * Returns null when the stage is not scored or does not cross the window.
+ * Returns [] when the stage is fully inside and should be deleted.
+ * A stage that starts before the window and ends inside it is trimmed to the
+ * window start; one that covers the window is split in two.
+ */
+export function scoredStageRemaindersOutsideWindow(
+  stage: {
+    stage_type?: string;
+    start_time: unknown;
+    end_time: unknown;
+  },
+  windowStart: Date,
+  windowEnd: Date
+): Array<{
+  start_time: string;
+  end_time: string;
+  duration_in_seconds: number;
+}> | null {
+  const type = String(stage?.stage_type ?? '').toLowerCase();
+  if (!SLEEP_STAGE_MERGE_WINDOW_TYPES.has(type)) return null;
+  const ss = stageInstant(stage.start_time);
+  const se = stageInstant(stage.end_time);
+  const ws = windowStart.getTime();
+  const we = windowEnd.getTime();
+  if (!Number.isFinite(ss) || !Number.isFinite(se) || se <= ss) return null;
+  if (!(ss < we && se > ws)) return null;
+  if (ss >= ws && se <= we) return [];
+
+  const pieces: Array<{ start: number; end: number }> = [];
+  if (ss < ws) pieces.push({ start: ss, end: Math.min(se, ws) });
+  if (se > we) pieces.push({ start: Math.max(ss, we), end: se });
+  return pieces
+    .filter((piece) => piece.end > piece.start)
+    .map((piece) => ({
+      start_time: new Date(piece.start).toISOString(),
+      end_time: new Date(piece.end).toISOString(),
+      duration_in_seconds: Math.max(
+        0,
+        Math.round((piece.end - piece.start) / 1000)
+      ),
+    }));
+}
+
+function stageBoundaryKey(start: unknown, end: unknown): string {
+  return `${new Date(stageInstant(start)).toISOString()}|${new Date(stageInstant(end)).toISOString()}`;
+}
+
+/**
+ * In-memory form of the overlap delete plus boundary trim. Fully contained
+ * stages are dropped unless the incoming payload keeps that exact interval.
+ * Scored stages that cross the window are trimmed or split so the replacement
+ * does not overlap them.
+ */
+export function reconcileStoredStagesForMerge<
+  T extends {
+    stage_type?: string;
+    start_time: unknown;
+    end_time: unknown;
+    duration_in_seconds?: number;
+  },
+>(
+  stored: T[],
+  incoming: Array<{ start_time: unknown; end_time: unknown }>,
+  window: { start: Date; end: Date } | null
+): T[] {
+  if (!window) return stored;
+  const kept = new Set(
+    incoming.map((stage) => stageBoundaryKey(stage.start_time, stage.end_time))
+  );
+  const ws = window.start.getTime();
+  const we = window.end.getTime();
+  const next: T[] = [];
+  for (const stage of stored) {
+    if (kept.has(stageBoundaryKey(stage.start_time, stage.end_time))) {
+      next.push(stage);
+      continue;
+    }
+    const ss = stageInstant(stage.start_time);
+    const se = stageInstant(stage.end_time);
+    if (ss >= ws && se <= we) continue;
+    const remainders = scoredStageRemaindersOutsideWindow(
+      stage,
+      window.start,
+      window.end
+    );
+    if (remainders === null) {
+      next.push(stage);
+      continue;
+    }
+    for (const piece of remainders) {
+      next.push({
+        ...stage,
+        start_time: piece.start_time,
+        end_time: piece.end_time,
+        duration_in_seconds: piece.duration_in_seconds,
+      });
+    }
+  }
+  return next;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

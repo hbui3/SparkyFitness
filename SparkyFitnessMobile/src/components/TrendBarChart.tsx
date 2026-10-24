@@ -4,11 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { CartesianChart, Bar } from 'victory-native';
 import { useCSSVariable } from 'uniwind';
 import {
-  makeChartFont,
+  useChartFont,
   CHART_LABEL_FONT_SIZE,
   formatXLabel7d,
   formatXLabel30d90d,
   formatChartYLabel,
+  computeNiceYAxisScale,
 } from './charts/chartFormatting';
 import type { HealthTrendDateRange } from '../types/healthTrends';
 import ChartTouchOverlay, {
@@ -17,6 +18,7 @@ import ChartTouchOverlay, {
   createChartTouchLayoutSignature,
   type ChartTouchLayout,
 } from './ChartTouchOverlay';
+import TrendGoalLine from './charts/TrendGoalLine';
 
 /** Every point a bar trend plots, once its own shape has been projected onto a value. */
 type TrendBarPoint = {
@@ -45,6 +47,9 @@ type TrendBarChartProps<TPoint extends { day: string }> = {
   errorText: string;
   emptyText: string;
   testIDPrefix: string;
+  /** The resolved goal for each day in `data`, same order, already projected onto the
+   * same value `getValue` plots. */
+  goalValues?: (number | null)[];
 };
 
 const INNER_PADDING: Record<HealthTrendDateRange, number> = {
@@ -58,8 +63,6 @@ const X_TICK_COUNT: Record<HealthTrendDateRange, number> = {
   '30d': 6,
   '90d': 5,
 };
-
-const font = makeChartFont(CHART_LABEL_FONT_SIZE);
 
 const TrendTooltip: React.FC<{ text: string }> = ({ text }) => (
   <View className="h-6 justify-center mt-3 mb-1">
@@ -85,8 +88,10 @@ function TrendBarChart<TPoint extends { day: string }>({
   errorText,
   emptyText,
   testIDPrefix,
+  goalValues,
 }: TrendBarChartProps<TPoint>) {
   const { t } = useTranslation();
+  const font = useChartFont(CHART_LABEL_FONT_SIZE);
   const [accentColor, textMuted] = useCSSVariable([
     '--color-accent-primary',
     '--color-text-muted',
@@ -104,6 +109,23 @@ function TrendBarChart<TPoint extends { day: string }>({
   const hasData = useMemo(
     () => chartData.some((point) => point.value > 0),
     [chartData]
+  );
+
+  // A nice round scale, not just an auto-fit one, so the axis reads in whole steps (e.g.
+  // 500 ml increments) instead of whatever fraction the data or a goal happens to fall on.
+  const yAxisScale = useMemo(() => {
+    const dataMax = Math.max(0, ...chartData.map((point) => point.value));
+    const positiveGoals = (goalValues ?? []).filter(
+      (value): value is number => value != null && value > 0
+    );
+    const effectiveMax =
+      positiveGoals.length > 0 ? Math.max(dataMax, ...positiveGoals) : dataMax;
+    return computeNiceYAxisScale(0, effectiveMax);
+  }, [chartData, goalValues]);
+
+  const domain = useMemo(
+    () => ({ y: [yAxisScale.min, yAxisScale.max] as [number, number] }),
+    [yAxisScale]
   );
 
   const formatXLabel = range === '7d' ? formatXLabel7d : formatXLabel30d90d;
@@ -183,8 +205,8 @@ function TrendBarChart<TPoint extends { day: string }>({
             data={chartData}
             xKey="day"
             yKeys={['value']}
-            domain={{ y: [0] }}
-            domainPadding={{ left: 25, right: 25 }}
+            domain={domain}
+            domainPadding={{ left: 25, right: 25, top: 12, bottom: 12 }}
             xAxis={{
               font,
               tickCount: X_TICK_COUNT[range],
@@ -194,13 +216,17 @@ function TrendBarChart<TPoint extends { day: string }>({
             yAxis={[
               {
                 font,
-                tickCount: 5,
+                // Must match tickValues.length exactly: a smaller tickCount makes
+                // victory-native re-sample the array by index and can silently skip a
+                // value in the middle.
+                tickCount: yAxisScale.tickValues.length,
                 labelColor: textMuted,
                 formatYLabel,
+                tickValues: yAxisScale.tickValues,
               },
             ]}
           >
-            {({ points, chartBounds }) => (
+            {({ points, chartBounds, yScale }) => (
               <>
                 <ChartLayoutReporter
                   chartBounds={chartBounds}
@@ -214,6 +240,13 @@ function TrendBarChart<TPoint extends { day: string }>({
                   innerPadding={INNER_PADDING[range]}
                   animate={{ type: 'timing', duration: 300 }}
                   roundedCorners={{ topLeft: 6, topRight: 6 }}
+                />
+                <TrendGoalLine
+                  points={points.value}
+                  chartBounds={chartBounds}
+                  yScale={yScale}
+                  goals={goalValues ?? []}
+                  color={textMuted}
                 />
               </>
             )}

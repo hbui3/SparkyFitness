@@ -1608,6 +1608,8 @@ export async function createSpeediancePlan(
     end_date: request.endDate,
     is_active: true,
     cycle_length_weeks: request.cycleLengthWeeks ?? 1,
+    schedule_type: 'weekly' as const,
+    entry_mode: 'prefill' as const,
     currentClientDate: todayInZone(timezone),
     assignments: resolvedSessions.map((session, index) => ({
       day_of_week: session.dayOfWeek,

@@ -1,9 +1,9 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   coachMealPlanningCategorySchema,
   coachMealPlanningQuantitySchema,
   coachMealPlanningUnitSchema,
-} from "./CoachPantryItems.zod.ts";
+} from './CoachPantryItems.zod.ts';
 
 export const coachMealPlanIngredientsSchema = z
   .object({

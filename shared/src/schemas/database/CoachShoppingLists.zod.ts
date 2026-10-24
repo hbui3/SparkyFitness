@@ -1,10 +1,10 @@
-import { z } from "zod";
-import { coachMealPlanningDaySchema } from "./CoachPantryItems.zod.ts";
+import { z } from 'zod';
+import { coachMealPlanningDaySchema } from './CoachPantryItems.zod.ts';
 
 export const coachShoppingListStatusSchema = z.enum([
-  "open",
-  "completed",
-  "cancelled",
+  'open',
+  'completed',
+  'cancelled',
 ]);
 
 export const coachShoppingListsSchema = z
@@ -23,9 +23,9 @@ export const coachShoppingListsSchema = z
   .superRefine((value, ctx) => {
     if ((value.coverage_start === null) !== (value.coverage_end === null)) {
       ctx.addIssue({
-        code: "custom",
-        message: "Shopping-list coverage dates must be supplied together",
-        path: ["coverage_end"],
+        code: 'custom',
+        message: 'Shopping-list coverage dates must be supplied together',
+        path: ['coverage_end'],
       });
       return;
     }
@@ -35,9 +35,9 @@ export const coachShoppingListsSchema = z
       value.coverage_end < value.coverage_start
     ) {
       ctx.addIssue({
-        code: "custom",
-        message: "Shopping-list coverage end must not precede its start",
-        path: ["coverage_end"],
+        code: 'custom',
+        message: 'Shopping-list coverage end must not precede its start',
+        path: ['coverage_end'],
       });
     }
   });

@@ -1,5 +1,7 @@
 import {
   requestAuthorization,
+  getRequestStatusForAuthorization,
+  AuthorizationRequestStatus,
   queryQuantitySamples,
   queryStatisticsCollectionForQuantity,
   isHealthDataAvailable,
@@ -27,16 +29,27 @@ import {
   mapDayStatisticsToMinMaxAvg,
 } from './dataAggregation';
 import { BLOOD_GLUCOSE_MG_DL_PER_MMOL_L } from '../shared/dataTransformation';
+import {
+  WATCH_SESSION_METADATA_KEY,
+  isOwnWatchWorkout,
+} from './dataTransformation';
 import { DIETARY_WRITE_IDENTIFIERS } from './writebackMappers';
+import {
+  WORKOUT_EFFORT_IDENTIFIER,
+  matchWorkoutEffort,
+  readWorkoutEffortSamples,
+} from './workoutEffort';
 import {
   collectWorkoutTelemetry,
   type WorkoutProxyLike,
 } from './workoutTelemetry';
+import { readAppleWorkoutZoneGroups } from '../appleHeartZones';
 import {
   createTelemetryRunContext,
   type TelemetryRunContext,
 } from '../shared/telemetryBudget';
 import {
+  enrichedSessionOrder,
   hasEnrichedSession,
   sessionTelemetryKey,
 } from '../shared/enrichedSessionCache';
@@ -70,7 +83,11 @@ const limitTelemetry = createConcurrencyLimiter(TELEMETRY_CONCURRENCY);
 const workoutCacheKey = (workout: unknown): string | null => {
   const w = workout as { uuid?: string; endDate?: string | Date };
   const end = w.endDate instanceof Date ? w.endDate.toISOString() : w.endDate;
-  return sessionTelemetryKey(w.uuid, end);
+  const key = sessionTelemetryKey(w.uuid, end);
+  // v2: walks collected before route access was granted were cached with an
+  // empty track, and the cache then skipped them forever. The suffix makes
+  // the next sync read each workout once more.
+  return key ? `${key}:v2` : null;
 };
 
 // Track if HealthKit is available on this device
@@ -191,6 +208,8 @@ const SUPPORTED_HK_TYPES = new Set<string>([
  */
 const WORKOUT_TELEMETRY_READ_IDENTIFIERS: readonly string[] = [
   'HKWorkoutRouteTypeIdentifier',
+  // The person's own 1-10 rating of the workout, read by time window.
+  WORKOUT_EFFORT_IDENTIFIER,
   'HKQuantityTypeIdentifierStepCount',
   'HKQuantityTypeIdentifierHeartRate',
   'HKQuantityTypeIdentifierRunningSpeed',
@@ -245,6 +264,7 @@ export const HEALTHKIT_TYPE_MAP: Record<string, string> = {
   LeanBodyMass: 'HKQuantityTypeIdentifierLeanBodyMass',
   SleepSession: 'HKCategoryTypeIdentifierSleepAnalysis',
   Stress: 'HKCategoryTypeIdentifierMindfulSession', // Map Stress to MindfulSession for HealthKit
+  MindfulnessSession: 'HKCategoryTypeIdentifierMindfulSession',
   Workout: 'HKWorkoutTypeIdentifier', // Map Workout to HKWorkoutTypeIdentifier for HealthKit
   CervicalMucus: 'HKCategoryTypeIdentifierCervicalMucusQuality',
   // The route is its own HealthKit type; mapping it to the workout type would
@@ -306,43 +326,9 @@ export const initHealthConnect = async (): Promise<boolean> => {
   }
 };
 
-export const requestHealthPermissions = async (
+const healthKitAuthorizationTypes = (
   permissionsToRequest: PermissionRequest[]
-): Promise<boolean> => {
-  if (!isHealthKitAvailable) {
-    Alert.alert(
-      i18n.t('healthSync.alerts.healthAppUnavailableTitle', {
-        defaultValue: 'Health App Not Available',
-      }),
-      i18n.t('healthSync.alerts.healthAppUnavailableMessage', {
-        defaultValue:
-          'Please install the Apple Health app to sync your health data.',
-      })
-    );
-    return false;
-  }
-
-  const isSimulator =
-    Platform.OS === 'ios' &&
-    (Platform.constants as { simulator?: boolean })?.simulator === true;
-  if (
-    isSimulator &&
-    !(globalThis as Record<string, unknown>).FORCE_HEALTHKIT_ON_SIM
-  ) {
-    // Returning true here is a convenience for simulator runs, but callers log it as
-    // "permission granted" — say plainly that nothing was requested so the log is not
-    // read as evidence that HealthKit was asked.
-    addLog(
-      '[HealthKitService] Simulator: skipped the authorization request entirely (no sheet, no grant). Set FORCE_HEALTHKIT_ON_SIM to exercise the real path.',
-      'WARNING'
-    );
-    return true;
-  }
-
-  if (!permissionsToRequest || permissionsToRequest.length === 0) {
-    return true;
-  }
-
+): { toRead: string[]; toShare: string[] } => {
   const readPermissionsSet = new Set<string>();
   const writePermissionsSet = new Set<string>();
 
@@ -426,6 +412,80 @@ export const requestHealthPermissions = async (
 
   const toRead = Array.from(readPermissionsSet);
   const toShare = Array.from(writePermissionsSet);
+
+  return { toRead, toShare };
+};
+
+/**
+ * Whether any of these permissions includes a HealthKit type the user has never been
+ * asked about, e.g. one added to a metric in an app update. HealthKit only shows the
+ * sheet for such types, so re-requesting when this is true is safe. An unknown status
+ * or a failed check counts as true: a request with nothing new shows no sheet.
+ */
+export const hasUnrequestedHealthPermissions = async (
+  permissions: PermissionRequest[]
+): Promise<boolean> => {
+  if (!isHealthKitAvailable) {
+    return false;
+  }
+  const { toRead, toShare } = healthKitAuthorizationTypes(permissions);
+  if (toRead.length === 0 && toShare.length === 0) {
+    return false;
+  }
+  try {
+    const status = await getRequestStatusForAuthorization({
+      toRead: toRead as Parameters<typeof requestAuthorization>[0]['toRead'],
+      toShare: toShare as Parameters<typeof requestAuthorization>[0]['toShare'],
+    });
+    return status !== AuthorizationRequestStatus.unnecessary;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    addLog(
+      `[HealthKitService] Failed to check HealthKit authorization status: ${message}`,
+      'WARNING'
+    );
+    return true;
+  }
+};
+
+export const requestHealthPermissions = async (
+  permissionsToRequest: PermissionRequest[]
+): Promise<boolean> => {
+  if (!isHealthKitAvailable) {
+    Alert.alert(
+      i18n.t('healthSync.alerts.healthAppUnavailableTitle', {
+        defaultValue: 'Health App Not Available',
+      }),
+      i18n.t('healthSync.alerts.healthAppUnavailableMessage', {
+        defaultValue:
+          'Please install the Apple Health app to sync your health data.',
+      })
+    );
+    return false;
+  }
+
+  const isSimulator =
+    Platform.OS === 'ios' &&
+    (Platform.constants as { simulator?: boolean })?.simulator === true;
+  if (
+    isSimulator &&
+    !(globalThis as Record<string, unknown>).FORCE_HEALTHKIT_ON_SIM
+  ) {
+    // Returning true here is a convenience for simulator runs, but callers log it as
+    // "permission granted" — say plainly that nothing was requested so the log is not
+    // read as evidence that HealthKit was asked.
+    addLog(
+      '[HealthKitService] Simulator: skipped the authorization request entirely (no sheet, no grant). Set FORCE_HEALTHKIT_ON_SIM to exercise the real path.',
+      'WARNING'
+    );
+    return true;
+  }
+
+  if (!permissionsToRequest || permissionsToRequest.length === 0) {
+    return true;
+  }
+
+  const { toRead, toShare } = healthKitAuthorizationTypes(permissionsToRequest);
 
   if (toRead.length === 0 && toShare.length === 0) {
     // Every requested record type expanded to nothing — an unmapped record type, or one
@@ -1045,6 +1105,51 @@ const handleStress: RecordHandler = async (identifier, startDate, endDate) => {
   }));
 };
 
+// Handler for MindfulnessSession records. Unlike Stress (presence only), each
+// sample keeps its uuid and source so the server can upsert it by id.
+const handleMindfulnessSession: RecordHandler = async (
+  identifier,
+  startDate,
+  endDate
+) => {
+  const samples = await queryCategorySamples(
+    identifier as Parameters<typeof queryCategorySamples>[0],
+    {
+      ascending: false,
+      limit: 0,
+      filter: { date: { startDate, endDate } },
+    }
+  );
+
+  return samples
+    .filter((s) => isInDateRange(new Date(s.startDate), startDate, endDate))
+    .map((s) => {
+      const sample = s as unknown as {
+        uuid?: string;
+        metadata?: Record<string, unknown>;
+        metadataTimeZone?: string;
+        sourceRevision?: { source?: { bundleIdentifier?: string } };
+      };
+      const flatTz = sample.metadataTimeZone;
+      const metadata =
+        sample.metadata || flatTz
+          ? {
+              ...sample.metadata,
+              ...(flatTz && !sample.metadata?.HKTimeZone
+                ? { HKTimeZone: flatTz }
+                : {}),
+            }
+          : undefined;
+      return {
+        uuid: sample.uuid,
+        startTime: s.startDate,
+        endTime: s.endDate,
+        metadata,
+        sourceBundleId: sample.sourceRevision?.source?.bundleIdentifier,
+      };
+    });
+};
+
 // Handler for reproductive health category types
 const handleReproductiveHealth: RecordHandler = async (
   identifier,
@@ -1089,7 +1194,12 @@ const handleWorkout: RecordHandler = async (
   const filteredWorkouts = workouts.filter((w) => {
     const workoutStart = new Date(w.startDate);
     const workoutEnd = new Date(w.endDate);
-    return overlapsDateRange(workoutStart, workoutEnd, startDate, endDate);
+    if (!overlapsDateRange(workoutStart, workoutEnd, startDate, endDate)) {
+      return false;
+    }
+    // Drop our own watch sessions before they claim telemetry-budget slots.
+    // The transformer still skips them as defense in depth.
+    return !isOwnWatchWorkout(w as unknown as Record<string, unknown>);
   });
 
   // Budget slots are assigned in list order (the query is newest-first) before
@@ -1101,17 +1211,52 @@ const handleWorkout: RecordHandler = async (
   const telemetryAllowed = new Set<unknown>();
   const startedAtMs = Date.now();
   let skippedAlreadyCollected = 0;
-  for (const w of filteredWorkouts) {
+  // A forced run re-reads cached sessions, so the cache no longer thins the
+  // candidates and the budget alone decides. Taken newest-first that would
+  // pick the same few every run and never reach the rest of the range, so
+  // order by how long ago each was collected: never-collected first, then
+  // least recently collected. Re-read sessions are re-committed to the back
+  // of the cache, so the next forced run continues where this one stopped.
+  const selectionOrder = ctx.force ? await enrichedSessionOrder() : null;
+  const collectionRank = (workout: unknown): number => {
+    const key = workoutCacheKey(workout);
+    if (!key || !selectionOrder) return -1;
+    return selectionOrder.get(key) ?? -1;
+  };
+  const candidates = selectionOrder
+    ? [...filteredWorkouts].sort(
+        (a, b) => collectionRank(a) - collectionRank(b)
+      )
+    : filteredWorkouts;
+  for (const w of candidates) {
     // Already-collected workouts neither consume a slot nor get re-read, so a
     // bounded budget works through the backlog across syncs instead of
-    // re-picking the same newest few every run (#2191).
-    if (await hasEnrichedSession(workoutCacheKey(w))) {
+    // re-picking the same newest few every run (#2191). A forced run re-reads
+    // them anyway — that is the user asking for exactly this window again.
+    if (!ctx.force && (await hasEnrichedSession(workoutCacheKey(w)))) {
       skippedAlreadyCollected++;
       continue;
     }
     if (!ctx.claim()) break;
     telemetryAllowed.add(w);
   }
+
+  // One read of the ratings covers every workout in the window.
+  const effortSamples =
+    filteredWorkouts.length > 0
+      ? await readWorkoutEffortSamples(
+          new Date(
+            Math.min(
+              ...filteredWorkouts.map((w) => new Date(w.startDate).getTime())
+            )
+          ),
+          new Date(
+            Math.max(
+              ...filteredWorkouts.map((w) => new Date(w.endDate).getTime())
+            )
+          )
+        )
+      : [];
 
   // Fetch statistics (calories, distance) for each workout. Bounded fan-out:
   // each workout issues several statistics queries plus, when telemetry is
@@ -1138,6 +1283,8 @@ const handleWorkout: RecordHandler = async (
           ? (workoutAny.totalDistance?.quantity ?? 0)
           : (workoutAny.totalDistance ?? 0);
       let totalSteps: number | undefined;
+      let totalFlights: number | undefined;
+      let basalEnergyBurned: number | undefined;
 
       // Pin units explicitly on each getStatistic call. getAllStatistics returns
       // values in the user's HealthKit-preferred unit (often miles / kJ), but the
@@ -1150,6 +1297,61 @@ const handleWorkout: RecordHandler = async (
         );
         if (energyStats?.sumQuantity?.quantity) {
           totalEnergyBurned = energyStats.sumQuantity.quantity;
+        }
+
+        // Resting/basal burn during the workout. Apple Fitness shows both
+        // ("Active 57 CAL / Total 94 CAL"), and Total - Active is this value;
+        // without it the app's Active/Resting tile can only render "57 / —".
+        // Read through the same statistics(for:) path as active energy, so it
+        // stays limited to samples HealthKit associates with this workout —
+        // see the note on step count below for why a general clock-window
+        // query is not substituted here.
+        //
+        // Isolated in its own try: basal energy is a separate HealthKit read
+        // permission from active energy, so this call rejects outright on a
+        // device where only active was granted. Inside the shared try that
+        // would abandon the distance and step reads below it on every
+        // workout, silently falling back to the coarser totals on the sample
+        // — and distance feeds pace. Resting is optional; distance is not.
+        try {
+          const basalStats = await w.getStatistic(
+            'HKQuantityTypeIdentifierBasalEnergyBurned',
+            'kcal'
+          );
+          const basal = basalStats?.sumQuantity?.quantity;
+          if (
+            typeof basal === 'number' &&
+            Number.isFinite(basal) &&
+            basal > 0
+          ) {
+            basalEnergyBurned = basal;
+          }
+        } catch {
+          // Not readable on this device; resting stays unreported.
+        }
+
+        // Floors climbed during the workout, which is what Apple Fitness shows
+        // as "Flights Climbed" for a stair stepper. The workout sample's own
+        // `totalFlightsClimbed` property is not filled in for workouts built
+        // from statistics (a stair machine over GymKit, for one), so read it
+        // the way steps are read below. Its own try: flights is a separate
+        // read permission, and a refusal must not cost the distance and step
+        // reads that follow.
+        try {
+          const flightStats = await w.getStatistic(
+            'HKQuantityTypeIdentifierFlightsClimbed',
+            'count'
+          );
+          const flights = flightStats?.sumQuantity?.quantity;
+          if (
+            typeof flights === 'number' &&
+            Number.isFinite(flights) &&
+            flights > 0
+          ) {
+            totalFlights = Math.round(flights);
+          }
+        } catch {
+          // Not readable on this device; floors fall back to the sample property.
         }
 
         const distanceTypes = [
@@ -1204,6 +1406,40 @@ const handleWorkout: RecordHandler = async (
         record.metadata = { HKTimeZone: tz };
       }
 
+      // Forward the marker our own watch app stamps on workouts it saves, so
+      // the transformer can skip them — the live-workout flow already logged
+      // those sets in the diary, and importing the HealthKit copy would file
+      // the same session twice. Forwarded key by key like the timezone above
+      // rather than by spreading the whole metadata dictionary: the reader
+      // here deliberately carries only what a transformer consumes.
+      const watchSessionId = (
+        w as unknown as { metadata?: Record<string, unknown> }
+      ).metadata?.[WATCH_SESSION_METADATA_KEY];
+      if (watchSessionId !== undefined) {
+        record.metadata = {
+          ...(record.metadata as Record<string, unknown> | undefined),
+          [WATCH_SESSION_METADATA_KEY]: watchSessionId,
+        };
+      }
+
+      // Tell a walk or run recorded on the watch alone (source bundle
+      // `<phone-bundle>.watchkitapp`) from other apps' workouts, and whether
+      // it was indoors, so the transformer can title it.
+      const workoutExtras = w as unknown as {
+        sourceRevision?: { source?: { bundleIdentifier?: string } };
+        metadata?: Record<string, unknown>;
+      };
+      const workoutBundleId =
+        workoutExtras.sourceRevision?.source?.bundleIdentifier;
+      if (workoutBundleId) record.sourceBundleId = workoutBundleId;
+      const indoorFlag = workoutExtras.metadata?.HKIndoorWorkout;
+      if (indoorFlag !== undefined) {
+        record.metadata = {
+          ...(record.metadata as Record<string, unknown> | undefined),
+          HKIndoorWorkout: indoorFlag,
+        };
+      }
+
       // Elevation is not a totals field on the workout; it arrives as metadata.
       const elevation = w as unknown as {
         metadataElevationAscended?: { quantity?: number };
@@ -1220,9 +1456,17 @@ const handleWorkout: RecordHandler = async (
       // budget on a backfill silently loses elevation/floors/strokes/elapsed time
       // as well, even though the budget exists only to cap the expensive reads.
       const telemetry: Record<string, number | null | undefined> = {};
+      const effort = matchWorkoutEffort(effortSamples, w);
+      if (effort != null) telemetry.workout_effort = effort;
       const gain = elevation.metadataElevationAscended?.quantity;
       const loss = elevation.metadataElevationDescended?.quantity;
-      const floors = quantityOf(elevation.totalFlightsClimbed);
+      // The sample property when it carries a value, else the statistic read
+      // above; a property of 0 is "not recorded", not "no floors".
+      const propertyFloors = quantityOf(elevation.totalFlightsClimbed);
+      const floors =
+        typeof propertyFloors === 'number' && propertyFloors > 0
+          ? propertyFloors
+          : totalFlights;
       const strokes = quantityOf(elevation.totalSwimmingStrokeCount);
       if (typeof gain === 'number') telemetry.elevation_gain_meters = gain;
       if (typeof loss === 'number') telemetry.elevation_loss_meters = loss;
@@ -1237,6 +1481,9 @@ const handleWorkout: RecordHandler = async (
         telemetry.elapsed_time_seconds = Math.round(durationSeconds);
       }
       if (totalEnergyBurned) telemetry.active_calories = totalEnergyBurned;
+      if (basalEnergyBurned !== undefined) {
+        telemetry.resting_calories = basalEnergyBurned;
+      }
 
       // Telemetry must be collected here, inside the closure that owns the live
       // proxy: the per-workout sample predicate takes the proxy object itself,
@@ -1264,6 +1511,15 @@ const handleWorkout: RecordHandler = async (
         // reads that established that are exactly what must not repeat. A bundle
         // that came back `incomplete` is a failed read, not an empty one, and is
         // left uncached so the next sync retries it.
+        //
+        // No grace window here, unlike Health Connect. The #2300 case is heart
+        // rate written by another app and joined to the session by time overlap,
+        // which HealthKit cannot express: collectWorkoutSeries queries
+        // `filter: { workout }`, so a sample not associated with this workout is
+        // invisible however often it is re-read. The two cases that do arrive
+        // late are already covered — a workout still being written moves its
+        // endDate and so its cache key, and a failed or locked read comes back
+        // `incomplete`. Retrying here would cost every sync and buy nothing.
         if (!bundle.incomplete) ctx.stageCollected(workoutCacheKey(w));
       }
 
@@ -1290,6 +1546,8 @@ const handleWorkout: RecordHandler = async (
     result.status === 'fulfilled' ? [result.value] : []
   );
 
+  await attachAppleZoneGroups(workoutsWithStats);
+
   // One summary line per run — the field-verifiable signal for #2191. See the
   // matching log in healthconnect/index.ts.
   const overBudget =
@@ -1303,6 +1561,29 @@ const handleWorkout: RecordHandler = async (
 
   return workoutsWithStats;
 };
+
+/**
+ * Copies Apple's heart-rate zone group onto each workout that has one.
+ * Own-watch workouts are still skipped later by the transformer; this only
+ * fills the field. A failure leaves the workout to be bucketed on the server.
+ */
+async function attachAppleZoneGroups(
+  records: Record<string, unknown>[]
+): Promise<void> {
+  const uuids = records.flatMap((record) =>
+    typeof record.uuid === 'string' && record.uuid.length > 0
+      ? [record.uuid]
+      : []
+  );
+  if (uuids.length === 0) return;
+  const groups = await readAppleWorkoutZoneGroups(uuids);
+  if (groups.size === 0) return;
+  for (const record of records) {
+    if (typeof record.uuid !== 'string') continue;
+    const zones = groups.get(record.uuid.toLowerCase());
+    if (zones) record.hr_zones = zones;
+  }
+}
 
 // Handler for BloodPressure records (requires merging systolic and diastolic samples)
 const handleBloodPressure: RecordHandler = async (
@@ -1511,14 +1792,26 @@ interface LooseGroup {
   objects: { quantityType: string; quantity: number; unit: string }[];
 }
 
+interface CorrelationEvent {
+  bundleId: string;
+  startTime: number;
+  endTime: number;
+  containedTypes: Set<string>;
+}
+
 // Reconstruct per-food entries from LOOSE dietary samples — those NOT contained in any Food
 // correlation. A source's samples are grouped by event instant (one logged food = one shared
 // timestamp). `correlationUuids` are the contained-sample UUIDs to skip so we never
 // double-count nutrients that the correlation read already returned.
+// `correlationEvents` are the source bundle + time window + contained nutrient types of all read
+// correlations so loose samples from that same source and meal window are excluded if the correlation
+// already provides that nutrient (preventing double-counting in apps like MacroFactor that emit
+// both correlations and loose samples, while keeping distinct loose nutrients not in the correlation).
 const readLooseNutrition = async (
   startDate: Date,
   endDate: Date,
-  correlationUuids: Set<string>
+  correlationUuids: Set<string>,
+  correlationEvents: readonly CorrelationEvent[] = []
 ): Promise<Record<string, unknown>[]> => {
   const groups = new Map<string, LooseGroup>();
   // Filter to the window natively (limit: 0 = all in-window samples) instead of taking a
@@ -1537,9 +1830,15 @@ const readLooseNutrition = async (
       const sample = s as unknown as {
         uuid?: string;
         startDate: string | Date;
+        endDate?: string | Date;
         quantity: number;
         unit: string;
         metadataTimeZone?: string;
+        metadata?: {
+          HKTimeZone?: string;
+          timeZone?: string;
+          [key: string]: unknown;
+        };
         sourceRevision?: { source?: { bundleIdentifier?: string } };
       };
       if (!isInDateRange(new Date(sample.startDate), startDate, endDate))
@@ -1547,18 +1846,54 @@ const readLooseNutrition = async (
       if (sample.uuid && correlationUuids.has(sample.uuid)) continue; // already in a correlation
 
       const bundleId = sample.sourceRevision?.source?.bundleIdentifier;
+      const sampleStartMs = new Date(sample.startDate).getTime();
+      if (Number.isNaN(sampleStartMs)) continue;
+      const sampleEndMsRaw = sample.endDate
+        ? new Date(sample.endDate).getTime()
+        : sampleStartMs;
+      const sampleEndMs = Number.isNaN(sampleEndMsRaw)
+        ? sampleStartMs
+        : sampleEndMsRaw;
+
+      // Skip loose samples matching a correlation from the same source bundle in the same
+      // event window that already contains this nutrient type (prevents double-counting
+      // nutrients while preserving distinct nutrients not included in the correlation).
+      if (
+        bundleId &&
+        correlationEvents.some(
+          (event) =>
+            event.bundleId === bundleId &&
+            event.containedTypes.has(identifier) &&
+            sampleStartMs <= event.endTime + 1000 &&
+            sampleEndMs >= event.startTime - 1000
+        )
+      ) {
+        continue;
+      }
+
       const startIso = toIsoString(sample.startDate);
       const key = `${bundleId ?? 'unknown'}|${startIso}`;
+
+      const sampleTz =
+        (typeof sample.metadata?.HKTimeZone === 'string'
+          ? sample.metadata.HKTimeZone
+          : undefined) ||
+        (typeof sample.metadata?.timeZone === 'string'
+          ? sample.metadata.timeZone
+          : undefined) ||
+        sample.metadataTimeZone;
 
       let group = groups.get(key);
       if (!group) {
         group = {
           bundleId,
           startIso,
-          timeZone: sample.metadataTimeZone,
+          timeZone: sampleTz,
           objects: [],
         };
         groups.set(key, group);
+      } else if (!group.timeZone && sampleTz) {
+        group.timeZone = sampleTz;
       }
       group.objects.push({
         quantityType: identifier,
@@ -1594,8 +1929,8 @@ const handleNutrition: RecordHandler = async (
   // large or old food history would otherwise silently drop valid in-window correlations.
   const dateFilter = { date: { startDate, endDate } };
 
-  // 1. Named Food correlations (e.g. LoseIt). Collect contained-sample UUIDs so the loose
-  //    read below doesn't double-count the same nutrients.
+  // 1. Named Food correlations (e.g. LoseIt). Collect contained-sample UUIDs and correlation
+  //    event windows so the loose read below doesn't double-count the same nutrients.
   const correlations = await queryCorrelationSamples(
     'HKCorrelationTypeIdentifierFood',
     {
@@ -1611,12 +1946,21 @@ const handleNutrition: RecordHandler = async (
   );
 
   const correlationUuids = new Set<string>();
+  const correlationEvents: CorrelationEvent[] = [];
   const correlationRecords = inRange.map((c) => {
     const correlation = c as unknown as {
       uuid?: string;
       startDate: string | Date;
+      endDate?: string | Date;
       metadataFoodType?: string;
       metadataTimeZone?: string;
+      metadata?: {
+        HKFoodType?: string;
+        foodType?: string;
+        HKTimeZone?: string;
+        timeZone?: string;
+        [key: string]: unknown;
+      };
       sourceRevision?: { source?: { bundleIdentifier?: string } };
       objects?: {
         uuid?: string;
@@ -1629,17 +1973,58 @@ const handleNutrition: RecordHandler = async (
     for (const o of objects) {
       if (o.uuid) correlationUuids.add(o.uuid);
     }
+
+    const bundleId = correlation.sourceRevision?.source?.bundleIdentifier;
+    if (bundleId && objects.length > 0) {
+      const startMs = new Date(correlation.startDate).getTime();
+      const endMs = correlation.endDate
+        ? new Date(correlation.endDate).getTime()
+        : startMs;
+      if (!Number.isNaN(startMs)) {
+        const containedTypes = new Set<string>();
+        for (const o of objects) {
+          if (o.quantityType) {
+            containedTypes.add(o.quantityType);
+          }
+        }
+        correlationEvents.push({
+          bundleId,
+          startTime: Math.min(startMs, Number.isNaN(endMs) ? startMs : endMs),
+          endTime: Math.max(startMs, Number.isNaN(endMs) ? startMs : endMs),
+          containedTypes,
+        });
+      }
+    }
+
+    const foodLabel =
+      (typeof correlation.metadata?.HKFoodType === 'string'
+        ? correlation.metadata.HKFoodType
+        : undefined) ||
+      (typeof correlation.metadata?.foodType === 'string'
+        ? correlation.metadata.foodType
+        : undefined) ||
+      correlation.metadataFoodType;
+
+    const timeZone =
+      (typeof correlation.metadata?.HKTimeZone === 'string'
+        ? correlation.metadata.HKTimeZone
+        : undefined) ||
+      (typeof correlation.metadata?.timeZone === 'string'
+        ? correlation.metadata.timeZone
+        : undefined) ||
+      correlation.metadataTimeZone;
+
     return toNutritionRecord({
       objects: objects.map((o) => ({
         quantityType: o.quantityType,
         quantity: o.quantity,
         unit: o.unit,
       })),
-      foodLabel: correlation.metadataFoodType,
+      foodLabel,
       uuid: correlation.uuid,
       startIso: toIsoString(correlation.startDate),
-      sourceBundleId: correlation.sourceRevision?.source?.bundleIdentifier,
-      timeZone: correlation.metadataTimeZone,
+      sourceBundleId: bundleId,
+      timeZone,
     });
   });
 
@@ -1647,7 +2032,8 @@ const handleNutrition: RecordHandler = async (
   const looseRecords = await readLooseNutrition(
     startDate,
     endDate,
-    correlationUuids
+    correlationUuids,
+    correlationEvents
   );
 
   return [...correlationRecords, ...looseRecords];
@@ -1657,6 +2043,7 @@ const handleNutrition: RecordHandler = async (
 const RECORD_HANDLERS: Record<string, RecordHandler> = {
   SleepSession: handleSleepSession,
   Stress: handleStress,
+  MindfulnessSession: handleMindfulnessSession,
   IntermenstrualBleeding: handleReproductiveHealth,
   MenstruationFlow: handleReproductiveHealth,
   OvulationTest: handleReproductiveHealth,
@@ -1769,6 +2156,7 @@ const probeWorkoutEarliest = async (now: Date): Promise<Date | null> => {
 const CATEGORY_PROBE_TYPES = new Set([
   'SleepSession',
   'Stress',
+  'MindfulnessSession',
   'IntermenstrualBleeding',
   'MenstruationFlow',
   'OvulationTest',

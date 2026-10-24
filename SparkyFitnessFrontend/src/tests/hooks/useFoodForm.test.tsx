@@ -131,6 +131,473 @@ describe('useCustomFoodForm', () => {
     });
   });
 
+  it('retains the same new food id when portions fail and the user retries saving', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(1));
+    act(() => result.current.updateField('barcode', '1234567890123'));
+    mockFetchQuery.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      source: 'local',
+      food: createFood({ id: 'created-food' }),
+    });
+    mockSaveFood
+      .mockImplementationOnce(
+        async ({
+          onFoodPersisted,
+        }: {
+          onFoodPersisted?: (food: Food) => void;
+        }) => {
+          onFoodPersisted?.(createFood({ id: 'created-food' }));
+          throw new Error('Portions unavailable');
+        }
+      )
+      .mockResolvedValueOnce(createFood({ id: 'created-food' }));
+    const preventDefault = jest.fn();
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault,
+      } as unknown as React.FormEvent)
+    );
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault,
+      } as unknown as React.FormEvent)
+    );
+    expect(mockSaveFood.mock.calls[1]?.[0].foodId).toBe('created-food');
+    expect(result.current.showBarcodeConflictConfirmation).toBe(false);
+  });
+
+  it('preserves an existing measured custom unit and its nutrient/provenance data on open and normal save', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+      createVariant({
+        id: 'custom-slice',
+        serving_size: 1,
+        serving_unit: 'slice (150 g)',
+        calories: 200,
+        abv_percent: 5,
+        source: 'manual',
+        custom_nutrients: { Mineral: 12 },
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+    expect(result.current.variants[1]).toMatchObject({
+      calories: 200,
+      abv_percent: 5,
+      custom_nutrients: { Mineral: 12 },
+    });
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault: jest.fn(),
+      } as unknown as React.FormEvent)
+    );
+    expect(mockSaveFood.mock.calls[0]?.[0].variants[1]).toMatchObject({
+      calories: 200,
+      abv_percent: 5,
+      custom_nutrients: { Mineral: 12 },
+    });
+  });
+
+  it('adds a known-weight portion to the same food without changing its gram reference', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+    ];
+    const food = createFood({ variants: initialVariants });
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ food, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(1));
+    expect(result.current).toHaveProperty('addNamedPortion');
+    act(() => {
+      result.current.addNamedPortion({
+        name: 'Packung',
+        amount: 150,
+        unit: 'g',
+      });
+    });
+    expect(result.current.variants).toHaveLength(2);
+    expect(result.current.variants[0]).toMatchObject({
+      serving_size: 100,
+      serving_unit: 'g',
+      calories: 100,
+      is_default: true,
+    });
+    expect(result.current.variants[1]).toMatchObject({
+      serving_size: 1,
+      serving_unit: 'Packung (150 g)',
+      calories: 150,
+      protein: 15,
+      is_default: false,
+    });
+    expect(result.current.variants[1]?.id).toBeUndefined();
+    expect(mockSaveFood).not.toHaveBeenCalled();
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault: jest.fn(),
+      } as unknown as React.FormEvent)
+    );
+    expect(mockSaveFood).toHaveBeenCalledTimes(1);
+    expect(mockSaveFood.mock.calls[0]?.[0]).toMatchObject({
+      foodId: 'food-1',
+      foodData: { id: 'food-1', name: 'Imported Food' },
+    });
+    expect(mockSaveFood.mock.calls[0]?.[0].variants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ serving_unit: 'g', calories: 100 }),
+        expect.objectContaining({
+          serving_unit: 'Packung (150 g)',
+          calories: 150,
+        }),
+      ])
+    );
+  });
+
+  it('preserves custom measured-portion nutrition when the gram reference changes', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+      createVariant({
+        id: 'custom-slice',
+        serving_size: 1,
+        serving_unit: 'slice (150 g)',
+        calories: 200,
+        abv_percent: 5,
+        source: 'imported',
+        custom_nutrients: { Mineral: 12 },
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+
+    act(() => result.current.updateVariant(0, 'calories', 300));
+
+    expect(result.current.variants[1]).toMatchObject({
+      id: 'custom-slice',
+      calories: 200,
+      abv_percent: 5,
+      source: 'imported',
+      custom_nutrients: { Mineral: 12 },
+    });
+    expect(result.current.managedPortionRows).toEqual([false, false]);
+
+    act(() => result.current.updateVariant(1, 'calories', 250));
+    act(() => result.current.updateVariant(0, 'calories', 400));
+
+    expect(result.current.variants[1]?.calories).toBe(250);
+    expect(result.current.managedPortionRows).toEqual([false, false]);
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault: jest.fn(),
+      } as unknown as React.FormEvent)
+    );
+    expect(mockSaveFood.mock.calls[0]?.[0].variants[1]).toMatchObject({
+      id: 'custom-slice',
+      calories: 250,
+      abv_percent: 5,
+      source: 'imported',
+      custom_nutrients: { Mineral: 12 },
+    });
+    expect(mockSaveFood.mock.calls[0]?.[0].managedPortions).toEqual([]);
+  });
+
+  it('keeps a previously proportional saved portion in sync with reference edits', async () => {
+    const initialVariants = [
+      createVariant({
+        serving_size: 100,
+        is_default: true,
+        custom_nutrients: { Mineral: 4 },
+      }),
+      createVariant({
+        id: 'saved-packet',
+        serving_size: 1,
+        serving_unit: 'packet (150 g)',
+        calories: 150,
+        protein: 15,
+        carbs: 30,
+        fat: 7.5,
+        saturated_fat: 1.5,
+        custom_nutrients: { Mineral: 6 },
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+    expect(result.current.managedPortionRows).toEqual([false, false]);
+
+    act(() => result.current.updateVariant(0, 'calories', 200));
+
+    expect(result.current.variants[1]).toMatchObject({
+      id: 'saved-packet',
+      calories: 300,
+      protein: 15,
+      custom_nutrients: { Mineral: 6 },
+    });
+    expect(result.current.managedPortionRows).toEqual([false, true]);
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault: jest.fn(),
+      } as unknown as React.FormEvent)
+    );
+    expect(mockSaveFood.mock.calls[0]?.[0].variants[1]).toMatchObject({
+      id: 'saved-packet',
+      calories: 300,
+    });
+    expect(mockSaveFood.mock.calls[0]?.[0].managedPortions).toEqual([
+      { id: 'saved-packet' },
+    ]);
+  });
+
+  it.each([1, 2])(
+    'preserves a custom saved row sharing a managed portion unit at size %s',
+    async (customSize) => {
+      const initialVariants = [
+        createVariant({ id: 'reference', serving_size: 100, is_default: true }),
+        createVariant({
+          id: 'calculated-packet',
+          serving_size: 1,
+          serving_unit: 'packet (150 g)',
+          calories: 150,
+          protein: 15,
+          carbs: 30,
+          fat: 7.5,
+          saturated_fat: 1.5,
+        }),
+        createVariant({
+          id: 'custom-packet',
+          serving_size: customSize,
+          serving_unit: 'packet (150 g)',
+          calories: 777,
+        }),
+      ];
+      const { result } = renderHook(() =>
+        useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+      );
+      await waitFor(() => expect(result.current.variants).toHaveLength(3));
+
+      act(() => result.current.updateVariant(0, 'calories', 200));
+
+      expect(result.current.variants[1]?.calories).toBe(300);
+      expect(result.current.variants[2]).toMatchObject({
+        id: 'custom-packet',
+        serving_size: customSize,
+        calories: 777,
+      });
+      expect(result.current.managedPortionRows).toEqual([false, true, false]);
+      await act(async () =>
+        result.current.handleSubmit({
+          preventDefault: jest.fn(),
+        } as unknown as React.FormEvent)
+      );
+      expect(mockSaveFood.mock.calls[0]?.[0].variants[2]).toMatchObject({
+        id: 'custom-packet',
+        calories: 777,
+      });
+      expect(mockSaveFood.mock.calls[0]?.[0].managedPortions).toEqual([
+        { id: 'calculated-packet' },
+      ]);
+    }
+  );
+
+  it('selects the submitted draft row after an earlier variant is removed', async () => {
+    const initialVariants = [
+      createVariant({ id: 'reference', serving_size: 100, is_default: true }),
+      createVariant({ id: 'unrelated', serving_unit: 'other', calories: 7 }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+    act(() => {
+      result.current.addNamedPortion({
+        name: 'packet',
+        amount: 150,
+        unit: 'g',
+      });
+    });
+    act(() => result.current.removeVariant(1));
+    await act(async () =>
+      result.current.handleSubmit({
+        preventDefault: jest.fn(),
+      } as unknown as React.FormEvent)
+    );
+    expect(mockSaveFood.mock.calls[0]?.[0].variants[1]).toMatchObject({
+      serving_unit: 'packet (150 g)',
+      calories: 150,
+    });
+    expect(mockSaveFood.mock.calls[0]?.[0].managedPortions).toEqual([
+      { draftIndex: 1 },
+    ]);
+  });
+
+  it.each([
+    { field: 'calories', value: 200 },
+    { field: 'abv_percent', value: 5 },
+    { field: 'glycemic_index', value: 'Low' },
+  ])(
+    'preserves an explicit saved-portion $field edit after changing the reference',
+    async ({ field, value }) => {
+      const initialVariants = [
+        createVariant({ serving_size: 100, is_default: true }),
+        createVariant({
+          id: 'saved-portion',
+          serving_size: 1,
+          serving_unit: 'portion (100 g)',
+        }),
+      ];
+      const { result } = renderHook(() =>
+        useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+      );
+      await waitFor(() => expect(result.current.variants).toHaveLength(2));
+
+      act(() => result.current.updateVariant(1, field, value));
+      act(() => result.current.updateVariant(0, 'calories', 300));
+
+      expect(result.current.variants[1]).toMatchObject({ [field]: value });
+      expect(result.current.managedPortionRows).toEqual([false, false]);
+    }
+  );
+
+  it('rejects a duplicate named portion when an existing unit has repeated whitespace', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+      createVariant({
+        id: 'legacy-slice',
+        serving_size: 1,
+        serving_unit: '  Large   slice (150 g)  ',
+        calories: 200,
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+
+    act(() => {
+      expect(
+        result.current.addNamedPortion({
+          name: ' large  slice ',
+          amount: 150,
+          unit: 'g',
+        })
+      ).toBe(false);
+    });
+    expect(result.current.variants).toHaveLength(2);
+  });
+
+  it('rejects invalid or duplicate portions and keeps their nutrition in sync with the gram reference', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(1));
+    expect(result.current).toHaveProperty('addNamedPortion');
+    act(() => {
+      result.current.addNamedPortion({
+        name: 'Packung',
+        amount: 150,
+        unit: 'g',
+      });
+    });
+    act(() => {
+      expect(
+        result.current.addNamedPortion({
+          name: ' packung ',
+          amount: 150,
+          unit: 'g',
+        })
+      ).toBe(false);
+    });
+    act(() => {
+      expect(
+        result.current.addNamedPortion({
+          name: 'Invalid',
+          amount: 0,
+          unit: 'g',
+        })
+      ).toBe(false);
+    });
+    act(() => {
+      result.current.updateVariant(0, 'calories', 200);
+    });
+    expect(result.current.variants).toHaveLength(2);
+    expect(result.current.variants[1]?.calories).toBe(300);
+  });
+
+  it('keeps a saved 100g portion separate from equal-nutrition gram units on reopen', async () => {
+    const initialVariants = [
+      createVariant({ serving_size: 100, is_default: true }),
+      createVariant({
+        id: 'portion-1',
+        serving_size: 1,
+        serving_unit: 'Portion (100 g)',
+        is_default: false,
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+    expect(result.current.variants[1]).toMatchObject({
+      id: 'portion-1',
+      serving_unit: 'Portion (100 g)',
+    });
+  });
+
+  it('calculates volume portions without changing unrelated imported custom units', async () => {
+    const initialVariants = [
+      createVariant({
+        serving_size: 100,
+        serving_unit: 'ml',
+        is_default: true,
+        calories: 80,
+      }),
+      createVariant({
+        id: 'imported-cup',
+        serving_size: 1,
+        serving_unit: 'Small cup',
+        calories: 123,
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCustomFoodForm({ initialVariants, onSave: jest.fn() })
+    );
+    await waitFor(() => expect(result.current.variants).toHaveLength(2));
+    expect(result.current.portionUnit).toBe('ml');
+    act(() => {
+      result.current.addNamedPortion({
+        name: 'Bottle',
+        amount: 250,
+        unit: 'ml',
+      });
+    });
+    expect(result.current.variants[2]).toMatchObject({
+      serving_size: 1,
+      serving_unit: 'Bottle (250 ml)',
+      calories: 200,
+    });
+    act(() => {
+      result.current.updateVariant(0, 'calories', 100);
+    });
+    expect(result.current.variants[2]?.calories).toBe(250);
+    expect(result.current.variants[1]).toMatchObject({
+      id: 'imported-cup',
+      serving_size: 1,
+      serving_unit: 'Small cup',
+      calories: 123,
+    });
+  });
+
   it('preserves nutrition values and respects auto-scale preference after an incompatible unit change', async () => {
     mockAutoScaleOnlineImports = true;
     const initialVariants = [createVariant()];
@@ -1465,5 +1932,320 @@ describe('useCustomFoodForm', () => {
         }),
       })
     );
+  });
+
+  // Regression: "Refresh data from source" only overwrote the fields the data
+  // source actually returned, leaving stale values for everything else (e.g.
+  // an OpenFoodFacts cereal product that reports no sodium or vitamins). The
+  // source stores 0 for nutrients it doesn't provide, which the form maps to
+  // undefined (blank) — so a refresh must clear those fields just like a
+  // fresh import would, instead of keeping whatever was there before.
+  it('clears stale values for fields the data source does not provide on refresh', async () => {
+    const staleVariant = createVariant({
+      id: 'variant-1',
+      serving_size: 100,
+      serving_unit: 'g',
+      is_default: true,
+      source: 'imported',
+      // Fields the source WILL provide again on refresh (stale values to update).
+      calories: 340,
+      carbs: 65,
+      fat: 2,
+      dietary_fiber: 2.5,
+      protein: 6,
+      saturated_fat: 0.5,
+      sugars: 20,
+      // Stale values the source does NOT provide — these must be cleared.
+      sodium: 120,
+      potassium: 300,
+      cholesterol: 10,
+      trans_fat: 0.3,
+      polyunsaturated_fat: 0.9,
+      monounsaturated_fat: 1.4,
+      vitamin_a: 100,
+      vitamin_c: 8,
+      calcium: 45,
+      iron: 1.2,
+      caffeine_mg: 5,
+      water_ml: 200,
+      alcohol_g: 0.6,
+      abv_percent: 0.5,
+      glycemic_index: 'High',
+    });
+
+    // Stable reference: the hook's seeding effect depends on initialVariants,
+    // so a fresh array per render would reseed forever.
+    const initialVariants = [staleVariant];
+
+    const { result } = renderHook(() =>
+      useCustomFoodForm({
+        initialVariants,
+        onSave: jest.fn(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.variants[0]?.is_default).toBe(true);
+    });
+
+    // Mirrors the OpenFoodFacts mapper: only energy, carbs, fat, fiber,
+    // protein, saturated fat and sugars are present; every other nutrient is 0
+    // (the server's "not provided" marker) and there is no glycemic index.
+    const refreshedVariant: FoodVariant = {
+      id: 'variant-1',
+      serving_size: 100,
+      serving_unit: 'g',
+      is_default: true,
+      calories: 367,
+      carbs: 71,
+      fat: 1.4,
+      dietary_fiber: 3.2,
+      protein: 7.1,
+      saturated_fat: 0.2,
+      sugars: 25.5,
+      sodium: 0,
+      potassium: 0,
+      cholesterol: 0,
+      trans_fat: 0,
+      polyunsaturated_fat: 0,
+      monounsaturated_fat: 0,
+      vitamin_a: 0,
+      vitamin_c: 0,
+      calcium: 0,
+      iron: 0,
+      caffeine_mg: 0,
+      water_ml: 0,
+      alcohol_g: 0,
+      abv_percent: 0,
+    };
+
+    const refreshedFood = createFood({
+      name: 'Wheetabix',
+      brand: 'Nestlé',
+      variants: undefined,
+      default_variant: refreshedVariant,
+    });
+
+    act(() => {
+      result.current.applyProviderRefresh(refreshedFood);
+    });
+
+    const refreshed = result.current.variants[0];
+
+    // Fields the source provides are updated to the fresh values.
+    expect(refreshed?.calories).toBe(367);
+    expect(refreshed?.carbs).toBe(71);
+    expect(refreshed?.fat).toBe(1.4);
+    expect(refreshed?.dietary_fiber).toBe(3.2);
+    expect(refreshed?.protein).toBe(7.1);
+    expect(refreshed?.saturated_fat).toBe(0.2);
+    expect(refreshed?.sugars).toBe(25.5);
+
+    // Fields the source does not provide are cleared (0 -> blank), matching a
+    // fresh import instead of retaining the stale values.
+    expect(refreshed?.sodium).toBeUndefined();
+    expect(refreshed?.potassium).toBeUndefined();
+    expect(refreshed?.cholesterol).toBeUndefined();
+    expect(refreshed?.trans_fat).toBeUndefined();
+    expect(refreshed?.polyunsaturated_fat).toBeUndefined();
+    expect(refreshed?.monounsaturated_fat).toBeUndefined();
+    expect(refreshed?.vitamin_a).toBeUndefined();
+    expect(refreshed?.vitamin_c).toBeUndefined();
+    expect(refreshed?.calcium).toBeUndefined();
+    expect(refreshed?.iron).toBeUndefined();
+    expect(refreshed?.caffeine_mg).toBeUndefined();
+    expect(refreshed?.water_ml).toBeUndefined();
+    expect(refreshed?.alcohol_g).toBeUndefined();
+    expect(refreshed?.abv_percent).toBeUndefined();
+
+    // Glycemic index mirrors a fresh import: the source doesn't provide it, so
+    // it resets to 'None' rather than keeping the stale 'High'.
+    expect(refreshed?.glycemic_index).toBe('None');
+  });
+
+  it('rescales non-default variants from the refreshed default on provider refresh', async () => {
+    mockAutoScaleOnlineImports = true;
+
+    // Distinct nutrient values keep the three variants from merging during
+    // seeding (equivalent variants collapse into a single row).
+    const defaultVariant = createVariant({
+      id: 'variant-1',
+      is_default: true,
+      is_locked: true,
+      serving_size: 100,
+      serving_unit: 'g',
+      calories: 340,
+      protein: 13,
+      carbs: 65,
+      fat: 2.5,
+    });
+    const halfPortion = createVariant({
+      id: 'variant-2',
+      is_default: false,
+      is_locked: true,
+      serving_size: 50,
+      serving_unit: 'g',
+      calories: 170,
+      protein: 6.5,
+      carbs: 32.5,
+      fat: 1.25,
+    });
+    const tablespoons = createVariant({
+      id: 'variant-3',
+      is_default: false,
+      is_locked: true,
+      serving_size: 2,
+      serving_unit: 'tbsp',
+      calories: 85,
+      protein: 3.25,
+      carbs: 16.25,
+      fat: 0.75,
+    });
+
+    // Stable reference: the hook's seeding effect depends on initialVariants,
+    // so a fresh array per render would reseed forever.
+    const initialVariants = [defaultVariant, halfPortion, tablespoons];
+
+    const { result } = renderHook(() =>
+      useCustomFoodForm({
+        initialVariants,
+        onSave: jest.fn(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.variants.length).toBe(3);
+      expect(result.current.variants[1]?.is_locked).toBe(true);
+    });
+
+    // The source now reports higher values for the default serving.
+    const refreshedDefault: FoodVariant = {
+      id: 'variant-1',
+      serving_size: 100,
+      serving_unit: 'g',
+      is_default: true,
+      calories: 390,
+      protein: 25,
+      carbs: 78,
+      fat: 3,
+    };
+
+    const refreshedFood = createFood({
+      name: 'Refreshed Food',
+      brand: 'Acme',
+      variants: undefined,
+      default_variant: refreshedDefault,
+    });
+
+    act(() => {
+      result.current.applyProviderRefresh(refreshedFood);
+    });
+
+    const refreshed = result.current.variants;
+
+    // The default variant takes the fresh values.
+    expect(refreshed[0]?.calories).toBe(390);
+    expect(refreshed[0]?.protein).toBe(25);
+
+    // The 50 g variant is rescaled from the REFRESHED default
+    // (50 / 100 = 0.5), not from its own stale values: 390 * 0.5 = 195, not
+    // 170. Its identity, serving data, and lock state survive the rescale.
+    expect(refreshed[1]?.id).toBe('variant-2');
+    expect(refreshed[1]?.is_default).toBe(false);
+    expect(refreshed[1]?.is_locked).toBe(true);
+    expect(refreshed[1]?.serving_size).toBe(50);
+    expect(refreshed[1]?.serving_unit).toBe('g');
+    expect(refreshed[1]?.calories).toBe(195);
+    expect(refreshed[1]?.protein).toBe(12.5);
+    expect(refreshed[1]?.carbs).toBe(39);
+    expect(refreshed[1]?.fat).toBe(1.5);
+
+    // g -> tbsp is not a supported conversion, so the tablespoon variant is
+    // left untouched.
+    expect(refreshed[2]?.id).toBe('variant-3');
+    expect(refreshed[2]?.serving_unit).toBe('tbsp');
+    expect(refreshed[2]?.serving_size).toBe(2);
+    expect(refreshed[2]?.calories).toBe(85);
+    expect(refreshed[2]?.protein).toBe(3.25);
+  });
+
+  it('scales a locked variant from the refreshed default after a provider refresh', async () => {
+    mockAutoScaleOnlineImports = true;
+
+    // Distinct nutrient values keep the two variants separate rows.
+    const defaultVariant = createVariant({
+      id: 'variant-1',
+      is_default: true,
+      is_locked: true,
+      serving_size: 100,
+      serving_unit: 'g',
+      calories: 340,
+      protein: 13,
+      carbs: 65,
+      fat: 2.5,
+    });
+    const halfPortion = createVariant({
+      id: 'variant-2',
+      is_default: false,
+      is_locked: true,
+      serving_size: 50,
+      serving_unit: 'g',
+      calories: 170,
+      protein: 6.5,
+      carbs: 32.5,
+      fat: 1.25,
+    });
+
+    // Stable reference: the hook's seeding effect depends on initialVariants,
+    // so a fresh array per render would reseed forever.
+    const initialVariants = [defaultVariant, halfPortion];
+
+    const { result } = renderHook(() =>
+      useCustomFoodForm({
+        initialVariants,
+        onSave: jest.fn(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.variants.length).toBe(2);
+      expect(result.current.variants[1]?.is_locked).toBe(true);
+    });
+
+    const refreshedDefault: FoodVariant = {
+      id: 'variant-1',
+      serving_size: 100,
+      serving_unit: 'g',
+      is_default: true,
+      calories: 390,
+      protein: 25,
+      carbs: 78,
+      fat: 3,
+    };
+
+    const refreshedFood = createFood({
+      name: 'Refreshed Food',
+      brand: 'Acme',
+      variants: undefined,
+      default_variant: refreshedDefault,
+    });
+
+    act(() => {
+      result.current.applyProviderRefresh(refreshedFood);
+    });
+
+    // Edit the locked 50 g variant's serving size. It must scale from the
+    // refreshed scaling base (195 * 80/50 = 312), not the stale one
+    // (170 * 80/50 = 272).
+    act(() => {
+      result.current.updateVariant(1, 'serving_size', 80);
+    });
+
+    const updated = result.current.variants[1];
+    expect(updated?.serving_size).toBe(80);
+    expect(updated?.calories).toBe(312);
+    expect(updated?.protein).toBe(20);
+    expect(updated?.carbs).toBe(62.4);
+    expect(updated?.fat).toBe(2.4);
   });
 });

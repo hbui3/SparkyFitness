@@ -1,4 +1,4 @@
-import { vi, beforeEach, describe, expect, it } from 'vitest';
+import { vi, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import globalSettingsRepository from '../models/globalSettingsRepository.js';
 import { getSystemClient } from '../db/poolManager.js';
 // Mock dependencies
@@ -20,7 +20,13 @@ describe('globalSettingsRepository', () => {
     getSystemClient.mockResolvedValue(mockClient);
     vi.clearAllMocks();
   });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
   describe('getGlobalSettings', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
     it('should return global settings when found', async () => {
       const mockSettings = {
         id: 1,
@@ -49,6 +55,49 @@ describe('globalSettingsRepository', () => {
       const result = await globalSettingsRepository.getGlobalSettings();
       expect(result.allow_user_ai_config).toBe(true);
     });
+    it.each([
+      [false, undefined, undefined, false],
+      [true, undefined, undefined, true],
+      [null, undefined, undefined, true],
+      [true, undefined, 'true', false],
+      [false, 'true', undefined, true],
+      [false, 'true', 'true', true],
+    ])(
+      'resolves email login from saved=%s FORCE=%s DISABLE=%s to %s',
+      async (saved, force, disable, expected) => {
+        vi.stubEnv('SPARKY_FITNESS_FORCE_EMAIL_LOGIN', force);
+        vi.stubEnv('SPARKY_FITNESS_DISABLE_EMAIL_LOGIN', disable);
+        mockClient.query.mockResolvedValue({
+          rows: [{ id: 1, enable_email_password_login: saved }],
+        });
+        const result = await globalSettingsRepository.getGlobalSettings();
+        expect(result.enable_email_password_login).toBe(expected);
+      }
+    );
+    it.each([
+      [true, undefined, undefined, true],
+      [false, undefined, undefined, false],
+      [null, undefined, undefined, true],
+      [true, undefined, 'true', false],
+      [false, undefined, 'false', false],
+      [false, 'true', undefined, true],
+      [true, 'true', 'true', true],
+      [false, 'false', 'true', false],
+    ])(
+      'resolves passkey login from saved=%s FORCE=%s DISABLE=%s to %s',
+      async (saved, force, disable, expected) => {
+        vi.stubEnv('SPARKY_FITNESS_FORCE_PASSKEY_LOGIN', force);
+        vi.stubEnv('SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN', disable);
+        mockClient.query.mockResolvedValue({
+          rows: [{ id: 1, enable_passkey_login: saved }],
+        });
+        const result = await globalSettingsRepository.getGlobalSettings();
+        expect(result.enable_passkey_login).toBe(expected);
+        expect(result.is_passkey_login_env_configured).toBe(
+          force === 'true' || disable === 'true'
+        );
+      }
+    );
     it('should handle database errors', async () => {
       const error = new Error('DB Error');
       mockClient.query.mockRejectedValue(error);
@@ -59,6 +108,73 @@ describe('globalSettingsRepository', () => {
     });
   });
   describe('saveGlobalSettings', () => {
+    it.each([
+      ['SPARKY_FITNESS_FORCE_EMAIL_LOGIN', 0],
+      ['SPARKY_FITNESS_DISABLE_EMAIL_LOGIN', 0],
+      ['SPARKY_FITNESS_OIDC_AUTH_ENABLED', 1],
+    ])(
+      'keeps the stored admin choice while %s forces it',
+      async (envVar, param) => {
+        vi.stubEnv(envVar, 'true');
+        mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+        await globalSettingsRepository.saveGlobalSettings({
+          enable_email_password_login: false,
+          is_oidc_active: true,
+          is_mfa_mandatory: false,
+        });
+        const [sql, params] = mockClient.query.mock.calls[0];
+        expect(sql).toContain(
+          'enable_email_password_login = COALESCE($1, enable_email_password_login)'
+        );
+        expect(sql).toContain('is_oidc_active = COALESCE($2, is_oidc_active)');
+        expect(params[param]).toBeNull();
+      }
+    );
+
+    it('saves the admin login choices when no env var forces them', async () => {
+      mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+      await globalSettingsRepository.saveGlobalSettings({
+        enable_email_password_login: false,
+        is_oidc_active: true,
+        is_mfa_mandatory: false,
+      });
+      const params = mockClient.query.mock.calls[0][1];
+      expect(params[0]).toBe(false);
+      expect(params[1]).toBe(true);
+    });
+
+    it.each([
+      'SPARKY_FITNESS_FORCE_PASSKEY_LOGIN',
+      'SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN',
+    ])(
+      'keeps the stored passkey setting while %s forces it',
+      async (envVar) => {
+        vi.stubEnv(envVar, 'true');
+        mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+        await globalSettingsRepository.saveGlobalSettings({
+          enable_email_password_login: true,
+          is_oidc_active: false,
+          is_mfa_mandatory: false,
+          enable_passkey_login: false,
+        });
+        expect(mockClient.query.mock.calls[0][1][12]).toBeNull();
+      }
+    );
+
+    it('saves the passkey login setting', async () => {
+      mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+      await globalSettingsRepository.saveGlobalSettings({
+        enable_email_password_login: true,
+        is_oidc_active: false,
+        is_mfa_mandatory: false,
+        enable_passkey_login: false,
+      });
+      const params = mockClient.query.mock.calls[0][1];
+      expect(mockClient.query.mock.calls[0][0]).toContain(
+        'enable_passkey_login = COALESCE($13'
+      );
+      expect(params[12]).toBe(false);
+    });
     it('should update and return global settings', async () => {
       const inputSettings = {
         enable_email_password_login: true,
@@ -80,7 +196,21 @@ describe('globalSettingsRepository', () => {
       // 6th is the existence flag, false here so the CASE WHEN leaves it untouched.
       expect(mockClient.query).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE global_settings'),
-        [true, false, true, false, null, false, null]
+        [
+          true,
+          false,
+          true,
+          false,
+          null,
+          false,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+        ]
       );
       expect(result).toEqual({
         ...savedSettings,

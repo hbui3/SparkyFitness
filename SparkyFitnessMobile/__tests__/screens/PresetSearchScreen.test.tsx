@@ -15,6 +15,7 @@ import { useNavigationActionGuard } from '../../src/hooks/useNavigationActionGua
 import { useScreenHeader } from '../../src/hooks/useScreenHeader';
 import { useStartLiveWorkout } from '../../src/hooks/useStartLiveWorkout';
 import {
+  buildPresetLiveExerciseConfigs,
   buildPresetStartExercisesPayload,
   buildSingleExerciseStartPayload,
 } from '../../src/utils/workoutSession';
@@ -52,6 +53,10 @@ jest.mock('../../src/components/ActiveWorkoutBar', () => ({
 
 jest.mock('../../src/services/nativeTabBarPreference', () => ({
   useNativeIOSHeadersActive: jest.fn(() => false),
+}));
+
+jest.mock('../../src/hooks/useActiveWorkoutPlan', () => ({
+  useActiveWorkoutPlan: jest.fn(() => ({ plan: null, isLoading: false })),
 }));
 
 const mockUseWorkoutPresets = useWorkoutPresets as jest.MockedFunction<
@@ -244,7 +249,10 @@ describe('PresetSearchScreen', () => {
     expect(startLiveWorkout).toHaveBeenCalledWith({
       name: 'Push Day',
       exercises: buildPresetStartExercisesPayload(preset),
+      exerciseConfigs: buildPresetLiveExerciseConfigs(preset),
       sourcePresetId: 7,
+      workoutFormat: 'standard',
+      timeCapSeconds: null,
     });
     expect(navigation.navigate).not.toHaveBeenCalled();
   });

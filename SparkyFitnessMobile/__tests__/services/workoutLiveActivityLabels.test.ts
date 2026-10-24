@@ -1,9 +1,12 @@
 import {
   buildWorkoutLiveActivityLabels,
+  formatNextSubtitle,
+  formatSetProgress,
   isWorkoutLiveActivityLocale,
   resolveWorkoutLiveActivityLocale,
 } from '../../src/services/workoutLiveActivityLabels';
 import i18n, { initializeI18n } from '../../src/localization/i18n';
+import registry from '../../src/localization/localeRegistry.json';
 
 const EN_EXPECTED = {
   rest: 'Rest',
@@ -18,6 +21,10 @@ const EN_EXPECTED = {
   exercise: 'Exercise',
   set: 'Set',
   setOf: 'of',
+  subtractFifteenSeconds: 'Subtract 15 seconds',
+  subtractFifteenSecondsShort: '-15s',
+  skip: 'Skip',
+  next: 'Next',
 };
 
 const PL_EXPECTED = {
@@ -33,6 +40,10 @@ const PL_EXPECTED = {
   exercise: 'Ćwiczenie',
   set: 'Seria',
   setOf: 'z',
+  subtractFifteenSeconds: 'Odejmij 15 sekund',
+  subtractFifteenSecondsShort: '-15 s',
+  skip: 'Pomiń',
+  next: 'Następna',
 };
 
 const ES_EXPECTED = {
@@ -48,6 +59,10 @@ const ES_EXPECTED = {
   exercise: 'Ejercicio',
   set: 'Serie',
   setOf: 'de',
+  subtractFifteenSeconds: 'Restar 15 segundos',
+  subtractFifteenSecondsShort: '-15 s',
+  skip: 'Omitir',
+  next: 'Siguiente',
 };
 
 describe('workoutLiveActivityLabels', () => {
@@ -161,18 +176,19 @@ describe('workoutLiveActivityLabels', () => {
     });
 
     it('falls back to English for unsupported languages and missing values', () => {
-      expect(resolveWorkoutLiveActivityLocale('de')).toBe('en');
-      expect(resolveWorkoutLiveActivityLocale('fr-FR')).toBe('en');
+      // `sv` and `ta` have Weblate directories but are not in the registry.
+      expect(resolveWorkoutLiveActivityLocale('sv')).toBe('en');
+      expect(resolveWorkoutLiveActivityLocale('ta-IN')).toBe('en');
       expect(resolveWorkoutLiveActivityLocale(null)).toBe('en');
       expect(resolveWorkoutLiveActivityLocale(undefined)).toBe('en');
       expect(resolveWorkoutLiveActivityLocale('')).toBe('en');
     });
 
-    it('isWorkoutLiveActivityLocale narrows en, pl and es only', () => {
-      expect(isWorkoutLiveActivityLocale('en')).toBe(true);
-      expect(isWorkoutLiveActivityLocale('pl')).toBe(true);
-      expect(isWorkoutLiveActivityLocale('es')).toBe(true);
-      expect(isWorkoutLiveActivityLocale('de')).toBe(false);
+    it('isWorkoutLiveActivityLocale narrows to the shipped registry only', () => {
+      for (const locale of Object.keys(registry.locales)) {
+        expect(isWorkoutLiveActivityLocale(locale)).toBe(true);
+      }
+      expect(isWorkoutLiveActivityLocale('sv')).toBe(false);
       expect(isWorkoutLiveActivityLocale(null)).toBe(false);
       expect(isWorkoutLiveActivityLocale(undefined)).toBe(false);
     });
@@ -181,6 +197,18 @@ describe('workoutLiveActivityLabels', () => {
       expect(
         isWorkoutLiveActivityLocale('activeWorkout.liveActivity.rest')
       ).toBe(false);
+    });
+  });
+
+  describe('subtitle templates', () => {
+    it('formats set progress and the resting line from placeholders', () => {
+      expect(formatSetProgress(2, 4, 'en')).toBe('Set 2 of 4');
+      expect(formatNextSubtitle('Set 2 of 4', null, 'en')).toBe(
+        'Next: Set 2 of 4'
+      );
+      expect(formatNextSubtitle('Set 2 of 4', '65 lbs × 12 reps', 'en')).toBe(
+        'Next: Set 2 of 4 (65 lbs × 12 reps)'
+      );
     });
   });
 });

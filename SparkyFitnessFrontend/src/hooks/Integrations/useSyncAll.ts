@@ -1,5 +1,8 @@
-import { useMutation } from '@tanstack/react-query';
-import { syncHevyData } from '@/api/Integrations/integrations';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  syncHevyData,
+  syncLiftosaurData,
+} from '@/api/Integrations/integrations';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from 'react-i18next';
 import { MANUAL_SYNC_PROVIDERS } from '@/constants/integrationConstants';
@@ -8,16 +11,19 @@ import {
   handleManualSyncGarmin,
   handleManualSyncOura,
   handleManualSyncPolar,
+  handleManualSyncCoros,
   handleManualSyncStrava,
   handleManualSync,
 } from '@/api/Settings/externalProviderService';
 import { DataProvider } from '@/types/settings';
 import { useDiaryInvalidation } from '../useInvalidateKeys';
+import { externalProviderKeys } from '@/api/keys/settings';
 
 export const useSyncAllMutation = () => {
   const { toast } = useToast();
   const { t } = useTranslation();
   const invalidateSyncData = useDiaryInvalidation();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (providers: DataProvider[]) => {
@@ -28,6 +34,7 @@ export const useSyncAllMutation = () => {
             p.provider_type
           ) &&
           (p.provider_type === 'hevy' ||
+            p.provider_type === 'liftosaur' ||
             p.provider_type === 'garmin' ||
             p.has_token)
       );
@@ -54,6 +61,9 @@ export const useSyncAllMutation = () => {
             case 'polar':
               await handleManualSyncPolar(provider.id);
               break;
+            case 'coros_mcp':
+              await handleManualSyncCoros({ providerId: provider.id });
+              break;
             case 'withings':
               await handleManualSync();
               break;
@@ -62,6 +72,12 @@ export const useSyncAllMutation = () => {
               break;
             case 'hevy':
               await syncHevyData(false, provider.id);
+              break;
+            case 'liftosaur':
+              await syncLiftosaurData(false, provider.id);
+              queryClient.invalidateQueries({
+                queryKey: externalProviderKeys.lists(),
+              });
               break;
           }
           successCount++;

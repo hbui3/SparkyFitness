@@ -17,12 +17,14 @@ import {
   useConnectFitbitMutation,
   useConnectOuraMutation,
   useConnectPolarMutation,
+  useConnectCorosMutation,
   useConnectStravaMutation,
   useConnectWithingsMutation,
   useLoginGarminMutation,
   useSyncHevyMutation,
   useSyncSpeedianceMutation,
   useSyncIGPSportMutation,
+  useSyncLiftosaurMutation,
 } from '@/hooks/Integrations/useIntegrations';
 import {
   useCreateExternalProviderMutation,
@@ -37,6 +39,7 @@ import {
 import { ProviderSpecificFields } from './ProviderSpecificFields';
 import { useToast } from '@/hooks/use-toast';
 
+import { useTranslation } from 'react-i18next';
 interface AddExternalProviderFormProps {
   showAddForm: boolean;
   setShowAddForm: (show: boolean) => void;
@@ -52,6 +55,7 @@ const AddExternalProviderForm = ({
   onGarminMfaRequired = () => {},
   isAdminMode = false,
 }: AddExternalProviderFormProps) => {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const { toast } = useToast();
   const { data: providerTypes } = useExternalProviderTypesQuery();
@@ -61,6 +65,8 @@ const AddExternalProviderForm = ({
     useSyncSpeedianceMutation();
   const { mutateAsync: syncIGPSportData, isPending: isSyncingIGPSport } =
     useSyncIGPSportMutation();
+  const { mutateAsync: syncLiftosaurData, isPending: isSyncingLiftosaur } =
+    useSyncLiftosaurMutation();
   const { mutateAsync: loginGarmin, isPending: isLoggingInGarmin } =
     useLoginGarminMutation();
   const { mutateAsync: createExternalProvider, isPending: isCreatingProvider } =
@@ -74,6 +80,8 @@ const AddExternalProviderForm = ({
     useConnectOuraMutation();
   const { mutateAsync: handleConnectPolar, isPending: isConnectingPolar } =
     useConnectPolarMutation();
+  const { mutateAsync: handleConnectCoros, isPending: isConnectingCoros } =
+    useConnectCorosMutation();
   const { mutateAsync: handleConnectStrava, isPending: isConnectingStrava } =
     useConnectStravaMutation();
   const {
@@ -85,12 +93,14 @@ const AddExternalProviderForm = ({
     isSyncingHevy ||
     isSyncingSpeediance ||
     isSyncingIGPSport ||
+    isSyncingLiftosaur ||
     isLoggingInGarmin ||
     isCreatingProvider ||
     isCreatingGlobal ||
     isConnectingFitbit ||
     isConnectingOura ||
     isConnectingPolar ||
+    isConnectingCoros ||
     isConnectingStrava ||
     isConnectingWithings;
 
@@ -117,13 +127,17 @@ const AddExternalProviderForm = ({
     fitbit: () => handleConnectFitbit(),
     oura: () => handleConnectOura(),
     polar: (id) => handleConnectPolar(id),
+    coros_mcp: (id) => handleConnectCoros(id),
     strava: () => handleConnectStrava(),
   };
   const handleAddProvider = async () => {
     if (!user) {
       toast({
-        title: 'Error',
-        description: 'User not authenticated. Please log in again.',
+        title: t('common.error', 'Error'),
+        description: t(
+          'settings.addExternalProviderForm.userNotAuthenticatedPleaseLog',
+          'User not authenticated. Please log in again.'
+        ),
         variant: 'destructive',
       });
       return;
@@ -132,7 +146,7 @@ const AddExternalProviderForm = ({
     const validationError = validateProvider(newProvider, providerTypes);
     if (validationError) {
       toast({
-        title: 'Error',
+        title: t('common.error', 'Error'),
         description: validationError,
         variant: 'destructive',
       });
@@ -157,9 +171,14 @@ const AddExternalProviderForm = ({
         if (garminData?.status === 'needs_mfa' && garminData?.client_state) {
           onGarminMfaRequired(garminData.client_state);
           toast({
-            title: 'Garmin MFA Required',
-            description:
-              'Please complete Multi-Factor Authentication for Garmin.',
+            title: t(
+              'settings.addExternalProviderForm.garminMFARequired',
+              'Garmin MFA Required'
+            ),
+            description: t(
+              'settings.addExternalProviderForm.pleaseCompleteMultiFactorAuthentication',
+              'Please complete Multi-Factor Authentication for Garmin.'
+            ),
           });
           setShowAddForm(false);
           return;
@@ -239,9 +258,25 @@ const AddExternalProviderForm = ({
         }
       }
 
+      if (newProvider.provider_type === 'liftosaur' && newProvider.is_active) {
+        try {
+          await syncLiftosaurData({
+            fullSync: fullSyncOnConnect,
+            providerId: createdProvider.id,
+          });
+        } catch (error: unknown) {
+          if (error instanceof Error) {
+            console.error(error);
+          }
+        }
+      }
+
       toast({
-        title: 'Success',
-        description: 'External data provider added successfully',
+        title: t('common.success', 'Success'),
+        description: t(
+          'settings.addExternalProviderForm.externalDataProviderAddedSuccessfully',
+          'External data provider added successfully'
+        ),
       });
 
       setNewProvider({
@@ -269,8 +304,12 @@ const AddExternalProviderForm = ({
       if (error instanceof Error) {
         console.error(error);
         toast({
-          title: 'Error',
-          description: `Failed to add external data provider: ${error.message}`,
+          title: t('common.error', 'Error'),
+          description: t(
+            'settings.addExternalProviderForm.failedToAddExternalData',
+            'Failed to add external data provider: {{message}}',
+            { message: error.message }
+          ),
           variant: 'destructive',
         });
       }
@@ -282,7 +321,10 @@ const AddExternalProviderForm = ({
       {!showAddForm && (
         <Button onClick={() => setShowAddForm(true)} variant="outline">
           <Plus className="h-4 w-4 mr-2" />
-          Add New Data Provider
+          {t(
+            'settings.addExternalProviderForm.addNewDataProvider',
+            'Add New Data Provider'
+          )}
         </Button>
       )}
 
@@ -294,11 +336,21 @@ const AddExternalProviderForm = ({
           }}
           className="border rounded-lg p-4 space-y-4"
         >
-          <h3 className="text-lg font-medium">Add New Data Provider</h3>
+          <h3 className="text-lg font-medium">
+            {t(
+              'settings.addExternalProviderForm.addNewDataProvider',
+              'Add New Data Provider'
+            )}
+          </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="new_provider_name">Provider Name</Label>
+              <Label htmlFor="new_provider_name">
+                {t(
+                  'settings.addExternalProviderForm.providerName',
+                  'Provider Name'
+                )}
+              </Label>
               <Input
                 id="new_provider_name"
                 value={newProvider.provider_name}
@@ -308,11 +360,19 @@ const AddExternalProviderForm = ({
                     provider_name: e.target.value,
                   }))
                 }
-                placeholder="My Provider name"
+                placeholder={t(
+                  'settings.addExternalProviderForm.myProviderName',
+                  'My Provider name'
+                )}
               />
             </div>
             <div>
-              <Label htmlFor="new_provider_type">Provider Type</Label>
+              <Label htmlFor="new_provider_type">
+                {t(
+                  'settings.addExternalProviderForm.providerType',
+                  'Provider Type'
+                )}
+              </Label>
               <Select
                 value={newProvider.provider_type}
                 onValueChange={(value) =>
@@ -327,7 +387,9 @@ const AddExternalProviderForm = ({
                         ? 'https://euapi.speediance.com'
                         : value === 'igpsport'
                           ? 'https://prod.en.igpsport.com'
-                          : '',
+                          : value === 'coros_mcp'
+                            ? 'https://mcpus.coros.com/mcp'
+                            : '',
                     garmin_connect_status: 'disconnected',
                     garmin_last_status_check: '',
                     garmin_token_expires: '',
@@ -362,8 +424,11 @@ const AddExternalProviderForm = ({
             onCopy={(text) => {
               navigator.clipboard.writeText(text);
               toast({
-                title: 'Copied!',
-                description: 'URL copied to clipboard.',
+                title: t('common.copied', 'Copied!'),
+                description: t(
+                  'settings.addExternalProviderForm.urlCopiedToClipboard',
+                  'URL copied to clipboard.'
+                ),
               });
             }}
           />
@@ -375,7 +440,12 @@ const AddExternalProviderForm = ({
                 setNewProvider((prev) => ({ ...prev, is_active: checked }))
               }
             />
-            <Label htmlFor="new_is_active">Activate this provider</Label>
+            <Label htmlFor="new_is_active">
+              {t(
+                'settings.addExternalProviderForm.activateThisProvider',
+                'Activate this provider'
+              )}
+            </Label>
           </div>
 
           {/* Public sharing switch removed */}
@@ -383,7 +453,15 @@ const AddExternalProviderForm = ({
           <div className="flex gap-2">
             <Button disabled={isAnyIntegrationPending} type="submit">
               <Save className="h-4 w-4 mr-2" />
-              {isAnyIntegrationPending ? 'Connecting...' : 'Add Provider'}
+              {isAnyIntegrationPending
+                ? t(
+                    'settings.addExternalProviderForm.connecting',
+                    'Connecting...'
+                  )
+                : t(
+                    'settings.addExternalProviderForm.addProvider',
+                    'Add Provider'
+                  )}
             </Button>
             <Button
               type="button"
@@ -391,7 +469,7 @@ const AddExternalProviderForm = ({
               onClick={() => setShowAddForm(false)}
             >
               <X className="h-4 w-4 mr-2" />
-              Cancel
+              {t('common.cancel', 'Cancel')}
             </Button>
           </div>
         </form>

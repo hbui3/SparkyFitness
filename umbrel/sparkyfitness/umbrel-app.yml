@@ -1,0 +1,83 @@
+manifestVersion: 1
+id: sparkyfitness
+category: files
+name: SparkyFitness
+version: "v1.9.0"
+tagline: Self-hosted nutrition, exercise, and body metrics tracker
+description: >-
+  🥗 SparkyFitness is a self-hosted alternative to MyFitnessPal for tracking
+  what you eat, how you train, and how your body responds — with all of it
+  staying on your own Umbrel.
+
+
+  This app manages its own accounts and two-factor authentication, so it does
+  not use Umbrel's login screen — anyone who can reach its address reaches the
+  SparkyFitness sign-in page directly. The first account you create becomes
+  the administrator, so create yours before sharing the app. Additional
+  members can then sign up and, if they choose, share individual data
+  categories with a coach, partner, or family member at a granularity they
+  control.
+
+
+  - Food diary with barcode scanning, custom foods and recipes, meal presets,
+  and optional online food databases such as OpenFoodFacts, Nutritionix, and
+  FatSecret
+
+  - Exercise logging with a searchable library, workout presets, and repeatable
+  weekly workout plans
+
+  - Body measurements, custom trackers, progress photos, and water intake
+
+  - Goals and dashboards for calories, macros, weight trends, and step counts
+
+  - Optional AI nutrition coach you can point at your own local or hosted model
+
+  - Health app sync from iOS and Android via the companion SparkyFitness mobile
+  app, a bundled Garmin Connect sync sidecar, and an API for your own
+  integrations
+
+
+  Online food databases and AI features are off until you add your own
+  credentials in the app's settings; nothing is sent anywhere by default.
+releaseNotes: >-
+  - **Adaptive calorie budgets:** Dynamic Goal and Percentage Earn-Back no longer add activity calories or optional BMR credit to an Adaptive target a second time. Remaining calories may be lower after upgrading because these duplicate credits are removed. Recorded activity remains visible, and Manual targets retain their existing earn-back behavior.
+
+  - Supplement barcode scanning
+
+  - Add Lock Screen widgets and controls for calories, water, fasting and food- #133
+
+  - Add a warm-up set generator to the active workout
+
+  - Log a mood check-in and show it on the dashboard
+
+  - Add an iOS water widget with a log-a-drink button
+
+  - Fill in a supplement from a photo of its label
+
+  - Celebrate personal records on the watch
+
+  - Log effort (RPE) after a set
+
+  - Show the exercise, set, and target on the workout Live Activity
+
+  - Feat (Mobile): add fasting settings and fasting report
+
+  - Create and edit workout plans
+
+  Full release notes: https://github.com/CodeWithCJ/SparkyFitness/releases/tag/v1.9.0
+
+developer: CodeWithCJ
+website: https://codewithcj.github.io/SparkyFitness/
+dependencies: []
+repo: https://github.com/CodeWithCJ/SparkyFitness
+support: https://github.com/CodeWithCJ/SparkyFitness/issues
+
+port: 3019
+gallery: []
+path: ""
+
+defaultUsername: ""
+defaultPassword: ""
+
+submitter: Rishikesh Anand
+submission: https://github.com/getumbrel/umbrel-apps/pull/6118

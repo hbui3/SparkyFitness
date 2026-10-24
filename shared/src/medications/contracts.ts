@@ -1,13 +1,27 @@
+import type { SerumPoint } from './glp1.ts';
+import type { FoodVariantNutrientField } from '../constants/foodVariantNutrients.ts';
 import type { SharedScheduleRule } from './schedules.ts';
 
 // Contract types for the v2 medications API (/api/v2/medications). Field
 // names mirror the server's medicationSchemas.ts and repository columns —
 // snake_case, straight from the database.
 
-export type MedicationEntryStatus = 'taken' | 'skipped' | 'snoozed' | 'prn_taken';
+export type MedicationEntryStatus =
+  'taken' | 'skipped' | 'snoozed' | 'prn_taken';
 
 /** Meal timing for a scheduled dose, relative to the nearest meal. */
-export type MedicationWithMeal = 'before' | 'with' | 'after' | 'away_from_meals';
+export type MedicationWithMeal =
+  'before' | 'with' | 'after' | 'away_from_meals';
+
+/**
+ * A supplement's per-serving nutrition: the fixed food-variant nutrient columns
+ * plus the user's own custom nutrients, keyed by custom nutrient name.
+ */
+export type MedicationNutrients = Partial<
+  Record<FoodVariantNutrientField, number>
+> & {
+  custom_nutrients?: Record<string, number>;
+};
 
 export interface Medication {
   id: string;
@@ -39,6 +53,10 @@ export interface Medication {
   is_active: boolean;
   is_quick: boolean;
   is_glp1: boolean;
+  /** A supplement counts toward the day's nutrition through `nutrients`. */
+  is_supplement?: boolean;
+  /** Nutrition per serving taken, for a supplement. Empty for a medication. */
+  nutrients?: MedicationNutrients;
   notes: string | null;
   source: string;
   rxnorm_rxcui?: string | null;
@@ -126,6 +144,8 @@ export interface CreateMedicationInput {
   is_active?: boolean;
   is_quick?: boolean;
   is_glp1?: boolean;
+  is_supplement?: boolean;
+  nutrients?: MedicationNutrients;
   notes?: string | null;
   source?: string;
   custom_fields?: Record<string, unknown>;
@@ -195,3 +215,99 @@ export interface ListMedicationEntriesOptions {
   toDate?: string;
   medicationId?: string;
 }
+
+// --- GLP-1 injections, pen/vial inventory and titration ---------------------
+
+export interface MedicationPen {
+  id: string;
+  medication_id: string;
+  kind: 'pen' | 'vial';
+  label: string | null;
+  dose_mg: number | null;
+  concentration_mg_ml: number | null;
+  volume_ml: number | null;
+  doses_total: number | null;
+  doses_used: number;
+  status: 'sealed' | 'in_use' | 'finished';
+  opened_at: string | null;
+  expiry_date: string | null;
+  bud_date: string | null;
+  reorder_flag: boolean;
+  reorder_threshold: number | null;
+  notes: string | null;
+}
+
+export interface InjectionEntry {
+  id: string;
+  medication_id: string;
+  pen_id: string | null;
+  injected_at: string;
+  entry_date: string;
+  site: string | null;
+  dose_mg: number | null;
+  notes: string | null;
+}
+
+export interface TitrationStep {
+  id: string;
+  medication_id: string;
+  dose_mg: number;
+  dose_unit: string;
+  start_date: string | null;
+  planned_weeks: number | null;
+  step_order: number;
+  status: 'done' | 'active' | 'planned';
+  is_taper: boolean;
+  note: string | null;
+}
+
+export interface SerumCurveResponse {
+  drugId: string | null;
+  drugName?: string | null;
+  curve: SerumPoint[];
+  currentLevelFraction: number | null;
+  /** Day positions of logged injections (relative to the curve anchor), for chart markers. */
+  doseDays: number[];
+  /**
+   * ISO timestamp of day 0 (the earliest injection in the window), so the chart can
+   * plot real dates instead of day offsets. Null when there is no curve to anchor.
+   */
+  anchorDate: string | null;
+  disclaimer: string;
+}
+
+export interface SiteSuggestionResponse {
+  suggestedSiteId: string;
+  restingSiteIds: string[];
+  sites: { id: string; label: string; region: string; side: string }[];
+  restDays: number;
+  /** User's customized active site ids (ordered), or null if using defaults. */
+  activeSiteIds: string[] | null;
+}
+
+export interface LogInjectionInput {
+  medication_id: string;
+  /** Omit while deduct_pen is true to let the server auto-pick the pen (in-use first, else oldest sealed). */
+  pen_id?: string | null;
+  injected_at?: string;
+  entry_date?: string | null;
+  site?: string | null;
+  /** Omit to let the server resolve it from the active titration step or the medication's default dose. */
+  dose_mg?: number | null;
+  deduct_pen?: boolean;
+  notes?: string | null;
+}
+
+// pen_id/deduct_pen are deliberately not editable: delete and re-log to change the pen.
+export interface UpdateInjectionInput {
+  injected_at?: string;
+  entry_date?: string | null;
+  site?: string | null;
+  dose_mg?: number | null;
+  notes?: string | null;
+  custom_fields?: Record<string, unknown> | null;
+}
+
+export type UpdateTitrationStepInput = Partial<
+  Omit<TitrationStep, 'id' | 'medication_id'>
+>;

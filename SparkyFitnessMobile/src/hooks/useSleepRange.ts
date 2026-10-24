@@ -4,6 +4,7 @@ import { ApiError } from '../services/api/errors';
 import { fetchSleepEntries } from '../services/api/sleepApi';
 import { RANGE_DAYS, type HealthTrendDateRange } from '../types/healthTrends';
 import {
+  isPlottedSleepStage,
   laneForStageType,
   type SleepEntry,
   type SleepStageEvent,
@@ -12,6 +13,7 @@ import {
   type SleepTimelineSummary,
 } from '../types/sleep';
 import { addDays, getTodayDate } from '../utils/dateUtils';
+import { average } from '../utils/mathUtils';
 import { resolveSleepZone } from '../utils/sleepDay';
 import { selectMainSleep } from '../utils/sleepSessions';
 import { sleepRangeQueryKey } from './queryKeys';
@@ -87,6 +89,7 @@ const mergeAdjacentSegments = (
  */
 const buildSessionSegments = (entry: SleepEntry): SleepTimelineSegment[] => {
   const stageSegments = entry.stage_events
+    .filter((stage) => isPlottedSleepStage(stage.stage_type))
     .map(toSegment)
     .filter((segment): segment is SleepTimelineSegment => segment !== null)
     .sort((first, second) => first.startMs - second.startMs);
@@ -98,12 +101,6 @@ const buildSessionSegments = (entry: SleepEntry): SleepTimelineSegment[] => {
   if (Number.isNaN(startMs) || Number.isNaN(endMs)) return [];
 
   return [{ stage: 'other', startMs, endMs }];
-};
-
-const average = (values: number[]): number | null => {
-  if (values.length === 0) return null;
-
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
 const groupEntriesByDay = (

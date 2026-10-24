@@ -19,7 +19,10 @@ describe('getModelOptions', () => {
 
   it('still returns the OpenAI list for openai (unchanged)', () => {
     const options = getModelOptions('openai');
-    expect(options[0]).toBe('gpt-4o-mini');
+    expect(options[0]).toBe('gpt-6-astra');
+    expect(options).toEqual(
+      expect.arrayContaining(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-4o-mini'])
+    );
     expect(options.length).toBeGreaterThan(1);
   });
 
@@ -29,6 +32,22 @@ describe('getModelOptions', () => {
 
   it('returns the Muse Spark preset for meta', () => {
     expect(getModelOptions('meta')).toEqual(['muse-spark-1.1']);
+  });
+
+  it('returns presets for perplexity', () => {
+    expect(getModelOptions('perplexity')).toEqual([
+      'fast',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+    ]);
+  });
+
+  it('includes Perplexity models in the OpenRouter preset list', () => {
+    const options = getModelOptions('openrouter');
+    expect(options).toContain('perplexity/sonar');
+    expect(options).toContain('perplexity/sonar-pro');
   });
 });
 
@@ -52,6 +71,7 @@ describe('requiresApiKey', () => {
     'groq',
     'openrouter',
     'xai',
+    'perplexity',
     'meta',
   ])('requires a key for cloud provider %s', (serviceType) => {
     expect(requiresApiKey(serviceType)).toBe(true);

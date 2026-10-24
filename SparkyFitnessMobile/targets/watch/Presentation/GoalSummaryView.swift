@@ -26,7 +26,7 @@ struct GoalSummaryView: View {
                 headlineRow
                 macroRows
                 if nutrition == nil {
-                    Text("Open SparkyFitness on your phone to sync today's numbers.")
+                    Text(String(localized: "watch.goals.openPhoneToSync", defaultValue: "Open SparkyFitness on your phone to sync today's numbers."))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -123,44 +123,87 @@ struct GoalSummaryView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Macros
+    // MARK: - Nutrients
 
-    /// Carbs, fat, protein — the order shown on the phone's dashboard. The
+    /// The nutrients the phone's Settings → Apple Watch picked, in its order.
+    /// Before the first sync, or from a phone build that doesn't pick, it is
+    /// protein, carbs and fat — the order shown on the phone's dashboard. The
     /// complication's outer ring runs fat, carbs, protein clockwise; they are
     /// intentionally independent, since one is a list and the other a dial.
+    private var rows: [NutrientRow?] {
+        if let rows = nutrition?.rows { return rows }
+        return [
+            macroRow("protein", "Protein", nutrition?.protein),
+            macroRow("carbs", "Carbs", nutrition?.carbs),
+            macroRow("fat", "Fat", nutrition?.fat),
+        ]
+    }
+
     private var macroRows: some View {
         VStack(spacing: 7) {
-            macroRow("Protein", nutrition?.protein, color: GoalPalette.protein)
-            macroRow("Carbs", nutrition?.carbs, color: GoalPalette.carbs)
-            macroRow("Fat", nutrition?.fat, color: GoalPalette.fat)
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                nutrientRow(row, placeholderTitle: Self.placeholderTitles[safe: index], index: index)
+            }
         }
     }
 
-    private func macroRow(_ title: String, _ macro: MacroGoal?, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+    private static let placeholderTitles = ["Protein", "Carbs", "Fat"]
+
+    /// The fixed macros as rows. Nil before the phone has synced today, which
+    /// the row draws as dashes.
+    private func macroRow(_ key: String, _ title: String, _ macro: MacroGoal?) -> NutrientRow? {
+        guard let macro else { return nil }
+        return NutrientRow(
+            key: key,
+            label: title,
+            unit: "g",
+            consumed: macro.consumed,
+            goal: macro.hasGoal ? macro.goal : nil,
+            progress: macro.progress
+        )
+    }
+
+    private func nutrientRow(_ row: NutrientRow?, placeholderTitle: String?, index: Int) -> some View {
+        let color = GoalPalette.color(forNutrient: row?.key ?? placeholderTitle?.lowercased() ?? "", index: index)
+        let title = row?.label ?? placeholderTitle ?? ""
+        return VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(title)
                     .font(.system(size: 14))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Spacer(minLength: 4)
-                Text(macro.map { whole($0.consumed) } ?? "–")
+                Text(row.map { whole($0.consumed) } ?? "–")
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(color)
-                Text(macro.map { "/ \(whole($0.goal))g" } ?? "/ –")
+                Text(goalText(row))
                     .font(.system(size: 13))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            progressBar(progress: macro?.progress ?? 0, color: color)
+            // No goal, nothing to fill towards: the amount stands alone.
+            if row == nil || row?.goal != nil {
+                progressBar(progress: row?.progress ?? 0, color: color)
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(macroAccessibilityLabel(title, macro))
+        .accessibilityLabel(nutrientAccessibilityLabel(title, row))
     }
 
-    private func macroAccessibilityLabel(_ title: String, _ macro: MacroGoal?) -> String {
-        guard let macro else { return "\(title) not synced yet" }
-        return "\(title) \(whole(macro.consumed)) of \(whole(macro.goal)) grams"
+    /// "/ 150g" against a goal, just the unit without one.
+    private func goalText(_ row: NutrientRow?) -> String {
+        guard let row else { return "/ –" }
+        guard let goal = row.goal else { return row.unit }
+        return "/ \(whole(goal))\(row.unit)"
+    }
+
+    private func nutrientAccessibilityLabel(_ title: String, _ row: NutrientRow?) -> String {
+        guard let row else { return "\(title) not synced yet" }
+        let amount = "\(whole(row.consumed)) \(row.unit)"
+        guard let goal = row.goal else { return "\(title) \(amount)" }
+        return "\(title) \(whole(row.consumed)) of \(whole(goal)) \(row.unit)"
     }
 
     /// Gradient rather than a flat fill so a nearly-empty bar still shows its
@@ -200,4 +243,32 @@ enum GoalPalette {
     static let fat = Color(red: 0.541, green: 0.761, blue: 0.855)
     static let protein = Color(red: 0.859, green: 0.690, blue: 0.435)
     static let water = Color.cyan
+    static let medication = Color.mint
+
+    /// Colours for the rows past the three macros, in turn. Picked to stay
+    /// apart from the macro colours and from each other on a black face.
+    private static let extra: [Color] = [
+        Color(red: 0.918, green: 0.588, blue: 0.690),
+        Color(red: 0.804, green: 0.682, blue: 0.965),
+        Color(red: 0.965, green: 0.827, blue: 0.459),
+        Color(red: 0.537, green: 0.843, blue: 0.776),
+        Color(red: 0.957, green: 0.635, blue: 0.518),
+    ]
+
+    /// The macros keep their own colours wherever they sit in the list;
+    /// anything else takes the next extra colour by position.
+    static func color(forNutrient key: String, index: Int) -> Color {
+        switch key {
+        case "protein": return protein
+        case "carbs": return carbs
+        case "fat": return fat
+        default: return extra[index % extra.count]
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
 }

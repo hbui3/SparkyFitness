@@ -1,5 +1,7 @@
 import express from 'express';
-import { authenticate } from '../middleware/authMiddleware.js';
+// @ts-expect-error TS(7016): Could not find a declaration file for module 'multer'
+import multer from 'multer';
+import { authenticate, isAdmin } from '../middleware/authMiddleware.js';
 import preferenceService from '../services/preferenceService.js';
 import checkPermissionMiddleware from '../middleware/checkPermissionMiddleware.js';
 import foodService from '../services/foodService.js';
@@ -19,6 +21,27 @@ import {
   getUsdaFoodDetails,
   searchUsdaFoodsByBarcode,
 } from '../integrations/usda/usdaService.js';
+import {
+  importCnfFromZipBuffer,
+  importCnfFromUrl,
+  getCnfImportStatus,
+  deleteCnfLibraryFoods,
+} from '../services/cnfBulkImportService.js';
+import {
+  cnfBulkImportRequestSchema,
+  livsmedelsverketBulkImportRequestSchema,
+} from '@workspace/shared';
+import {
+  getLivsmedelsverketImportStatus,
+  startLivsmedelsverketBulkImport,
+  deleteLivsmedelsverketLibraryFoods,
+} from '../services/livsmedelsverketBulkImportService.js';
+
+const cnfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
 const router = express.Router();
 router.use(express.json());
 // Apply diary permission check to all food routes
@@ -1034,4 +1057,318 @@ router.get('/usda/details', authenticate, async (req, res, next) => {
     next(error);
   }
 });
+
+/**
+ * @swagger
+ * /foods/canadian-nutrient-file/bulk-import:
+ *   post:
+ *     summary: Bulk import Canadian Nutrient File foods and nutrients
+ *     tags: [External Integrations]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *               syncPastEntries:
+ *                 type: boolean
+ *               language:
+ *                 type: string
+ *                 enum: [en, fr]
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               archiveUrl:
+ *                 type: string
+ *               syncPastEntries:
+ *                 type: boolean
+ *               language:
+ *                 type: string
+ *                 enum: [en, fr]
+ *     responses:
+ *       200:
+ *         description: Import completed successfully (when wait=true)
+ *       202:
+ *         description: Import started in background
+ */
+const OFFICIAL_CNF_ARCHIVE_URL =
+  'https://open.canada.ca/data/dataset/1b6139bd-ed7e-4043-bc28-ff00e10f3109/resource/019f2a90-e3a9-489d-b6e1-f74f4ba1d006/download/cnf_fcen_all-files-data_2026.zip';
+
+router.post(
+  '/canadian-nutrient-file/bulk-import',
+  authenticate,
+  isAdmin,
+  cnfUpload.single('file'),
+  async (req, res, next) => {
+    try {
+      const userId = req.userId;
+      const rawSync = req.body?.syncPastEntries;
+      const syncPastEntries = rawSync === true || rawSync === 'true';
+      const language =
+        req.body?.language === 'fr' ? ('fr' as const) : ('en' as const);
+
+      let maxFoods: number | undefined = undefined;
+      const rawMaxFoods = req.body?.maxFoods;
+      if (
+        rawMaxFoods !== undefined &&
+        rawMaxFoods !== null &&
+        rawMaxFoods !== ''
+      ) {
+        const parsed = Number(rawMaxFoods);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return res
+            .status(400)
+            .json({ error: 'maxFoods must be a positive integer' });
+        }
+        maxFoods = parsed;
+      }
+
+      const rawArchiveUrl = req.body?.archiveUrl;
+      const archiveUrl =
+        typeof rawArchiveUrl === 'string' && rawArchiveUrl.trim()
+          ? rawArchiveUrl.trim()
+          : undefined;
+
+      const validation = cnfBulkImportRequestSchema.safeParse({
+        archiveUrl,
+        syncPastEntries,
+        language,
+        maxFoods,
+      });
+
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Invalid request body',
+          details: validation.error.issues,
+        });
+      }
+
+      const runWait = req.query.wait === 'true';
+
+      const uploadedFile = (req as unknown as { file?: { buffer: Buffer } })
+        .file;
+
+      if (uploadedFile?.buffer) {
+        const importPromise = importCnfFromZipBuffer(
+          userId,
+          uploadedFile.buffer,
+          { syncPastEntries, language, maxFoods }
+        );
+
+        if (runWait) {
+          const result = await importPromise;
+          return res.json({
+            message: 'Bulk import completed successfully',
+            ...result,
+          });
+        }
+
+        importPromise.catch((err) => {
+          log('error', `Background CNF import failed for user ${userId}:`, err);
+        });
+
+        return res.status(202).json({
+          message: 'Bulk import started',
+          status: getCnfImportStatus(userId),
+        });
+      }
+
+      const targetUrl = archiveUrl || OFFICIAL_CNF_ARCHIVE_URL;
+
+      const importPromise = importCnfFromUrl(userId, targetUrl, {
+        syncPastEntries,
+        language,
+        maxFoods,
+      });
+
+      if (runWait) {
+        const result = await importPromise;
+        return res.json({
+          message: 'Bulk import completed successfully',
+          ...result,
+        });
+      }
+
+      importPromise.catch((err) => {
+        log(
+          'error',
+          `Background CNF import from URL failed for user ${userId}:`,
+          err
+        );
+      });
+
+      return res.status(202).json({
+        message: 'Bulk import started',
+        status: getCnfImportStatus(userId),
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /foods/canadian-nutrient-file/status:
+ *   get:
+ *     summary: Get status of Canadian Nutrient File bulk import
+ *     tags: [External Integrations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current bulk import status
+ */
+router.get(
+  '/canadian-nutrient-file/status',
+  authenticate,
+  isAdmin,
+  (req, res) => {
+    res.json(getCnfImportStatus(req.userId));
+  }
+);
+
+/**
+ * @swagger
+ * /foods/canadian-nutrient-file:
+ *   delete:
+ *     summary: Delete Canadian Nutrient File library items
+ *     tags: [External Integrations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Items deleted successfully
+ */
+router.delete(
+  '/canadian-nutrient-file',
+  authenticate,
+  isAdmin,
+  async (req, res, next) => {
+    try {
+      const result = await deleteCnfLibraryFoods(req.userId);
+      res.json({
+        message: `Deleted ${result.deletedCount} Canadian Nutrient File library items.`,
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /foods/livsmedelsverket/bulk-import:
+ *   post:
+ *     summary: Bulk import Livsmedelsverket foods and nutrients
+ *     tags: [External Integrations]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               language:
+ *                 type: string
+ *                 enum: [sv, en]
+ *                 default: sv
+ *               syncPastEntries:
+ *                 type: boolean
+ *                 default: false
+ *               maxFoods:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Bulk import started
+ */
+router.post(
+  '/livsmedelsverket/bulk-import',
+  authenticate,
+  isAdmin,
+  async (req, res, next) => {
+    try {
+      const parseResult = livsmedelsverketBulkImportRequestSchema.safeParse(
+        req.body || {}
+      );
+      if (!parseResult.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: parseResult.error.format(),
+        });
+      }
+
+      const currentStatus = getLivsmedelsverketImportStatus(req.userId);
+      if (currentStatus.isRunning) {
+        return res.status(409).json({
+          error: 'A Livsmedelsverket import is already running for this user.',
+        });
+      }
+
+      await startLivsmedelsverketBulkImport(req.userId, parseResult.data);
+
+      res.status(202).json({
+        message: 'Livsmedelsverket bulk import started.',
+        status: getLivsmedelsverketImportStatus(req.userId),
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /foods/livsmedelsverket/status:
+ *   get:
+ *     summary: Get status of Livsmedelsverket bulk import
+ *     tags: [External Integrations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current bulk import status
+ */
+router.get('/livsmedelsverket/status', authenticate, isAdmin, (req, res) => {
+  res.json(getLivsmedelsverketImportStatus(req.userId));
+});
+
+/**
+ * @swagger
+ * /foods/livsmedelsverket:
+ *   delete:
+ *     summary: Delete Livsmedelsverket library items
+ *     tags: [External Integrations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Items deleted successfully
+ */
+router.delete(
+  '/livsmedelsverket',
+  authenticate,
+  isAdmin,
+  async (req, res, next) => {
+    try {
+      const result = await deleteLivsmedelsverketLibraryFoods(req.userId);
+      res.json({
+        message: `Deleted ${result.deletedCount} Swedish Food Agency library items.`,
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 export default router;

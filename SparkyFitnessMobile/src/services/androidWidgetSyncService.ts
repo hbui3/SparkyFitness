@@ -31,6 +31,58 @@ export interface AndroidMacroSnapshot {
   fatGoal: number;
 }
 
+/** What the water widgets need beyond the day's totals. */
+export interface WaterWidgetInfo {
+  /**
+   * What one tap of the widget's button adds, in millilitres; null for a
+   * container linked to a food, undefined until a container has loaded (the
+   * Android widget then keeps the drink it has).
+   */
+  drinkMl?: number | null;
+  /** The unit the app shows water in. */
+  unit: string;
+  /**
+   * Set by the Dashboard, so a widget holding only a background refresh's
+   * totals shows no button, as on iOS.
+   */
+  canLog: boolean;
+}
+
+/**
+ * The Android water widget's snapshot (WaterWidgetStore.kt). A background
+ * refresh knows only the totals, so it leaves the rest out and the native
+ * side keeps what the app last sent. A null drink means the container is
+ * linked to a food, which hides the buttons as on iOS. The manual part
+ * (null when the server does not say) is sent every time, as it decides
+ * whether − can remove anything.
+ */
+export interface AndroidWaterSnapshot {
+  date: string;
+  consumedMl: number;
+  goalMl: number;
+  manualMl: number | null;
+  drinkMl?: number | null;
+  unit?: string;
+  canLog?: boolean;
+}
+
+export function buildAndroidWaterSnapshot(
+  summary: DailySummary,
+  water?: WaterWidgetInfo
+): AndroidWaterSnapshot {
+  return {
+    date: summary.date,
+    consumedMl: summary.waterConsumed,
+    goalMl: summary.waterGoal,
+    manualMl: summary.waterManual ?? null,
+    ...(water && {
+      ...(water.drinkMl !== undefined && { drinkMl: water.drinkMl }),
+      unit: water.unit,
+      canLog: water.canLog,
+    }),
+  };
+}
+
 export function buildAndroidWidgetSnapshots(summary: DailySummary): {
   calorie?: AndroidCalorieSnapshot;
   macro: AndroidMacroSnapshot;
@@ -91,7 +143,36 @@ export async function pushAndroidMacroSnapshot(
   await CalorieWidgetBridge.reloadMacroWidget();
 }
 
+export async function pushAndroidWaterSnapshot(
+  snapshot: AndroidWaterSnapshot,
+  lastUpdated = Math.floor(Date.now() / 1000)
+): Promise<void> {
+  await CalorieWidgetBridge.setWaterSnapshot(
+    serializeWidgetPayload(snapshot, lastUpdated)
+  );
+  await CalorieWidgetBridge.reloadWaterWidget();
+}
+
+// Moves on at every account change. A snapshot built for an earlier value
+// belongs to the previous account and is not pushed.
+let widgetGeneration = 0;
+
+export function getAndroidWidgetGeneration(): number {
+  return widgetGeneration;
+}
+
+/**
+ * Erases the widget snapshots when the account changes: they carry no
+ * account, and the Quick Settings tile shows the calorie figure on the lock
+ * screen. The water widget's taps not yet sent go with them.
+ */
+export async function clearAndroidWidgetSnapshots(): Promise<void> {
+  widgetGeneration += 1;
+  await CalorieWidgetBridge.clearSnapshots();
+}
+
 export async function refreshAndroidWidgetsFromServer(): Promise<void> {
+  const generation = widgetGeneration;
   const timezone = await ensureTimezoneBootstrapped({ throwOnFailure: true });
   if (!timezone) {
     throw new Error('Account timezone is unavailable for widget refresh');
@@ -102,11 +183,17 @@ export async function refreshAndroidWidgetsFromServer(): Promise<void> {
   const snapshots = buildAndroidWidgetSnapshots(summary);
   const lastUpdated = Math.floor(Date.now() / 1000);
   const updates: Promise<void>[] = [];
+  // The account changed while the summary loaded. Checked in the same turn
+  // as the pushes below, which reach the native module before awaiting.
+  if (generation !== widgetGeneration) return;
 
   if (snapshots.calorie) {
     updates.push(pushAndroidCalorieSnapshot(snapshots.calorie, lastUpdated));
   }
   updates.push(pushAndroidMacroSnapshot(snapshots.macro, lastUpdated));
+  updates.push(
+    pushAndroidWaterSnapshot(buildAndroidWaterSnapshot(summary), lastUpdated)
+  );
 
   const results = await Promise.allSettled(updates);
   const firstFailure = results.find(

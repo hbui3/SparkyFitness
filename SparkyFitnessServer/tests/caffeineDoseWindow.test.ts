@@ -131,6 +131,107 @@ describe('Caffeine Dose Window and Fallback Hierarchy', () => {
     expect(result.doses[0].is_estimated).toBe(false);
     expect(result.active_mg_now).toBe(100);
   });
+
+  it('calculates bedtimeAt as midnight of concluding day when target_bedtime is 00:00', async () => {
+    vi.spyOn(preferenceRepo, 'getUserPreferences').mockResolvedValue({
+      id: 'pref-1',
+      user_id: userId,
+      caffeine_half_life_hours: 5.0,
+      target_bedtime: '00:00:00',
+    } as any);
+    vi.spyOn(foodMisc, 'getCaffeineDosesForWindow').mockResolvedValue([]);
+
+    const result = await getActiveCaffeineKinetics(userId, {
+      date: '2026-09-05',
+    });
+
+    // 00:00 for the waking day 2026-09-05 should be the midnight transition to 2026-09-06
+    expect(result.target_bedtime).toBe('00:00');
+    expect(result.bedtime_at).toBe('2026-09-06T00:00:00.000Z');
+  });
+
+  it('calculates bedtimeAt on next calendar morning when target_bedtime is early morning (e.g. 01:30)', async () => {
+    vi.spyOn(preferenceRepo, 'getUserPreferences').mockResolvedValue({
+      id: 'pref-1',
+      user_id: userId,
+      caffeine_half_life_hours: 5.0,
+      target_bedtime: '01:30:00',
+    } as any);
+    const getDosesSpy = vi
+      .spyOn(foodMisc, 'getCaffeineDosesForWindow')
+      .mockResolvedValue([
+        {
+          source: 'food',
+          entry_date: '2026-09-06',
+          entry_time: '00:30',
+          meal_default_time: null,
+          taken_at: null,
+          caffeine_mg: 100,
+          name: 'Late Espresso',
+        },
+      ]);
+
+    const result = await getActiveCaffeineKinetics(userId, {
+      date: '2026-09-05',
+    });
+
+    expect(getDosesSpy).toHaveBeenCalledWith(
+      userId,
+      '2026-09-03',
+      '2026-09-06'
+    );
+    expect(result.target_bedtime).toBe('01:30');
+    expect(result.bedtime_at).toBe('2026-09-06T01:30:00.000Z');
+    expect(result.doses).toHaveLength(1);
+    expect(result.doses[0].at).toBe('2026-09-06T00:30:00.000Z');
+    expect(result.has_estimated_times).toBe(false);
+  });
+
+  it('does not flag has_estimated_times when an untimed dose on date+1 falls after bedtime+2h', async () => {
+    vi.spyOn(preferenceRepo, 'getUserPreferences').mockResolvedValue({
+      id: 'pref-1',
+      user_id: userId,
+      caffeine_half_life_hours: 5.0,
+      target_bedtime: '00:00:00',
+    } as any);
+    vi.spyOn(foodMisc, 'getCaffeineDosesForWindow').mockResolvedValue([
+      {
+        source: 'food',
+        entry_date: '2026-09-06',
+        entry_time: null,
+        meal_default_time: null,
+        taken_at: null,
+        caffeine_mg: 80,
+        name: 'Untimed Lunch Coffee on Next Day',
+      },
+    ]);
+
+    const result = await getActiveCaffeineKinetics(userId, {
+      date: '2026-09-05',
+    });
+
+    expect(result.target_bedtime).toBe('00:00');
+    expect(result.bedtime_at).toBe('2026-09-06T00:00:00.000Z');
+    expect(result.doses).toHaveLength(0);
+    expect(result.has_estimated_times).toBe(false);
+  });
+
+  it('calculates bedtimeAt on same calendar day when target_bedtime is before midnight (e.g. 23:59)', async () => {
+    vi.spyOn(preferenceRepo, 'getUserPreferences').mockResolvedValue({
+      id: 'pref-1',
+      user_id: userId,
+      caffeine_half_life_hours: 5.0,
+      target_bedtime: '23:59:00',
+    } as any);
+    vi.spyOn(foodMisc, 'getCaffeineDosesForWindow').mockResolvedValue([]);
+
+    const result = await getActiveCaffeineKinetics(userId, {
+      date: '2026-09-05',
+    });
+
+    expect(result.target_bedtime).toBe('23:59');
+    expect(result.bedtime_at).toBe('2026-09-05T23:59:00.000Z');
+  });
 });
 
 // The repository tests above mock the query, so nothing there notices which

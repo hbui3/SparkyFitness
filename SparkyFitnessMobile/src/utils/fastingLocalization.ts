@@ -103,3 +103,52 @@ export function localizeProtocolBadge(
       return raw;
   }
 }
+
+export function localizeEatingBand(
+  t: TFunction,
+  band: { key: string; name: string; shortName: string }
+): { name: string; shortName: string } {
+  switch (band.key) {
+    case 'open':
+      return {
+        name: t('fastingDetail.eatingBands.open.name', {
+          defaultValue: 'Window Open',
+        }),
+        shortName: t('fastingDetail.eatingBands.open.shortName', {
+          defaultValue: 'Open',
+        }),
+      };
+    case 'fuel':
+      return {
+        name: t('fastingDetail.eatingBands.fuel.name', {
+          defaultValue: 'Optimal Fuel',
+        }),
+        shortName: t('fastingDetail.eatingBands.fuel.shortName', {
+          defaultValue: 'Fuel',
+        }),
+      };
+    case 'sustain':
+      return {
+        name: t('fastingDetail.eatingBands.sustain.name', {
+          defaultValue: 'Mid Window',
+        }),
+        shortName: t('fastingDetail.eatingBands.sustain.shortName', {
+          defaultValue: 'Sustain',
+        }),
+      };
+    case 'closing':
+      return {
+        name: t('fastingDetail.eatingBands.closing.name', {
+          defaultValue: 'Window Closing',
+        }),
+        shortName: t('fastingDetail.eatingBands.closing.shortName', {
+          defaultValue: 'Closing',
+        }),
+      };
+    default:
+      return {
+        name: band.name,
+        shortName: band.shortName,
+      };
+  }
+}

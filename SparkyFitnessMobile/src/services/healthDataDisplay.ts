@@ -592,6 +592,7 @@ const RAW_FORMATTERS: Record<string, (records: unknown[]) => string> = {
 
   LeanBodyMass: formatMassInKg,
   BoneMass: formatMassInKg,
+  BodyWaterMass: formatMassInKg,
 
   WheelchairPushes: (records) => {
     const totalPushes = (records as { count?: number }[]).reduce(
@@ -599,6 +600,25 @@ const RAW_FORMATTERS: Record<string, (records: unknown[]) => string> = {
       0
     );
     return totalPushes === 0 ? NO_DATA_DISPLAY : number(totalPushes);
+  },
+
+  MindfulnessSession: (records) => {
+    const totalMindfulMinutes = (
+      records as { startTime: string; endTime: string }[]
+    ).reduce((sum, record) => {
+      const duration =
+        (new Date(record.endTime).getTime() -
+          new Date(record.startTime).getTime()) /
+        (1000 * 60);
+      return sum + duration;
+    }, 0);
+    return totalMindfulMinutes === 0
+      ? NO_DATA_DISPLAY
+      : unit(
+          'healthDataDisplay.minutes',
+          Math.round(totalMindfulMinutes),
+          '{{count}} min'
+        );
   },
 
   ExerciseSession: (records) => {

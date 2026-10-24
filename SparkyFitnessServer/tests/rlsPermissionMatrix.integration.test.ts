@@ -81,6 +81,7 @@ const D = {
   foodlib: '00000000-0000-4000-a000-000000000005',
   exlib: '00000000-0000-4000-a000-000000000006',
   none: '00000000-0000-4000-a000-000000000007',
+  symptoms: '00000000-0000-4000-a000-000000000008',
 } as const;
 
 type DelegateKey = keyof typeof D;
@@ -93,6 +94,7 @@ const PERMS: Record<DelegateKey, Record<string, boolean>> = {
   foodlib: { can_view_food_library: true },
   exlib: { can_view_exercise_library: true },
   none: {},
+  symptoms: { can_manage_symptoms: true },
 };
 
 const ALL_IDS = [OWNER, ...Object.values(D)];
@@ -161,6 +163,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     | 'diary'
     | 'checkin'
     | 'medication'
+    | 'symptom'
     | 'library'
     | 'custom'
     | 'system';
@@ -188,6 +191,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     cycle_daily_entries: 'owner',
     cycle_settings: 'owner',
     cycle_test_entries: 'owner',
+    custom_run_programs: 'owner',
     cycles: 'owner',
     health_appointments: 'owner',
     openfoodfacts_sync_queue: 'owner',
@@ -196,17 +200,25 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     pregnancy_contractions: 'owner',
     pregnancy_kick_sessions: 'owner',
     pregnancy_photos: 'owner',
+    run_programs: 'owner',
+    routes: 'owner',
     user_cycle_display_preferences: 'owner',
+    user_fasting_preferences: 'owner',
     user_mood_display_preferences: 'owner',
+    food_assistant_preferences: 'owner',
+    food_assistant_tasks: 'owner',
+    food_assistant_operations: 'owner',
     // diary
     adaptive_training_recommendations: 'diary',
     adaptive_training_settings: 'diary',
     exercise_entries: 'diary',
     exercise_preset_entries: 'diary',
+    workout_feedback: 'diary',
     food_entry_meals: 'diary',
     food_favorites: 'diary',
     goal_presets: 'diary',
     meal_plans: 'diary',
+    shoes: 'diary',
     user_allergen_preferences: 'diary',
     user_custom_nutrients: 'diary',
     user_goals: 'diary',
@@ -226,6 +238,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     day_classification_cache: 'checkin',
     fasting_logs: 'checkin',
     health_metric_samples: 'checkin',
+    mindfulness_sessions: 'checkin',
     mood_entries: 'checkin',
     user_custom_moods: 'checkin',
     sleep_entries: 'checkin',
@@ -239,9 +252,13 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     medication_schedules: 'medication',
     medication_titration_steps: 'medication',
     medications: 'medication',
-    symptom_entries: 'medication',
-    user_custom_symptom_locations: 'medication',
-    user_custom_symptoms: 'medication',
+    // symptom (own permission; see the symptom_entries pins below for the
+    // cycle-row carve-out)
+    symptom_entry_photos: 'symptom',
+    symptom_entry_treatments: 'symptom',
+    symptom_free_days: 'symptom',
+    user_custom_symptoms: 'symptom',
+    user_symptom_options: 'symptom',
     // library (read shared, write owner-only)
     exercises: 'library',
     foods: 'library',
@@ -255,6 +272,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     exercise_entry_activity_details: 'custom',
     exercise_entry_gps_points: 'custom',
     exercise_entry_hr_zones: 'custom',
+    exercise_entry_distance_series: 'custom',
     exercise_entry_laps: 'custom',
     exercise_entry_sets: 'custom',
     external_data_providers: 'custom',
@@ -267,6 +285,9 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     onboarding_data: 'custom',
     onboarding_status: 'custom',
     profiles: 'custom',
+    // symptom_entries: symptom helpers plus a cycle-source carve-out, so it has
+    // bespoke (pinned) policies rather than the generic generator's.
+    symptom_entries: 'custom',
     user_dashboard_layouts: 'custom',
     user_medication_display_preferences: 'custom',
     user_nutrient_display_preferences: 'custom',
@@ -282,11 +303,12 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     // system-only secret: RLS with no policies is intentional default-deny.
     telegram_coach_settings: 'system',
     telegram_update_inbox: 'system',
+    rate_limit: 'custom',
   };
 
   // Expected helper substrings for the generic-policy domains.
   const HELPER: Record<
-    'diary' | 'checkin' | 'medication' | 'library',
+    'diary' | 'checkin' | 'medication' | 'symptom' | 'library',
     { read: string; write: string }
   > = {
     diary: { read: 'has_diary_read_access', write: 'has_diary_access' },
@@ -294,6 +316,10 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     medication: {
       read: 'has_medication_read_access',
       write: 'has_medication_access',
+    },
+    symptom: {
+      read: 'has_symptom_read_access',
+      write: 'has_symptom_access',
     },
     library: {
       read: 'has_library_access_with_public',
@@ -325,6 +351,80 @@ describe.runIf(RUN)('RLS permission matrix', () => {
   const tablesIn = (...d: Domain[]) =>
     Object.keys(DOMAIN).filter((t) => d.includes(DOMAIN[t]));
 
+  describe('unlinked diary nutrition snapshots', () => {
+    let mealTypeId: string;
+    let variantId: string;
+    beforeAll(async () => {
+      const sys = await getSystemClient();
+      try {
+        const mealType = await sys.query(
+          'INSERT INTO meal_types (user_id, name, sort_order) VALUES ($1, $2, 999) RETURNING id',
+          [OWNER, 'RLS snapshot fixture']
+        );
+        mealTypeId = mealType.rows[0].id;
+        const food = await sys.query(
+          'INSERT INTO foods (user_id, name) VALUES ($1, $2) RETURNING id',
+          [OWNER, 'RLS snapshot source']
+        );
+        const variant = await sys.query(
+          'INSERT INTO food_variants (food_id, serving_size, serving_unit, calories) VALUES ($1, 100, $2, 165) RETURNING id',
+          [food.rows[0].id, 'g']
+        );
+        variantId = variant.rows[0].id;
+      } finally {
+        sys.release();
+      }
+    });
+
+    it.each([
+      ['owner', (): string => OWNER, true],
+      ['diary delegate', (): string => D.diary, true],
+      ['read-only reports delegate', (): string => D.reports, false],
+      ['unpermitted delegate', (): string => D.none, false],
+    ] as const)(
+      'allows snapshot inserts only with diary write access: %s',
+      async (_label, actorId, allowed) => {
+        const actor = actorId();
+        const client = await getClient(OWNER, actor);
+        try {
+          const insert = client.query(
+            `INSERT INTO food_entries (user_id, meal_type_id, quantity, unit, entry_date, food_name,
+            serving_size, serving_unit, calories, food_id, meal_id, variant_id, created_by_user_id)
+           VALUES ($1, $2, 150, 'g', '2026-10-14', 'Stored snapshot', 100, 'g', 165, NULL, NULL, NULL, $3)
+           RETURNING food_id, variant_id, calories`,
+            [OWNER, mealTypeId, actor]
+          );
+          if (allowed) {
+            const result = await insert;
+            expect(result.rows).toEqual([
+              { food_id: null, variant_id: null, calories: 165 },
+            ]);
+          } else {
+            await expect(insert).rejects.toMatchObject({ code: '42501' });
+          }
+        } finally {
+          client.release();
+        }
+      }
+    );
+
+    it('rejects an independent variant pointer even for the diary owner', async () => {
+      const client = await getClient(OWNER);
+      try {
+        await expect(
+          client.query(
+            `INSERT INTO food_entries (user_id, meal_type_id, quantity, unit, entry_date, food_name,
+            serving_size, serving_unit, calories, food_id, meal_id, variant_id)
+           VALUES ($1, $2, 150, 'g', '2026-10-14', 'Stored snapshot', 100, 'g', 165, NULL, NULL, $3)`,
+            [OWNER, mealTypeId, variantId]
+          )
+        ).rejects.toMatchObject({ code: '42501' });
+      } finally {
+        client.release();
+      }
+    });
+  });
+
   describe('policy wiring (pg_policies)', () => {
     it('every RLS-enabled table is classified in DOMAIN (completeness guard)', async () => {
       const sys = await getSystemClient();
@@ -355,7 +455,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
 
     // Generic helper-policy tables: select_policy uses the read helper,
     // modify_policy's WITH CHECK uses the write helper.
-    it.each(tablesIn('diary', 'checkin', 'medication', 'library'))(
+    it.each(tablesIn('diary', 'checkin', 'medication', 'symptom', 'library'))(
       'helper table "%s" wires select+modify to its domain helper',
       async (table) => {
         const exp = HELPER[DOMAIN[table] as keyof typeof HELPER];
@@ -474,6 +574,32 @@ describe.runIf(RUN)('RLS permission matrix', () => {
         col: 'qual',
         mustContain: 'has_medication_read_access',
       },
+      // Symptom entries: symptom helpers, and cycle-hub rows stay owner-only
+      // (Tier 1) even for a delegate that holds the symptoms permission.
+      {
+        table: 'symptom_entries',
+        policy: 'select_policy',
+        col: 'qual',
+        mustContain: 'has_symptom_read_access',
+      },
+      {
+        table: 'symptom_entries',
+        policy: 'select_policy',
+        col: 'qual',
+        mustContain: "'cycle'::text",
+      },
+      {
+        table: 'symptom_entries',
+        policy: 'modify_policy',
+        col: 'with_check',
+        mustContain: 'has_symptom_access',
+      },
+      {
+        table: 'symptom_entries',
+        policy: 'modify_policy',
+        col: 'with_check',
+        mustContain: "'cycle'::text",
+      },
       // Delegate-readable (any meaningful perm), owner-only write — profile-style.
       {
         table: 'user_preferences',
@@ -523,6 +649,12 @@ describe.runIf(RUN)('RLS permission matrix', () => {
         policy: 'select_policy',
         col: 'qual',
         mustContain: 'share_external_providers',
+      },
+      {
+        table: 'external_data_providers',
+        policy: 'select_policy',
+        col: 'qual',
+        mustContain: 'authenticated_user_id() = user_id',
       },
       // Bidirectional visibility (owner OR the family member sees the grant).
       {
@@ -590,16 +722,114 @@ describe.runIf(RUN)('RLS permission matrix', () => {
   // ---------------------------------------------------------------------------
   describe('helper behavior (as delegate, switched to owner)', () => {
     // columns: [diaryWrite, diaryRead, checkinRead, checkinWrite, medWrite,
-    //           medRead, profileRead, libFood, libExercise]
+    //           medRead, profileRead, libFood, libExercise, symptomWrite,
+    //           symptomRead]
     const EXPECTED: Record<DelegateKey, boolean[]> = {
-      //          d_w   d_r   c_r   c_w   m_w   m_r   p_r   lib_f lib_e
-      diary: [true, true, false, false, false, false, true, true, true],
-      checkin: [false, false, true, true, false, false, true, false, false],
-      meds: [false, false, false, false, true, true, true, false, false],
-      reports: [false, true, true, false, false, true, true, true, true],
-      foodlib: [false, false, false, false, false, false, false, true, false],
-      exlib: [false, false, false, false, false, false, false, false, true],
-      none: [false, false, false, false, false, false, false, false, false],
+      //          d_w   d_r   c_r   c_w   m_w   m_r   p_r   lib_f lib_e s_w   s_r
+      diary: [
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        true,
+        false,
+        false,
+      ],
+      checkin: [
+        false,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+      ],
+      meds: [
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+      ],
+      reports: [
+        false,
+        true,
+        true,
+        false,
+        false,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+      ],
+      foodlib: [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+      ],
+      exlib: [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+      ],
+      none: [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ],
+      symptoms: [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        true,
+        true,
+      ],
     };
 
     it.each(Object.keys(D) as DelegateKey[])(
@@ -619,7 +849,9 @@ describe.runIf(RUN)('RLS permission matrix', () => {
                has_medication_read_access($1)                                                             AS m_r,
                has_profile_read_access($1)                                                                AS p_r,
                has_library_access_with_public($1, false, ARRAY['can_view_food_library','can_manage_diary'])     AS lib_f,
-               has_library_access_with_public($1, false, ARRAY['can_view_exercise_library','can_manage_diary']) AS lib_e`,
+               has_library_access_with_public($1, false, ARRAY['can_view_exercise_library','can_manage_diary']) AS lib_e,
+               has_symptom_access($1)                                                                     AS s_w,
+               has_symptom_read_access($1)                                                                AS s_r`,
             [OWNER]
           );
           const r = rows[0];
@@ -633,6 +865,8 @@ describe.runIf(RUN)('RLS permission matrix', () => {
             r.p_r,
             r.lib_f,
             r.lib_e,
+            r.s_w,
+            r.s_r,
           ];
           expect(actual).toEqual(EXPECTED[key]);
         } finally {
@@ -840,6 +1074,87 @@ describe.runIf(RUN)('RLS permission matrix', () => {
         }),
         touchColumn: 'name',
         rowId: () => id,
+      });
+    });
+
+    // -- symptom domain: its own permission, and cycle rows are owner-only ----
+    describe('symptom_entries (symptom domain, cycle rows owner-only)', () => {
+      let manualId = '';
+      let cycleId = '';
+      beforeAll(async () => {
+        const sys = await getSystemClient();
+        try {
+          const manual = await sys.query(
+            "INSERT INTO public.symptom_entries (user_id, symptom_name_snapshot, source) VALUES ($1, 'rls-matrix', 'manual') RETURNING id",
+            [OWNER]
+          );
+          manualId = manual.rows[0].id;
+          const cycle = await sys.query(
+            "INSERT INTO public.symptom_entries (user_id, symptom_name_snapshot, source) VALUES ($1, 'rls-matrix-cycle', 'cycle') RETURNING id",
+            [OWNER]
+          );
+          cycleId = cycle.rows[0].id;
+        } finally {
+          sys.release();
+        }
+      });
+      afterAll(async () => {
+        const sys = await getSystemClient();
+        try {
+          await sys.query(
+            'DELETE FROM public.symptom_entries WHERE id = ANY($1::uuid[])',
+            [[manualId, cycleId]]
+          );
+        } finally {
+          sys.release();
+        }
+      });
+
+      // Manual rows: the symptoms delegate reads + writes; a reports delegate is
+      // read-only; medications and every other domain get nothing.
+      crudSuite({
+        table: 'symptom_entries',
+        read: ['symptoms', 'reports'],
+        write: ['symptoms'],
+        insert: () => ({
+          sql: "INSERT INTO public.symptom_entries (user_id, symptom_name_snapshot, source) VALUES ($1, 'rls-matrix-w', 'manual')",
+          params: [OWNER],
+        }),
+        touchColumn: 'symptom_name_snapshot',
+        rowId: () => manualId,
+      });
+
+      // Cycle-hub rows are reproductive-health data: no delegate may read,
+      // change, delete or create them, whatever permissions they hold.
+      it.each(KEYS)('cycle row SELECT is denied to "%s"', async (key) => {
+        expect(await canSelect(key, 'symptom_entries', cycleId)).toBe(false);
+      });
+      it.each(KEYS)('cycle row UPDATE is denied to "%s"', async (key) => {
+        expect(
+          await canAffect(
+            key,
+            'UPDATE public.symptom_entries SET symptom_name_snapshot = symptom_name_snapshot WHERE id = $1',
+            [cycleId]
+          )
+        ).toBe(false);
+      });
+      it.each(KEYS)('cycle row DELETE is denied to "%s"', async (key) => {
+        expect(
+          await canAffect(
+            key,
+            'DELETE FROM public.symptom_entries WHERE id = $1',
+            [cycleId]
+          )
+        ).toBe(false);
+      });
+      it.each(KEYS)('cycle row INSERT is denied to "%s"', async (key) => {
+        expect(
+          await canInsert(
+            key,
+            "INSERT INTO public.symptom_entries (user_id, symptom_name_snapshot, source) VALUES ($1, 'rls-matrix-cycle-w', 'cycle')",
+            [OWNER]
+          )
+        ).toBe(false);
       });
     });
 

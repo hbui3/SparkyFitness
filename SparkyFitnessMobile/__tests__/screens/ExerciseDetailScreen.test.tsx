@@ -248,9 +248,8 @@ describe('ExerciseDetailScreen', () => {
     const screen = renderScreen();
 
     // The name lives in the (native) header title.
-    expect(mockNavigation.setOptions).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Bench Press' })
-    );
+    // The name is a left-aligned page heading, not a bar title.
+    expect(screen.getByRole('header', { name: 'Bench Press' })).toBeTruthy();
     expect(screen.getByText('360')).toBeTruthy();
     expect(screen.getByText('Barbell, Bench')).toBeTruthy();
     expect(screen.getByText('Chest')).toBeTruthy();
@@ -387,9 +386,8 @@ describe('ExerciseDetailScreen', () => {
         <ExerciseDetailScreen navigation={navigation} route={route as any} />
       </Providers>
     );
-    expect(mockNavigation.setOptions).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Bench Press' })
-    );
+    // The name is a left-aligned page heading, not a bar title.
+    expect(screen.getByRole('header', { name: 'Bench Press' })).toBeTruthy();
 
     screen.rerender(
       <Providers>
@@ -408,9 +406,8 @@ describe('ExerciseDetailScreen', () => {
       </Providers>
     );
 
-    expect(mockNavigation.setOptions).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Bench Press 2' })
-    );
+    // The name is a left-aligned page heading, not a bar title.
+    expect(screen.getByRole('header', { name: 'Bench Press 2' })).toBeTruthy();
   });
 
   describe('hydration by id', () => {
@@ -433,14 +430,13 @@ describe('ExerciseDetailScreen', () => {
         secondary_muscles: [],
       });
 
-      expect(mockNavigation.setOptions).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Sparse Bench' })
-      );
+      // The name is a left-aligned page heading, not a bar title.
+      expect(screen.getByRole('header', { name: 'Sparse Bench' })).toBeTruthy();
 
       await waitFor(() =>
-        expect(mockNavigation.setOptions).toHaveBeenCalledWith(
-          expect.objectContaining({ title: 'Hydrated Bench Press' })
-        )
+        expect(
+          screen.getByRole('header', { name: 'Hydrated Bench Press' })
+        ).toBeTruthy()
       );
       expect(mockFetchExerciseById).toHaveBeenCalledWith(uuidId);
       expect(screen.getByText('Pectorals')).toBeTruthy();

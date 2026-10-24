@@ -84,3 +84,15 @@ export const deleteFast = async (id: string): Promise<{ message: string }> => {
   const response = await api.delete(`/fasting/${id}`);
   return response;
 };
+
+export const getFastingPreferences = async () => {
+  const response = await api.get('/fasting/preferences');
+  return response;
+};
+
+export const updateFastingPreferences = async (
+  updates: Record<string, unknown>
+) => {
+  const response = await api.put('/fasting/preferences', { body: updates });
+  return response;
+};

@@ -1,17 +1,28 @@
+import type { RunSummaryParams } from '../utils/runSummary';
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type {
+  ExerciseActivityQueryItem,
+  ExerciseRecentSessionSet,
   FoodPhotoEstimateResponse,
   FoodPhotoLogItem,
   IndividualSessionResponse,
+  MedicationEntry,
+  MindfulnessSessionResponse,
   PresetSessionResponse,
+  RaceDistance,
   SharedPregnancy,
+  WorkoutFormat,
 } from '@workspace/shared';
 import type { FoodFormData } from '../components/FoodForm';
+import type { NutritionLabelScan } from '../utils/labelScanFood';
 import type { SaveFoodPayload } from '../services/api/foodsApi';
 import type { CompletedSetMap, PrSetMap } from '../stores/activeWorkoutStore';
 import type { MealTypeKey } from '../utils/mealNutrition';
-import type { AssumedSetValues } from '../utils/workoutSession';
+import type {
+  AssumedSetValues,
+  LiveExerciseConfig,
+} from '../utils/workoutSession';
 import type { PhotoType } from './checkInPhotos';
 import type { Exercise } from './exercise';
 import type { FamilyDiaryUser } from './familyDiary';
@@ -26,6 +37,8 @@ import type {
 import type { Meal, MealIngredientDraft } from './meals';
 import type { MealPlanPickerTarget, MealPlanTemplate } from './mealPlans';
 import type { WorkoutPreset } from './workoutPresets';
+import type { WorkoutPlanTemplate } from './workoutPlans';
+import type { ExerciseReplaceContext } from '../utils/exerciseReplace';
 
 export type FoodPickerMode =
   | 'log-entry'
@@ -72,6 +85,20 @@ export type RootStackParamList = {
   FoodsLibrary: undefined;
   MealsLibrary: undefined;
   MealPlans: undefined;
+  WorkoutPlans: undefined;
+  WorkoutPlanForm: { template?: WorkoutPlanTemplate } | undefined;
+  RunPrograms: undefined;
+  RunProgramCalendar: undefined;
+  RunProgramWorkout: { index: number };
+  RunProgramRace: { distance?: RaceDistance; raceDay?: string } | undefined;
+  RunProgramEdit: { id?: string; fromProgramId?: string } | undefined;
+  PersonalRecords: undefined;
+  Routes: undefined;
+  RouteDetail: { id: string };
+  /** `routeId` opens a saved route in the editor and saves over it. */
+  RouteDraw: { routeId?: string } | undefined;
+  RouteGenerate: undefined;
+  WatchRunLive: undefined;
   MealPlanForm: { template?: MealPlanTemplate; initialMeal?: Meal } | undefined;
   // #2115, Phase 12: mobile-only water-container CRUD.
   WaterContainers: undefined;
@@ -145,6 +172,11 @@ export type RootStackParamList = {
     mealTypeId?: string;
     mealPlanTarget?: MealPlanPickerTarget;
   };
+  /** Multi-select batch review (#1980): the basket lives in
+   * useFoodSearchSelectionStore, not route params, so no selection data
+   * travels here — only the diary date/meal-type context FoodSearchScreen
+   * had when the user tapped Review. */
+  FoodEntryMultiAdd: { date?: string; mealTypeId?: string } | undefined;
   EditLoggedMeal: { foodEntryMealId: string; initialMeal?: FoodEntryMeal };
   FoodEntryView: {
     entry: FoodEntry;
@@ -168,6 +200,29 @@ export type RootStackParamList = {
     unit: string;
     goal?: number;
   };
+  ExerciseStatistics: undefined;
+  /** `programWorkout` opens it with today's training-program workout chosen. */
+  RecordActivity: { programWorkout?: boolean } | undefined;
+  RunSummary: RunSummaryParams;
+  Reports: undefined;
+  HydrationReport: undefined;
+  SubstancesReport: undefined;
+  MeasurementsReport: undefined;
+  ReportsSettings: undefined;
+  NutritionReport: undefined;
+  SleepAnalytics: undefined;
+  MoodReport: undefined;
+  CompareReport: undefined;
+  CardioSession: {
+    session: ExerciseActivityQueryItem;
+    distanceUnit: 'km' | 'miles';
+    /** The diary entry this was opened from, when it can be edited in the app. */
+    diaryEntry?: IndividualSessionResponse;
+  };
+  ActivityShare: {
+    session: ExerciseActivityQueryItem;
+    distanceUnit: 'km' | 'miles';
+  };
   FoodForm:
     | {
         mode: 'create-food';
@@ -175,6 +230,8 @@ export type RootStackParamList = {
         initialFood?: Partial<FoodFormData>;
         barcode?: string;
         providerType?: string;
+        /** Which AI read the label this form was filled in from. */
+        labelScanSource?: 'device' | 'server';
         pickerMode?: FoodPickerMode;
         returnDepth?: number;
         pendingScannedBarcode?: string;
@@ -200,10 +257,16 @@ export type RootStackParamList = {
         foodId: string;
         variantId: string;
         customNutrients?: Record<string, string | number> | null;
+        pendingNutritionLabelScan?: NutritionLabelScan;
       };
   ExerciseForm:
-    | { mode: 'create-exercise' }
+    | {
+        mode: 'create-exercise';
+        /** Seed the form from an existing exercise to save it as a copy. */
+        duplicateOf?: Exercise;
+      }
     | { mode: 'edit-exercise'; exercise: Exercise; returnKey: string };
+  AiSettings: undefined;
   FoodScan:
     | {
         mode?: 'lookup';
@@ -218,6 +281,10 @@ export type RootStackParamList = {
       }
     | {
         mode: 'capture-barcode';
+        returnKey: string;
+      }
+    | {
+        mode: 'capture-label';
         returnKey: string;
       }
     | undefined;
@@ -235,7 +302,11 @@ export type RootStackParamList = {
         ingredientIndex?: number;
       }
     | undefined;
-  ExerciseSearch: { returnKey: string };
+  ExerciseSearch: {
+    returnKey: string;
+    /** Set when replacing an exercise: opens on ranked alternatives. */
+    replaceFor?: ExerciseReplaceContext;
+  };
   PresetSearch:
     { selectedExercise?: Exercise; selectionNonce?: number } | undefined;
   WorkoutAdd:
@@ -282,11 +353,31 @@ export type RootStackParamList = {
     sourcePresetId: number | null;
     sourceServerConfigId: string | null;
     plannedSetValues: Record<string, AssumedSetValues>;
+    // Set when the workout was finished on the watch: the app-level prompt
+    // asks "Update preset?" (on the watch first), so this screen does not.
+    presetCheckHandledElsewhere?: boolean;
+    // The rest of the live placeholder inputs, so the prompt can ignore
+    // values the ramp or progression filled in. Optional: older snapshots.
+    previousSessionSets?: Record<string, ExerciseRecentSessionSet[]>;
+    exerciseConfigs?: Record<string, LiveExerciseConfig>;
+    weightUnit?: 'kg' | 'lbs';
+    workoutFormat?: WorkoutFormat;
+    timeCapSeconds?: number | null;
+    intervalRoundsCompleted?: number;
+    intervalRepsCompleted?: number;
+    intervalStatus?: 'rx' | 'scaled';
+    intervalScalingNotes?: string;
   };
   ActivityDetail: { session: IndividualSessionResponse };
   FastingDetail: undefined;
+  FastingSettings: undefined;
+  MindfulnessDetail: { selectedDate?: string } | undefined;
+  /** Logs a mindful session for `date`, or edits `session` when one is passed. */
+  MindfulnessLog:
+    { date?: string; session?: MindfulnessSessionResponse } | undefined;
   SleepDetail: { entryId: string; day: string };
   Chat: undefined;
+  ChatSettings: undefined;
   Logs: undefined;
   Sync: undefined;
   ImportHistory: undefined;
@@ -302,12 +393,28 @@ export type RootStackParamList = {
   /** Cross-fading time-lapse of every photo for one angle, oldest to newest. */
   ProgressPhotoTimelapse: { angle?: PhotoType } | undefined;
   CalorieSettings: undefined;
+  /**
+   * Without params this edits today's goals. `presetId` edits that goal
+   * preset; `newPreset` starts a new one from today's goals.
+   */
+  Goals: { presetId?: string; newPreset?: boolean } | undefined;
+  WeeklyGoalPlanEdit: { planId?: string } | undefined;
   MealTypeSettings: undefined;
+  Equipment: undefined;
+  Shoes: undefined;
+  ShoeForm: { shoeId?: string };
   FoodSettings: undefined;
+  CustomNutrients: undefined;
+  CustomNutrientForm: { nutrientId?: string } | undefined;
+  NutrientDisplaySettings: undefined;
+  AllergenSettings: undefined;
   DashboardSettings: undefined;
   HealthTrendsSettings: undefined;
+  WatchSettings: undefined;
   DiarySettings: undefined;
   WorkoutSettings: undefined;
+  WarmupSettings: undefined;
+  HeartRateZonesSettings: undefined;
   ServerSettings: undefined;
   PasskeySettings: undefined;
   AppSettings: undefined;
@@ -315,9 +422,34 @@ export type RootStackParamList = {
   About: undefined;
   WhatsNew: undefined;
   MedicationsList: undefined;
+  MedicationAdherence: undefined;
+  MedicationEntryEdit: { entry: MedicationEntry };
   MedicationDetail: { medicationId: string };
-  MedicationForm: { medicationId?: string };
+  MedicationForm: {
+    medicationId?: string;
+    isSupplement?: boolean;
+    /** Set by the barcode scanner when it returns a code. */
+    pendingScannedBarcode?: string;
+    scannedBarcodeNonce?: number;
+  };
   MedicationScheduleForm: { medicationId: string; scheduleId?: string };
+  Glp1Tracker: { medicationId: string };
+  Glp1PenForm: { medicationId: string; penId?: string };
+  Glp1TitrationForm: { medicationId: string; stepId?: string };
+  SymptomLog:
+    | {
+        entryId?: string;
+        symptomId?: string;
+        isOngoing?: boolean;
+        date?: string;
+      }
+    | undefined;
+  MoodLog: { date?: string; checkinId?: string } | undefined;
+  MoodDay: { date?: string } | undefined;
+  SymptomHistory: { symptomId?: string } | undefined;
+  SymptomEpisodeDetail: { entryId: string };
+  ManageSymptoms: undefined;
+  SymptomDefinitionEditor: { definitionId?: string } | undefined;
 };
 
 declare global {
@@ -380,6 +512,7 @@ export type FoodPhotoFlowParamList = {
         /** Meal name for the ad-hoc food_entry_meals parent. */
         mealName: string;
         description?: string;
+        notes?: string;
         ingredients: FoodPhotoLogItem[];
         /** Also save the plate as a reusable meal template. */
         saveAsMeal: boolean;

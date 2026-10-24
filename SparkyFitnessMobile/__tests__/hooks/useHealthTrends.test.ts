@@ -9,6 +9,8 @@ import {
   fetchWaterIntakeRange,
 } from '../../src/services/api/measurementsApi';
 import { fetchSleepEntries } from '../../src/services/api/sleepApi';
+import { fetchNutritionTrends } from '../../src/services/api/reportsApi';
+import { fetchGoalsRange } from '../../src/services/api/goalsApi';
 import { ApiError } from '../../src/services/api/errors';
 import { getTodayDate } from '../../src/utils/dateUtils';
 import { buildSleepEntry } from '../helpers/sleepFixtures';
@@ -21,10 +23,21 @@ import {
 jest.mock('../../src/services/api/measurementsApi', () => ({
   fetchMeasurementsRange: jest.fn(),
   fetchWaterIntakeRange: jest.fn(),
+  fetchCustomCategories: jest.fn(() => Promise.resolve([])),
+  fetchCustomMeasurementsRange: jest.fn(() => Promise.resolve([])),
+  fetchDailyVo2Max: jest.fn(() => Promise.resolve([])),
 }));
 
 jest.mock('../../src/services/api/sleepApi', () => ({
   fetchSleepEntries: jest.fn(),
+}));
+
+jest.mock('../../src/services/api/reportsApi', () => ({
+  fetchNutritionTrends: jest.fn(),
+}));
+
+jest.mock('../../src/services/api/goalsApi', () => ({
+  fetchGoalsRange: jest.fn(),
 }));
 
 // `useSleepRange` reads the profile timezone to decide which day the window ends on. With
@@ -45,6 +58,12 @@ const mockFetchSleepEntries = fetchSleepEntries as jest.MockedFunction<
 >;
 const mockFetchWaterIntakeRange = fetchWaterIntakeRange as jest.MockedFunction<
   typeof fetchWaterIntakeRange
+>;
+const mockFetchNutritionTrends = fetchNutritionTrends as jest.MockedFunction<
+  typeof fetchNutritionTrends
+>;
+const mockFetchGoalsRange = fetchGoalsRange as jest.MockedFunction<
+  typeof fetchGoalsRange
 >;
 
 const today = getTodayDate();
@@ -86,6 +105,8 @@ beforeEach(() => {
   mockFetchMeasurementsRange.mockResolvedValue([]);
   mockFetchSleepEntries.mockResolvedValue([]);
   mockFetchWaterIntakeRange.mockResolvedValue([]);
+  mockFetchNutritionTrends.mockResolvedValue([]);
+  mockFetchGoalsRange.mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -245,6 +266,7 @@ describe('useHealthTrends', () => {
     expect(mockFetchMeasurementsRange).not.toHaveBeenCalled();
     expect(mockFetchSleepEntries).not.toHaveBeenCalled();
     expect(mockFetchWaterIntakeRange).not.toHaveBeenCalled();
+    expect(mockFetchNutritionTrends).not.toHaveBeenCalled();
   });
 
   test('returns a hydration series for the window', async () => {
@@ -328,5 +350,105 @@ describe('useHealthTrends', () => {
     // `refetch()` ignores `enabled`, so this only holds because `useHealthTrends` skips
     // the call itself. Without that, pull-to-refresh would fetch every hidden trend.
     expect(mockFetchSleepEntries).not.toHaveBeenCalled();
+  });
+
+  test('returns a calories series for the window', async () => {
+    mockFetchNutritionTrends.mockResolvedValue([
+      {
+        date: today,
+        calories: 1850,
+        protein: 100,
+        carbs: 200,
+        fat: 60,
+        saturated_fat: 0,
+        polyunsaturated_fat: 0,
+        monounsaturated_fat: 0,
+        trans_fat: 0,
+        cholesterol: 0,
+        sodium: 0,
+        potassium: 0,
+        dietary_fiber: 25,
+        sugars: 0,
+        vitamin_a: 0,
+        vitamin_c: 0,
+        calcium: 0,
+        iron: 0,
+        caffeine_mg: 0,
+        water_ml: 0,
+        alcohol_g: 0,
+      },
+    ]);
+
+    const { result } = renderTrends();
+
+    await waitFor(() => {
+      expect(result.current.calories.isLoading).toBe(false);
+    });
+
+    expect(result.current.calories.data).toHaveLength(7);
+    expect(result.current.calories.data.at(-1)).toEqual({
+      day: today,
+      calories: 1850,
+      protein: 100,
+      carbs: 200,
+      fat: 60,
+    });
+    // 1850 logged plus six zero-fill days, averaged over the full 7-day window.
+    expect(result.current.calories.averageCalories).toBeCloseTo(1850 / 7);
+  });
+
+  test('issues no calories request when calories is not active', async () => {
+    renderTrends('7d', true, ['steps', 'weight', 'sleep', 'hydration']);
+
+    await waitFor(() => {
+      expect(mockFetchMeasurementsRange).toHaveBeenCalled();
+    });
+
+    expect(mockFetchNutritionTrends).not.toHaveBeenCalled();
+  });
+
+  test('refetch refreshes calories only when calories is active', async () => {
+    const { result } = renderTrends('7d', true, ['calories']);
+
+    await waitFor(() => {
+      expect(mockFetchNutritionTrends).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+
+    expect(mockFetchNutritionTrends).toHaveBeenCalledTimes(2);
+    expect(mockFetchMeasurementsRange).not.toHaveBeenCalled();
+  });
+
+  test('carries the resolved per-day calorie goal from useCaloriesRange', async () => {
+    mockFetchGoalsRange.mockImplementation((_start, _end, adjust) =>
+      Promise.resolve(adjust ? { [today]: { calories: 1900 } as never } : {})
+    );
+
+    const { result } = renderTrends();
+
+    await waitFor(() => {
+      expect(result.current.calories.isLoading).toBe(false);
+    });
+
+    expect(result.current.calories.calorieGoals.at(-1)).toBe(1900);
+  });
+
+  test('carries the resolved per-day hydration goal from useHydrationRange', async () => {
+    mockFetchGoalsRange.mockImplementation((_start, _end, adjust) =>
+      Promise.resolve(
+        adjust ? {} : { [today]: { water_goal_ml: 2200 } as never }
+      )
+    );
+
+    const { result } = renderTrends();
+
+    await waitFor(() => {
+      expect(result.current.hydration.isLoading).toBe(false);
+    });
+
+    expect(result.current.hydration.hydrationGoals.at(-1)).toBe(2200);
   });
 });

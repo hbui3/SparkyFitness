@@ -20,7 +20,7 @@ import { Exercise } from '@/types/exercises';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { toast } from '../use-toast';
 import { useTranslation } from 'react-i18next';
-import { resolveExerciseModality } from '@workspace/shared';
+import { resolveExerciseModality, type WorkoutFormat } from '@workspace/shared';
 import { defaultSetForModality } from '@/constants/exercises';
 
 interface WorkoutPresetFormProps {
@@ -41,6 +41,12 @@ export function useWorkoutPresetForm({
     initialPreset?.description || ''
   );
   const [isPublic, setIsPublic] = useState(initialPreset?.is_public ?? false);
+  const [workoutFormat, setWorkoutFormat] = useState<WorkoutFormat>(
+    initialPreset?.workout_format ?? 'standard'
+  );
+  const [timeCapSeconds, setTimeCapSeconds] = useState<number | null>(
+    initialPreset?.time_cap_seconds ?? null
+  );
   const [exercises, setExercises] = useState<WorkoutPresetExercise[]>(() => {
     return (
       initialPreset?.exercises.map((ex) => ({
@@ -175,8 +181,8 @@ export function useWorkoutPresetForm({
     (
       exerciseIndex: number,
       setIndex: number,
-      field: keyof WorkoutPresetSet,
-      value: WorkoutPresetSet[keyof WorkoutPresetSet]
+      field: string,
+      value: unknown
     ) => {
       setExercises((prev) =>
         prev.map((exercise, eIndex) => {
@@ -338,7 +344,16 @@ export function useWorkoutPresetForm({
       return newExercises;
     });
   };
-
+  const handleExerciseFieldChange = useCallback(
+    (exerciseIndex: number, field: string, value: unknown) => {
+      setExercises((prev) =>
+        prev.map((ex, idx) =>
+          idx === exerciseIndex ? { ...ex, [field]: value } : ex
+        )
+      );
+    },
+    []
+  );
   const handleSubmit = () => {
     if (!name.trim()) {
       toast({
@@ -355,12 +370,16 @@ export function useWorkoutPresetForm({
       name,
       description,
       isPublic,
+      workoutFormat,
+      timeCapSeconds,
       exercises,
     });
     onSave({
       name,
       description,
       is_public: isPublic,
+      workout_format: workoutFormat,
+      time_cap_seconds: timeCapSeconds,
       exercises: exercises.map((ex, index) => ({
         ...ex,
         sort_order: index,
@@ -401,17 +420,23 @@ export function useWorkoutPresetForm({
     name,
     description,
     isPublic,
+    workoutFormat,
+    timeCapSeconds,
     exercises,
     isAddExerciseDialogOpen,
     sensors,
     setName,
     setDescription,
     setIsPublic,
+    setWorkoutFormat,
+    setTimeCapSeconds,
     setExercises,
     setIsAddExerciseDialogOpen,
     handleAddExercise,
     handleOpenAddExercise,
     handleOpenReplaceExercise,
+    replaceTargetIndex,
+    handleExerciseFieldChange,
     handleRemoveExercise,
     handleDuplicateExercise,
     handleSetChange,

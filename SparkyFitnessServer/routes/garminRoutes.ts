@@ -1,3 +1,4 @@
+import { resolveMockDataOptions } from '../utils/mockDataOptions.js';
 import express from 'express';
 import { authenticate } from '../middleware/authMiddleware.js';
 import checkPermissionMiddleware from '../middleware/checkPermissionMiddleware.js';
@@ -9,6 +10,10 @@ import { log } from '../config/logging.js';
 import moment from 'moment';
 import garminService from '../services/garminService.js';
 import { getGarminSyncPhaseErrors } from '../services/garminSyncResult.js';
+import {
+  SYNC_ALREADY_RUNNING_RESPONSE,
+  startProviderSync,
+} from '../services/providerSyncClaim.js';
 const router = express.Router();
 router.use(express.json());
 // Date validation constants
@@ -431,16 +436,31 @@ router.post(
     try {
       const userId = req.userId;
       const { startDate, endDate } = req.body;
+      const { dataSource, saveMockData } = await resolveMockDataOptions(
+        req.body,
+        req.authenticatedUserId
+      );
       log(
         'info',
         `[garminRoutes] Manual full sync requested for user ${userId}${startDate ? ` from ${startDate}` : ''}${endDate ? ` to ${endDate}` : ''}`
       );
-      const result = await garminService.syncGarminData(
-        userId,
-        'manual',
-        startDate,
-        endDate
+      const started = await startProviderSync(
+        { userId, providerType: 'garmin' },
+        () =>
+          garminService.syncGarminData(
+            userId,
+            'manual',
+            startDate,
+            endDate,
+            dataSource,
+            saveMockData
+          )
       );
+      if (!started) {
+        res.status(409).json(SYNC_ALREADY_RUNNING_RESPONSE);
+        return;
+      }
+      const result = await started.running;
       const failedPhases = getGarminSyncPhaseErrors(result);
       // Update the last sync timestamp
       const provider =

@@ -2,6 +2,7 @@ import { vi, beforeEach, describe, expect, it } from 'vitest';
 import { instantHourMinuteWithOffset } from '@workspace/shared';
 import exerciseRepository from '../models/exercise.js';
 import exerciseEntryRepository from '../models/exerciseEntry.js';
+import activityDetailsRepository from '../models/activityDetailsRepository.js';
 import sleepRepository from '../models/sleepRepository.js';
 import {
   processFitbitActivities,
@@ -69,7 +70,43 @@ describe('processFitbitActivities duration units', () => {
         sets: [expect.objectContaining({ duration: 1800 })],
       }),
       CID,
-      'Fitbit'
+      'Fitbit',
+      null,
+      {
+        // Written with the entry, so a re-sync replaces it instead of adding
+        // another copy.
+        activityDetail: expect.objectContaining({
+          provider_name: 'Fitbit',
+          detail_type: 'full_activity_data',
+        }),
+      }
+    );
+    expect(
+      activityDetailsRepository.createActivityDetail
+    ).not.toHaveBeenCalled();
+  });
+
+  it('gives an activity without a logId a source_id from its start time', async () => {
+    await processFitbitActivities(UID, CID, {
+      activities: [
+        {
+          activityName: 'Run',
+          activityParentName: 'Run',
+          startTime: '2026-07-15T10:00:00.000',
+          duration: 1800000,
+        },
+      ],
+    });
+
+    expect(exerciseEntryRepository.createExerciseEntry).toHaveBeenCalledWith(
+      UID,
+      expect.objectContaining({
+        source_id: 'fitbit-activity-2026-07-15T10:00:00.000',
+      }),
+      CID,
+      'Fitbit',
+      null,
+      expect.anything()
     );
   });
 });
@@ -106,8 +143,8 @@ describe('processFitbitSleep recording-zone stamp (issue #2033)', () => {
     // same stored offset must reproduce Fitbit's reported 23:00, even though
     // the historical zone offset that January was -300.
     const { hour, minute } = instantHourMinuteWithOffset(
-      new Date(entry.bedtime),
-      entry.record_utc_offset_minutes
+      new Date(entry.bedtime!),
+      entry.record_utc_offset_minutes!
     );
     expect({ hour, minute }).toEqual({ hour: 23, minute: 0 });
   });

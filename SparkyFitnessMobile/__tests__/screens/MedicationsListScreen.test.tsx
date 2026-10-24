@@ -1,6 +1,7 @@
 import React from 'react';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { findHeaderItemByAccessibilityLabel } from './helpers/nativeHeaderTestUtils';
 import MedicationsListScreen from '../../src/screens/MedicationsListScreen';
 import { useMedications } from '../../src/hooks/useMedications';
 import type { MedicationDetail, MedicationSchedule } from '@workspace/shared';
@@ -24,6 +25,37 @@ jest.mock('uniwind', () => ({
   useCSSVariable: (keys: string | string[]) =>
     Array.isArray(keys) ? keys.map(() => '#111827') : '#111827',
 }));
+
+jest.mock('../../src/components/ActionSheet', () => {
+  const React = require('react');
+  const { Pressable, Text, View } = require('react-native');
+  return {
+    __esModule: true,
+    default: React.forwardRef(
+      (
+        {
+          items,
+        }: { items: { key: string; label: string; onPress: () => void }[] },
+        ref: React.Ref<{ present: () => void }>
+      ) => {
+        const [open, setOpen] = React.useState(false);
+        React.useImperativeHandle(ref, () => ({
+          present: () => setOpen(true),
+          dismiss: () => setOpen(false),
+        }));
+        return open ? (
+          <View>
+            {items.map((item) => (
+              <Pressable key={item.key} onPress={item.onPress}>
+                <Text>{`sheet-${item.label}`}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null;
+      }
+    ),
+  };
+});
 
 const mockNavigation = {
   setOptions: jest.fn(),
@@ -143,6 +175,14 @@ describe('MedicationsListScreen', () => {
     });
   });
 
+  it('opens the adherence overview from the list', () => {
+    const screen = setupScreen([buildMedication()]);
+
+    expect(screen.getByText('Adherence & log')).toBeTruthy();
+    fireEvent.press(screen.getByText('Adherence & log'));
+    expect(mockNavigation.navigate).toHaveBeenCalledWith('MedicationAdherence');
+  });
+
   it('collapses inactive medications behind a disclosure row', () => {
     const screen = setupScreen([
       buildMedication(),
@@ -177,6 +217,106 @@ describe('MedicationsListScreen', () => {
     expect(screen.getByText('No medications yet')).toBeTruthy();
     fireEvent.press(screen.getByText('Add Medication'));
     expect(mockNavigation.navigate).toHaveBeenCalledWith('MedicationForm', {});
+  });
+
+  it('only shows the medication filter once a supplement exists', () => {
+    const screen = setupScreen([buildMedication()]);
+
+    expect(screen.queryByText('Supplements')).toBeNull();
+  });
+
+  it('filters between medications and supplements', () => {
+    const screen = setupScreen([
+      buildMedication(),
+      buildMedication({
+        id: 'sup-1',
+        name: 'Vitamin D',
+        type_id: 'softgel',
+        is_supplement: true,
+        dose_amount: 1,
+        dose_unit: 'serving',
+        strength_value: null,
+        strength_unit: null,
+        nutrients: { vitamin_a: 900, custom_nutrients: { 'Vitamin D': 25 } },
+        schedules: [],
+      }),
+    ]);
+
+    expect(screen.getByText('Lisinopril')).toBeTruthy();
+    expect(screen.getByText('Vitamin D')).toBeTruthy();
+    expect(screen.getByText(/1 serving · 2 nutrients/)).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Supplements'));
+    expect(screen.queryByText('Lisinopril')).toBeNull();
+    expect(screen.getByText('Vitamin D')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Meds'));
+    expect(screen.getByText('Lisinopril')).toBeTruthy();
+    expect(screen.queryByText('Vitamin D')).toBeNull();
+  });
+
+  it('goes back to the full list when the last supplement is gone', () => {
+    const supplement = buildMedication({
+      id: 'sup-1',
+      name: 'Vitamin D',
+      is_supplement: true,
+      schedules: [],
+    });
+    const screen = setupScreen([buildMedication(), supplement]);
+
+    fireEvent.press(screen.getByText('Supplements'));
+    expect(screen.queryByText('Lisinopril')).toBeNull();
+
+    mockUseMedications.mockReturnValue({
+      data: [buildMedication()],
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useMedications>);
+    screen.rerender(
+      <SafeAreaProvider
+        initialMetrics={{
+          insets: { top: 0, left: 0, right: 0, bottom: 0 },
+          frame: { x: 0, y: 0, width: 390, height: 844 },
+        }}
+      >
+        <MedicationsListScreen
+          route={
+            {
+              key: 'MedicationsList-test',
+              name: 'MedicationsList',
+              params: undefined,
+            } as ScreenProps['route']
+          }
+          navigation={mockNavigation}
+        />
+      </SafeAreaProvider>
+    );
+
+    expect(screen.getByText('Lisinopril')).toBeTruthy();
+  });
+
+  it('offers a medication or a supplement from the add button', () => {
+    const screen = setupScreen([buildMedication()]);
+
+    const add = findHeaderItemByAccessibilityLabel(
+      mockNavigation,
+      'Add medication'
+    );
+    act(() => add?.onPress?.());
+    fireEvent.press(screen.getByText('sheet-Add Supplement'));
+    expect(mockNavigation.navigate).toHaveBeenCalledWith('MedicationForm', {
+      isSupplement: true,
+    });
+  });
+
+  it('starts a supplement from the empty state', () => {
+    const screen = setupScreen([]);
+
+    fireEvent.press(screen.getByText('Add Supplement'));
+    expect(mockNavigation.navigate).toHaveBeenCalledWith('MedicationForm', {
+      isSupplement: true,
+    });
   });
 
   it('offers a retry that refetches on error', () => {

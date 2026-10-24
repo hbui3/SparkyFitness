@@ -68,6 +68,29 @@ describe('processStravaActivities', () => {
     );
   });
 
+  it('gives an activity without an id a source_id from its start time', async () => {
+    await processStravaActivities(UID, CID, [
+      {
+        name: 'Morning Run',
+        sport_type: 'Run',
+        start_date: '2026-07-15T14:30:00Z',
+        start_date_local: '2026-07-15T07:30:00Z',
+        moving_time: 1800,
+      } as StravaActivity,
+    ]);
+
+    expect(exerciseEntryRepository.createExerciseEntry).toHaveBeenCalledWith(
+      UID,
+      expect.objectContaining({
+        source_id: 'strava-activity-2026-07-15T14:30:00Z',
+      }),
+      CID,
+      'Strava',
+      null,
+      { activityDetail: undefined }
+    );
+  });
+
   it('passes repeated complete snapshots through the entry transaction', async () => {
     const activity = { id: 987, name: 'Morning Run' };
     const detail = { ...activity, resource_state: 3, calories: 300 };

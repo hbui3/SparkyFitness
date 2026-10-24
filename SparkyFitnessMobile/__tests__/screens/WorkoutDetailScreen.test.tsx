@@ -20,6 +20,14 @@ import type {
   PresetSessionResponse,
 } from '@workspace/shared';
 
+const mockFetchWorkoutHrZones = jest.fn(
+  async (_entryId: string): Promise<unknown[]> => []
+);
+jest.mock('../../src/services/api/exerciseStatsApi', () => ({
+  ...jest.requireActual('../../src/services/api/exerciseStatsApi'),
+  fetchWorkoutHrZones: (entryId: string) => mockFetchWorkoutHrZones(entryId),
+}));
+
 jest.mock('../../src/hooks/usePreferences', () => ({
   usePreferences: jest.fn(),
 }));
@@ -271,6 +279,134 @@ describe('WorkoutDetailScreen', () => {
     expect(screen.queryByLabelText('More options for Bench Press')).toBeNull();
   });
 
+  it("shows the workout's time in each heart-rate zone, summed over its exercises", async () => {
+    const zone = (entry: string, index: number, seconds: number) => ({
+      exercise_entry_id: entry,
+      zone_index: index,
+      zone_lower_bpm: 90 + index * 20,
+      zone_upper_bpm: null,
+      seconds_in_zone: seconds,
+    });
+    mockFetchWorkoutHrZones.mockImplementation(async (entryId) =>
+      entryId === 'entry-1'
+        ? [zone('entry-1', 1, 120), zone('entry-1', 2, 600)]
+        : [zone('entry-2', 2, 300), zone('entry-2', 3, 180)]
+    );
+    const session = buildSession({
+      exercises: [
+        buildExercise({ id: 'entry-1', avg_heart_rate: 120 }),
+        buildExercise({ id: 'entry-2', avg_heart_rate: 150 }),
+        // No heart rate, so no zones to ask for.
+        buildExercise({ id: 'entry-3', avg_heart_rate: null }),
+      ],
+    });
+    const screen = renderScreen(session);
+
+    expect(await screen.findByText('Heart Rate Zones')).toBeTruthy();
+    // Zone 2 is 600 + 300 seconds across the two exercises.
+    expect(screen.getByText(/^Zone 2/)).toBeTruthy();
+    expect(screen.getByText('15 min')).toBeTruthy();
+    expect(screen.getByText('2 min')).toBeTruthy();
+    expect(screen.getByText('3 min')).toBeTruthy();
+    expect(mockFetchWorkoutHrZones).toHaveBeenCalledTimes(2);
+    expect(mockFetchWorkoutHrZones).not.toHaveBeenCalledWith('entry-3');
+  });
+
+  it('shows no zone card when one exercise fails to load its zones', async () => {
+    mockFetchWorkoutHrZones.mockImplementation(async (entryId) => {
+      if (entryId === 'entry-2') throw new Error('network');
+      return [
+        {
+          exercise_entry_id: 'entry-1',
+          zone_index: 2,
+          zone_lower_bpm: 130,
+          zone_upper_bpm: null,
+          seconds_in_zone: 600,
+        },
+      ];
+    });
+    const session = buildSession({
+      exercises: [
+        buildExercise({ id: 'entry-1', avg_heart_rate: 120 }),
+        buildExercise({ id: 'entry-2', avg_heart_rate: 150 }),
+      ],
+    });
+    const screen = renderScreen(session);
+
+    // Both requests settled: one with zones, one failed. Showing entry-1's
+    // alone would pass a partial total off as the whole workout's.
+    await waitFor(() =>
+      expect(mockFetchWorkoutHrZones).toHaveBeenCalledTimes(2)
+    );
+    await act(async () => {});
+    expect(screen.queryByText('Heart Rate Zones')).toBeNull();
+  });
+
+  it('shows no zone card for a workout logged without a watch', async () => {
+    const screen = renderScreen(buildSession());
+
+    await waitFor(() => expect(screen.getByText('Bench Press')).toBeTruthy());
+    expect(screen.queryByText('Heart Rate Zones')).toBeNull();
+    expect(mockFetchWorkoutHrZones).not.toHaveBeenCalled();
+  });
+
+  it('summarises heart rate across the session when a watch reported it', () => {
+    const session = buildSession({
+      exercises: [
+        buildExercise({
+          id: 'entry-1',
+          duration_minutes: 1,
+          avg_heart_rate: 100,
+          max_heart_rate: 110,
+        }),
+        buildExercise({
+          id: 'entry-2',
+          duration_minutes: 60,
+          avg_heart_rate: 160,
+          max_heart_rate: 172,
+        }),
+      ],
+    });
+    const screen = renderScreen(session);
+
+    // Duration-weighted: 1 min at 100 and 60 min at 160 → ~159, not 130.
+    expect(screen.getByText('Avg HR')).toBeTruthy();
+    expect(screen.getByText('159')).toBeTruthy();
+    // Highest of the per-exercise maxima — exact, not an approximation.
+    expect(screen.getByText('Max HR')).toBeTruthy();
+    expect(screen.getByText('172')).toBeTruthy();
+  });
+
+  it('omits the heart-rate summary entirely when no exercise has one', () => {
+    const screen = renderScreen(buildSession());
+    expect(screen.queryByText('Avg HR')).toBeNull();
+    expect(screen.queryByText('Max HR')).toBeNull();
+  });
+
+  it('falls back to an unweighted avg HR when any duration is zero', () => {
+    const session = buildSession({
+      exercises: [
+        buildExercise({
+          id: 'entry-1',
+          duration_minutes: 0,
+          avg_heart_rate: 100,
+          max_heart_rate: 110,
+        }),
+        buildExercise({
+          id: 'entry-2',
+          duration_minutes: 60,
+          avg_heart_rate: 160,
+          max_heart_rate: 172,
+        }),
+      ],
+    });
+    const screen = renderScreen(session);
+
+    // Weighted would ignore the zero-duration 100 bpm and report 160.
+    expect(screen.getByText('Avg HR')).toBeTruthy();
+    expect(screen.getByText('130')).toBeTruthy();
+  });
+
   it('derives done vs upcoming set states from server completed_at timestamps', () => {
     const session = buildSession({
       exercises: [
@@ -507,6 +643,41 @@ describe('WorkoutDetailScreen', () => {
       await waitFor(() => expect(mockUpdateSession).toHaveBeenCalled());
       const { payload } = mockUpdateSession.mock.calls[0][0];
       expect(payload.exercises[0].sets[0].completed_at).toBeNull();
+    });
+
+    it('leaves warm-up sets out of the edit-mode volume summary', () => {
+      const screen = renderScreen(
+        buildSession({
+          exercises: [
+            buildExercise({
+              sets: [
+                buildSet({
+                  id: 101,
+                  set_number: 1,
+                  set_type: 'warmup',
+                  weight: 40,
+                  reps: 5,
+                }),
+                buildSet({
+                  id: 102,
+                  set_number: 2,
+                  set_type: 'normal',
+                  weight: 60,
+                  reps: 10,
+                }),
+              ],
+            }),
+          ],
+        })
+      );
+
+      expect(screen.getByText('600 kg')).toBeTruthy();
+      expect(screen.queryByText('800 kg')).toBeNull();
+
+      fireEvent.press(screen.getByLabelText('Edit workout'));
+
+      expect(screen.queryByText('800 kg')).toBeNull();
+      expect(screen.getByText('600 kg')).toBeTruthy();
     });
   });
 

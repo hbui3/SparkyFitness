@@ -16,6 +16,7 @@ import {
   readMinMaxAvgByDayDetailed,
 } from './index';
 import { aggregateSleepSessions } from './dataAggregation';
+import { enrichSleepSessions } from './sleepBiometrics';
 import { transformHealthRecords } from './dataTransformation';
 
 type CumulativeReader = (
@@ -51,18 +52,21 @@ export const readCumulativeByDay = async (
 
 /**
  * Platform massaging of non-empty raw reads before transform. HealthKit sleep
- * category samples are merged into whole sessions before the transformer re-shapes
- * them; workouts need nothing here (handleWorkout enriches inside the read).
+ * category samples are merged into whole sessions, then overnight HRV (SDNN)
+ * and resting heart rate are attached when those sync toggles are on. A failed
+ * biometric read leaves the session as aggregated and never fails the sync.
+ * Workouts need nothing here (handleWorkout enriches inside the read).
  */
 export const postProcessRaw = async (
   metric: Pick<HealthMetric, 'recordType'>,
   records: unknown[]
-): Promise<unknown[]> =>
-  metric.recordType === 'SleepSession'
-    ? aggregateSleepSessions(
-        records as Parameters<typeof aggregateSleepSessions>[0]
-      )
-    : records;
+): Promise<unknown[]> => {
+  if (metric.recordType !== 'SleepSession') return records;
+  const sessions = aggregateSleepSessions(
+    records as Parameters<typeof aggregateSleepSessions>[0]
+  );
+  return enrichSleepSessions(sessions);
+};
 
 /** Earliest stored sample for the history-import floor probe. */
 export const readEarliestRecord = async (

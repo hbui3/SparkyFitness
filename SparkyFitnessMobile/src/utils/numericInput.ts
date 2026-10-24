@@ -97,6 +97,24 @@ export function parseDecimalInput(value: string | null | undefined): number {
 }
 
 /**
+ * `parseDecimalInput` with an optional leading sign (`-`, `+`, or the typographic
+ * minus `−`). Only a bodyweight exercise's set weight takes one: negative is
+ * assistance, positive is added load. Everywhere else a sign stays invalid,
+ * which is why this is separate rather than a change to the base parser.
+ */
+export function parseSignedDecimalInput(
+  value: string | null | undefined
+): number {
+  if (value == null) return NaN;
+  const trimmed = value.replace(OUTER_WHITESPACE_REGEX, '');
+  const match = /^([-+\u2212])\s*(.*)$/.exec(trimmed);
+  if (!match) return parseDecimalInput(trimmed);
+  const magnitude = parseDecimalInput(match[2]);
+  if (Number.isNaN(magnitude)) return NaN;
+  return match[1] === '+' ? magnitude : -magnitude;
+}
+
+/**
  * Coerces an unknown numeric-ish value (number or plain numeric string) to a
  * finite number, falling back to 0. Unlike `parseDecimalInput` this does no
  * locale-aware separator handling — it is for API payload values, not user

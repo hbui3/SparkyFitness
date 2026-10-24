@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { renderHook, act } from '@testing-library/react-native';
 import {
   presetFormReducer,
@@ -82,16 +83,25 @@ describe('presetFormReducer', () => {
       exercise: exercise(),
       exerciseClientId: 'e1',
       setClientId: 's1',
+      serverId: 'entry-1',
     });
 
     expect(next.exercises).toHaveLength(1);
     expect(next.exercises[0]).toEqual({
       clientId: 'e1',
+      serverId: 'entry-1',
       exerciseId: 'ex-1',
       exerciseName: 'Bench Press',
       exerciseCategory: 'strength',
       exerciseModality: null,
+      exerciseEquipment: [],
       images: ['bench.png'],
+      progressionMode: 'rep_goal',
+      repGoal: null,
+      incrementType: 'weight',
+      incrementValue: 5,
+      equipmentBrand: null,
+      rampIncrement: null,
       sets: [
         {
           clientId: 's1',
@@ -112,6 +122,7 @@ describe('presetFormReducer', () => {
         exercise: exercise(),
         exerciseClientId: 'e1',
         setClientId: 's1',
+        serverId: 'entry-1',
       });
       expect(next.exercises[0].sets[0].restTime).toBe(150);
     } finally {
@@ -125,6 +136,7 @@ describe('presetFormReducer', () => {
       exercise: exercise({ images: undefined as unknown as string[] }),
       exerciseClientId: 'e1',
       setClientId: 's1',
+      serverId: 'entry-1',
     });
     expect(next.exercises[0].images).toEqual([]);
   });
@@ -241,7 +253,7 @@ describe('presetFormReducer', () => {
       expect(next.exercises[0].sets[0].setType).toBe('warmup');
       expect(next.exercises[0].sets[1].setType).toBeUndefined();
 
-      const payload = buildPresetExercisesPayload(next.exercises, 'kg');
+      const payload = buildPresetExercisesPayload(next.exercises, 'kg', 'km');
       expect(payload[0].sets[0].set_type).toBe('warmup');
       // Preset sets have no rpe column; a stray rpe patch must not leak out.
       expect(payload[0].sets[0]).not.toHaveProperty('rpe');
@@ -290,7 +302,7 @@ describe('presetFormReducer', () => {
       ]);
       expect(next.exercises[1].sets.map((s) => s.restTime)).toEqual([60]);
 
-      const payload = buildPresetExercisesPayload(next.exercises, 'kg');
+      const payload = buildPresetExercisesPayload(next.exercises, 'kg', 'km');
       expect(payload.map((e) => e.superset_group)).toEqual([1, 1, null]);
     });
 
@@ -360,7 +372,7 @@ describe('presetFormReducer', () => {
   describe('POPULATE_FROM_PRESET', () => {
     function preset(overrides: Partial<WorkoutPreset> = {}): WorkoutPreset {
       return {
-        id: 'p1',
+        id: 1,
         user_id: 'u1',
         name: 'Imported',
         description: 'from server',
@@ -369,14 +381,14 @@ describe('presetFormReducer', () => {
         updated_at: '',
         exercises: [
           {
-            id: 'pe1',
+            id: 1,
             exercise_id: 'ex-1',
             image_url: 'img.png',
             exercise_name: 'Squat',
             category: 'legs',
             sets: [
               {
-                id: 'ps1',
+                id: 1,
                 set_number: 1,
                 set_type: 'working',
                 reps: 5,
@@ -386,7 +398,7 @@ describe('presetFormReducer', () => {
                 notes: 'go deep',
               },
               {
-                id: 'ps2',
+                id: 2,
                 set_number: 2,
                 set_type: 'warmup',
                 reps: null,
@@ -435,6 +447,22 @@ describe('presetFormReducer', () => {
         duration: null,
         notes: 'go deep',
       });
+    });
+
+    it('carries library equipment so dumbbell warm-ups use the dumbbell step', () => {
+      const withEquipment = preset();
+      withEquipment.exercises[0].equipment = ['dumbbell'];
+      const next = presetFormReducer(
+        { name: '', description: '', exercises: [] },
+        {
+          type: 'POPULATE_FROM_PRESET',
+          preset: withEquipment,
+          weightUnit: 'kg',
+          distanceUnit: 'km',
+          clientIds,
+        }
+      );
+      expect(next.exercises[0].exerciseEquipment).toEqual(['dumbbell']);
     });
 
     it('converts stored kg weights to lbs when the unit is lbs', () => {
@@ -521,14 +549,14 @@ describe('presetFormReducer', () => {
         description: null,
         exercises: [
           {
-            id: 'pe1',
+            id: 1,
             exercise_id: 'ex-9',
             image_url: null,
             exercise_name: 'Plank',
             category: null,
             sets: [
               {
-                id: 'ps1',
+                id: 1,
                 set_number: 1,
                 set_type: 'working',
                 reps: null,
@@ -712,7 +740,7 @@ describe('presetFormReducer', () => {
       expect(next.exercises[0].serverId).toBeUndefined();
       expect(next.exercises[0].notes).toBeUndefined();
 
-      const payload = buildPresetExercisesPayload(next.exercises, 'kg');
+      const payload = buildPresetExercisesPayload(next.exercises, 'kg', 'km');
       expect(payload[0].sets[0]).not.toHaveProperty('rpe');
       expect(payload[0].sets[0]).not.toHaveProperty('completed_at');
     });
@@ -765,6 +793,33 @@ describe('presetFormReducer', () => {
         }
       );
       expect(bare.exercises[0].exerciseModality).toBeNull();
+    });
+
+    it('keeps snapshot equipment on a session-derived draft', () => {
+      const base = session().exercises[0];
+      const withEquipment = session({
+        exercises: [
+          {
+            ...base,
+            exercise_snapshot: {
+              ...base.exercise_snapshot!,
+              equipment: ['dumbbell'],
+            },
+          },
+        ],
+      });
+      const next = presetFormReducer(
+        { name: '', description: '', exercises: [] },
+        {
+          type: 'POPULATE_FROM_SESSION',
+          session: withEquipment,
+          weightUnit: 'kg',
+          distanceUnit: 'km',
+          clientIds,
+        }
+      );
+      expect(next.exercises[0].exerciseEquipment).toEqual(['dumbbell']);
+      expect(next.exercises[0].snapshot?.equipment).toEqual(['dumbbell']);
     });
 
     it('falls back to Unknown/null/empty when the exercise snapshot is missing', () => {
@@ -830,6 +885,8 @@ describe('useWorkoutPresetForm', () => {
     expect(result.current.state).toEqual({
       name: '',
       description: '',
+      workoutFormat: 'standard',
+      timeCapSeconds: null,
       exercises: [],
     });
     expect(result.current.exercisesModifiedRef.current).toBe(false);
@@ -958,7 +1015,7 @@ describe('useWorkoutPresetForm', () => {
     expect(result.current.exercisesModifiedRef.current).toBe(true);
 
     const preset: WorkoutPreset = {
-      id: 'p1',
+      id: 1,
       user_id: 'u1',
       name: 'Imported',
       description: 'server desc',
@@ -967,14 +1024,14 @@ describe('useWorkoutPresetForm', () => {
       updated_at: '',
       exercises: [
         {
-          id: 'pe1',
+          id: 1,
           exercise_id: 'ex-1',
           image_url: null,
           exercise_name: 'Squat',
           category: 'legs',
           sets: [
             {
-              id: 'ps1',
+              id: 1,
               set_number: 1,
               set_type: 'working',
               reps: 5,

@@ -1,7 +1,13 @@
+import { resolveMockDataOptions } from '../utils/mockDataOptions.js';
 import express from 'express';
 import hevyService from '../integrations/hevy/hevyService.js';
 import { log } from '../config/logging.js';
 import authMiddleware from '../middleware/authMiddleware.js';
+import {
+  SYNC_ALREADY_RUNNING_RESPONSE,
+  syncClaimTarget,
+  startProviderSync,
+} from '../services/providerSyncClaim.js';
 const router = express.Router();
 /**
  * @swagger
@@ -16,20 +22,35 @@ router.post('/sync', authMiddleware.authenticate, async (req, res) => {
 
     const createdByUserId = req.userId;
     const { providerId, startDate, endDate } = req.body;
+    const { dataSource, saveMockData } = await resolveMockDataOptions(
+      req.body,
+      req.authenticatedUserId
+    );
     const fullSync =
       req.query.fullSync === 'true' || req.body.fullSync === true;
     log(
       'info',
       `[hevyRoutes] Manual sync triggered for user ${userId}${startDate ? ` from ${startDate}` : ''}${endDate ? ` to ${endDate}` : ''}`
     );
-    const result = await hevyService.syncHevyData(
-      userId,
-      createdByUserId,
-      fullSync,
-      providerId,
-      startDate,
-      endDate
+    const started = await startProviderSync(
+      syncClaimTarget(userId, 'hevy', providerId),
+      () =>
+        hevyService.syncHevyData(
+          userId,
+          createdByUserId,
+          fullSync,
+          providerId,
+          startDate,
+          endDate,
+          dataSource,
+          saveMockData
+        )
     );
+    if (!started) {
+      res.status(409).json(SYNC_ALREADY_RUNNING_RESPONSE);
+      return;
+    }
+    const result = await started.running;
     res.status(200).json(result);
   } catch (error) {
     // @ts-expect-error TS(2571): Object is of type 'unknown'.

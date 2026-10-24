@@ -126,6 +126,18 @@ describe('ReauthModal', () => {
     expect(result.queryByText('Or sign in with')).toBeNull();
   });
 
+  it('hides passkey sign-in when the server disables passkey login', async () => {
+    mockFetchAuthSettings.mockResolvedValue({
+      ...emailAuthSettings,
+      passkey: { enabled: false },
+    });
+    const result = renderModal();
+    await flushAsync();
+
+    expect(result.getByText('Sign In')).toBeTruthy();
+    expect(result.queryByText('Sign in with Passkey')).toBeNull();
+  });
+
   it('shows only the expired server when other session configs exist', async () => {
     const otherConfig: ServerConfig = {
       id: 'config-2',

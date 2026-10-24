@@ -1,0 +1,125 @@
+name: Release Please
+
+# Derives the next version from Conventional Commits and keeps a release PR open
+# against main (feat → minor, fix/perf → patch, `!` or a BREAKING CHANGE footer →
+# major). Config lives in release-please-config.json, the current version in
+# .release-please-manifest.json.
+#
+# Merging the release PR is the first human gate. It creates a DRAFT release with
+# the same body draft-release.yml builds (release-preamble.md + GitHub's generated
+# notes). Publishing that draft is the second gate, and is what fires every
+# `release: published` workflow (Docker images, Helm chart, assets, notifiers).
+#
+# The draft is created with GITHUB_TOKEN, which never triggers other workflows,
+# but the publish is done by a person, so those workflows run as they do today.
+# `force-tag-creation` pushes the tag up front, because draft releases have no
+# tag until published and release-please needs it to find the previous release.
+# Nothing may therefore build on a `v*` tag push: android.yml runs on
+# `release: published` for that reason.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# issues: write is required by release-please to create and apply its
+# `autorelease: pending` / `autorelease: tagged` labels.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR / draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # Optional PAT or App token. With GITHUB_TOKEN (the fallback) CI does not
+          # run on the release PR, since GitHub never triggers workflows for it.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # release-please rewrites JSON with plain JSON.stringify, which expands the
+      # single-element plugin arrays in app.json that Prettier keeps inline, so the
+      # release PR would fail `pnpm run validate`. Same problem set-version.js solves.
+      - name: Check out release PR branch
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Install pnpm
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Format version files
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: |
+          set -euo pipefail
+          pnpm install --filter . --frozen-lockfile --ignore-scripts
+          pnpm exec prettier --write \
+            SparkyFitnessServer/package.json \
+            SparkyFitnessFrontend/package.json \
+            SparkyFitnessMobile/package.json \
+            SparkyFitnessMobile/app.json \
+            shared/package.json
+
+          if git diff --quiet; then
+            echo "Version files already formatted."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: format version files"
+          git push
+
+  draft-release-notes:
+    name: Build draft release notes
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Replace release-please's commit-based notes with the body draft-release.yml
+      # produces, so categories come from PR labels (.github/release.yml) and the
+      # PR links release-published-notifier.yml relies on are present.
+      - name: Rewrite draft release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f "tag_name=${TAG}" --jq .body > generated-notes.md
+
+          cat .github/release-preamble.md > release-body.md
+          printf '\n' >> release-body.md
+          cat generated-notes.md >> release-body.md
+
+          echo "----- release body -----"
+          cat release-body.md
+
+          gh release edit "${TAG}" --title "${TAG}" --notes-file release-body.md
+
+          echo "Draft ready for review. Add the Key Highlights and publish it at:"
+          gh release view "${TAG}" --json url --jq .url

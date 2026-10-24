@@ -19,6 +19,11 @@ import type {
   ExercisePersonalRecordItem,
   MatchedCourseGroup,
 } from '@workspace/shared';
+import {
+  bodyWeightJoinSql,
+  cardioPredicateSql,
+  setLoadSql,
+} from '../utils/exerciseLoadSql.js';
 
 interface SqlRow {
   [key: string]: unknown;
@@ -91,6 +96,19 @@ function formatTimeDuration(totalSeconds: number): string {
     return `${hrs}:${formattedMins}:${formattedSecs}`;
   }
   return `${formattedMins}:${formattedSecs}`;
+}
+
+/**
+ * A stored measurement as a number rounded to `decimals`, or null when the
+ * column is empty or not above zero. A zero from a source that never measured
+ * floors or ascent would otherwise show as "0 floors" on every activity.
+ */
+function positiveOrNull(value: unknown, decimals: number): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = parseFloat(String(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const factor = 10 ** decimals;
+  return Math.round(parsed * factor) / factor;
 }
 
 /**
@@ -203,10 +221,11 @@ async function getExerciseStatsSummary(
 
     const strengthSql = `
       SELECT 
-        COALESCE(SUM(s.weight * s.reps), 0) as total_volume,
+        COALESCE(SUM(${setLoadSql('e', 's')} * s.reps), 0) as total_volume,
         COALESCE(SUM(s.reps), 0) as total_reps
       FROM public.exercise_entry_sets s
       JOIN public.exercise_entries e ON s.exercise_entry_id = e.id
+      ${bodyWeightJoinSql('e')}
       WHERE e.user_id = $1
         AND e.entry_date >= $2
         AND e.entry_date <= $3
@@ -281,9 +300,10 @@ async function getExerciseStatsSummary(
     const breakdownVolumeSql = `
       SELECT
         DATE_TRUNC('${truncUnit}', e.entry_date) as period_start,
-        COALESCE(SUM(s.weight * s.reps), 0) as total_volume
+        COALESCE(SUM(${setLoadSql('e', 's')} * s.reps), 0) as total_volume
       FROM public.exercise_entry_sets s
       JOIN public.exercise_entries e ON s.exercise_entry_id = e.id
+      ${bodyWeightJoinSql('e')}
       WHERE e.user_id = $1
         AND e.entry_date >= $2
         AND e.entry_date <= $3
@@ -489,11 +509,8 @@ async function queryExerciseActivities(
       params.push(minKm);
       whereClauses.push(`distance >= $${params.length}`);
     } else if (!request.category) {
-      whereClauses.push(`(
-        (distance IS NOT NULL AND distance > 0)
-        OR LOWER(COALESCE(category, '')) IN ('cardio', 'running', 'cycling', 'walking', 'swimming', 'endurance', 'garmin')
-        OR LOWER(exercise_name) ~ '(run|walk|cycle|swim|hike|treadmill|elliptical|rower|garmin|cardio)'
-      )`);
+      // See cardioPredicateSql for what counts as cardio.
+      whereClauses.push(cardioPredicateSql());
     }
     if (maxKm !== undefined) {
       params.push(maxKm);
@@ -547,6 +564,8 @@ async function queryExerciseActivities(
       SELECT
         id, user_id, exercise_name, category, entry_date, entry_time,
         duration_minutes, distance, avg_heart_rate, calories_burned, source, notes,
+        floors_climbed, elevation_gain_meters, workout_effort,
+        avg_cadence, stride_length_cm,
         EXISTS (
           SELECT 1 FROM public.exercise_entry_gps_points g
           WHERE g.exercise_entry_id = exercise_entries.id
@@ -600,6 +619,14 @@ async function queryExerciseActivities(
           avgHeartRate: row.avg_heart_rate
             ? Math.round(parseFloat(String(row.avg_heart_rate)))
             : null,
+          floorsClimbed: positiveOrNull(row.floors_climbed, 0),
+          elevationGainMeters: positiveOrNull(row.elevation_gain_meters, 1),
+          avgCadence: positiveOrNull(row.avg_cadence, 0),
+          strideLengthCm: positiveOrNull(row.stride_length_cm, 1),
+          workoutEffort:
+            row.workout_effort !== null && row.workout_effort !== undefined
+              ? Number(row.workout_effort)
+              : null,
           source: row.source ? String(row.source) : null,
           notes: row.notes ? String(row.notes) : null,
           hasGpsTrack: row.has_gps_track === true,
@@ -718,6 +745,12 @@ async function getPersonalRecordMatrix(
     }
 
     for (const sportGroup of PR_SPORT_GROUPS) {
+      // The bands are running distances. A sport with no distance standard of
+      // its own (skiing, rowing machines, anything classified as 'other') would
+      // otherwise be ranked against them: a fast downhill run becomes a
+      // marathon record. Such efforts only ever surface as the single
+      // best-effort card below.
+      if (sportGroup === 'other') continue;
       for (const [stdKey, stdConfig] of standardEntries) {
         const candidate = bestBySportAndStandard.get(`${sportGroup}:${stdKey}`);
         if (!candidate) continue;
@@ -846,13 +879,20 @@ async function getPersonalRecordMatrix(
       WITH best_set AS (
         SELECT DISTINCT ON (e.exercise_name)
           e.exercise_name,
-          s.weight * (1 + s.reps / 30.0) as estimated_one_rm,
-          s.weight as weight_kg,
+          (${setLoadSql('e', 's')}) * (1 + s.reps / 30.0) as estimated_one_rm,
+          -- The load moved: body weight plus the set's weight for a
+          -- bodyweight exercise, so a weighted pull-up ranks on what it was.
+          (${setLoadSql('e', 's')}) as weight_kg,
           s.reps as reps,
           e.entry_date as achieved_on
         FROM public.exercise_entry_sets s
         JOIN public.exercise_entries e ON s.exercise_entry_id = e.id
-        WHERE e.user_id = $1 AND s.weight > 0 AND s.reps > 0
+        ${bodyWeightJoinSql('e')}
+        LEFT JOIN public.exercise_preset_entries epe ON epe.id = e.exercise_preset_entry_id
+        WHERE e.user_id = $1 AND (${setLoadSql('e', 's')}) > 0 AND s.reps > 0
+          -- Sets done inside interval/WOD sessions aren't comparable strength
+          -- efforts; ad-hoc entries (no session) count as standard.
+          AND COALESCE(epe.workout_format, 'standard') = 'standard'
         -- Ties broken by the earliest date: that is when the record was first
         -- reached, not the last time it was equalled.
         ORDER BY e.exercise_name, estimated_one_rm DESC, e.entry_date ASC

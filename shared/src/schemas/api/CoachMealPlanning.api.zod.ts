@@ -1,22 +1,22 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   coachMealPlanningCategorySchema,
   coachMealPlanningDaySchema,
   coachMealPlanningQuantitySchema,
   coachMealPlanningRetailerSchema,
   coachMealPlanningUnitSchema,
-} from "../database/CoachPantryItems.zod.ts";
+} from '../database/CoachPantryItems.zod.ts';
 import {
   coachMealPlanEntryStatusSchema,
   coachMealSafetyStatusSchema,
   coachMealSlotSchema,
-} from "../database/CoachMealPlanEntries.zod.ts";
+} from '../database/CoachMealPlanEntries.zod.ts';
 import {
   coachShoppingListItemStatusSchema,
   isOfficialCoachRetailerUrl,
-} from "../database/CoachShoppingListItems.zod.ts";
-import { coachShoppingListStatusSchema } from "../database/CoachShoppingLists.zod.ts";
-import { addDays } from "../../utils/timezone.ts";
+} from '../database/CoachShoppingListItems.zod.ts';
+import { coachShoppingListStatusSchema } from '../database/CoachShoppingLists.zod.ts';
+import { addDays } from '../../utils/timezone.ts';
 
 export const COACH_MEAL_PLANNING_CALORIE_TOLERANCE_RATIO = 0.05;
 
@@ -43,9 +43,9 @@ export const retailProductRefSchema = z
   .superRefine((value, ctx) => {
     if (!isOfficialCoachRetailerUrl(value.retailer, value.directUrl)) {
       ctx.addIssue({
-        code: "custom",
+        code: 'custom',
         message: `Expected an official ${value.retailer} HTTPS product URL`,
-        path: ["directUrl"],
+        path: ['directUrl'],
       });
     }
   });
@@ -83,9 +83,9 @@ export const coachPantryItemResponseSchema = z
       (value.preferredRetailer === null) ===
       (value.preferredRetailerProductId === null),
     {
-      message: "Preferred retailer and product id must be supplied together",
-      path: ["preferredRetailerProductId"],
-    },
+      message: 'Preferred retailer and product id must be supplied together',
+      path: ['preferredRetailerProductId'],
+    }
   );
 
 export const createCoachPantryItemRequestSchema = z
@@ -113,7 +113,7 @@ export const patchCoachPantryItemRequestSchema = z
   .strict()
   .refine(
     (value) => Object.values(value).some((item) => item !== undefined),
-    "No changes supplied",
+    'No changes supplied'
   );
 
 export const coachShoppingListItemResponseSchema = z
@@ -154,9 +154,9 @@ export const coachShoppingListResponseSchema = z
   .superRefine((value, ctx) => {
     if ((value.coverageStart === null) !== (value.coverageEnd === null)) {
       ctx.addIssue({
-        code: "custom",
-        message: "Shopping-list coverage dates must be supplied together",
-        path: ["coverageEnd"],
+        code: 'custom',
+        message: 'Shopping-list coverage dates must be supplied together',
+        path: ['coverageEnd'],
       });
       return;
     }
@@ -166,9 +166,9 @@ export const coachShoppingListResponseSchema = z
       value.coverageEnd < value.coverageStart
     ) {
       ctx.addIssue({
-        code: "custom",
-        message: "Shopping-list coverage end must not precede its start",
-        path: ["coverageEnd"],
+        code: 'custom',
+        message: 'Shopping-list coverage end must not precede its start',
+        path: ['coverageEnd'],
       });
     }
   });
@@ -190,10 +190,10 @@ export const createCoachShoppingItemRequestSchema = z
       value.selectedProduct.packageUnit !== value.unit
     ) {
       ctx.addIssue({
-        code: "custom",
+        code: 'custom',
         message:
-          "Selected product package unit must match the shopping item unit",
-        path: ["selectedProduct", "packageUnit"],
+          'Selected product package unit must match the shopping item unit',
+        path: ['selectedProduct', 'packageUnit'],
       });
     }
   });
@@ -203,7 +203,7 @@ export const patchCoachShoppingItemRequestSchema = z
     name: compactTextSchema.optional(),
     requiredQuantity: positiveQuantitySchema.optional(),
     category: coachMealPlanningCategorySchema.optional(),
-    status: z.enum(["needed", "skipped"]).optional(),
+    status: z.enum(['needed', 'skipped']).optional(),
     quantityLocked: z.boolean().optional(),
     notes: z.string().trim().min(1).max(1_000).nullable().optional(),
     selectedProduct: retailProductRefSchema.nullable().optional(),
@@ -211,7 +211,7 @@ export const patchCoachShoppingItemRequestSchema = z
   .strict()
   .refine(
     (value) => Object.values(value).some((item) => item !== undefined),
-    "No changes supplied",
+    'No changes supplied'
   );
 
 export const confirmCoachShoppingPurchaseRequestSchema = z
@@ -224,7 +224,7 @@ export const confirmCoachShoppingPurchaseRequestSchema = z
             itemId: z.string().uuid(),
             quantity: positiveQuantitySchema,
           })
-          .strict(),
+          .strict()
       )
       .min(1)
       .max(100),
@@ -235,9 +235,9 @@ export const confirmCoachShoppingPurchaseRequestSchema = z
     value.purchases.forEach((purchase, index) => {
       if (seenItemIds.has(purchase.itemId)) {
         ctx.addIssue({
-          code: "custom",
-          message: "Each shopping item may only appear once per purchase",
-          path: ["purchases", index, "itemId"],
+          code: 'custom',
+          message: 'Each shopping item may only appear once per purchase',
+          path: ['purchases', index, 'itemId'],
         });
       }
       seenItemIds.add(purchase.itemId);
@@ -303,22 +303,22 @@ export const coachMealPlanningDailyNutritionSchema = z
   .strict()
   .superRefine((value, ctx) => {
     const validateDifference = (
-      label: "Calorie" | "Protein",
+      label: 'Calorie' | 'Protein',
       target: number | null,
       planned: number,
       difference: number | null,
-      path: "calorieDifferenceKcal" | "proteinDifferenceG",
+      path: 'calorieDifferenceKcal' | 'proteinDifferenceG'
     ): void => {
       const shouldHaveDifference = value.isEstimateComplete && target !== null;
       if (!shouldHaveDifference && difference !== null) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message: `${label} difference must be null without a target or for an incomplete estimate`,
           path: [path],
         });
       } else if (shouldHaveDifference && difference === null) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message: `${label} difference is required for a complete estimate`,
           path: [path],
         });
@@ -329,7 +329,7 @@ export const coachMealPlanningDailyNutritionSchema = z
         Math.abs(difference - (planned - target)) > 0.001
       ) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message: `${label} difference must equal planned amount minus target`,
           path: [path],
         });
@@ -337,18 +337,18 @@ export const coachMealPlanningDailyNutritionSchema = z
     };
 
     validateDifference(
-      "Calorie",
+      'Calorie',
       value.targetCaloriesKcal,
       value.plannedCaloriesKcal,
       value.calorieDifferenceKcal,
-      "calorieDifferenceKcal",
+      'calorieDifferenceKcal'
     );
     validateDifference(
-      "Protein",
+      'Protein',
       value.targetProteinG,
       value.plannedProteinG,
       value.proteinDifferenceG,
-      "proteinDifferenceG",
+      'proteinDifferenceG'
     );
   });
 
@@ -394,7 +394,7 @@ export const generateCoachMealPlanRequestSchema = z
 export const coachMealPlanActionRequestSchema = z
   .object({
     operationId: z.string().uuid(),
-    action: z.enum(["prepared", "eaten_out", "skipped"]),
+    action: z.enum(['prepared', 'eaten_out', 'skipped']),
     notes: z.string().trim().min(1).max(2_000).optional(),
   })
   .strict();
@@ -425,9 +425,9 @@ export const coachMealPlanningDashboardResponseSchema = z
   .superRefine((value, ctx) => {
     if (value.dailyNutrition.length !== value.days) {
       ctx.addIssue({
-        code: "custom",
-        message: "Expected one daily nutrition summary per requested day",
-        path: ["dailyNutrition"],
+        code: 'custom',
+        message: 'Expected one daily nutrition summary per requested day',
+        path: ['dailyNutrition'],
       });
       return;
     }
@@ -436,67 +436,67 @@ export const coachMealPlanningDashboardResponseSchema = z
       const expectedDate = addDays(value.startDate, index);
       if (summary.date !== expectedDate) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message: `Expected daily nutrition summary for ${expectedDate}`,
-          path: ["dailyNutrition", index, "date"],
+          path: ['dailyNutrition', index, 'date'],
         });
       }
 
       const entriesForDate = value.planEntries.filter(
-        (entry) => entry.date === summary.date,
+        (entry) => entry.date === summary.date
       );
       const activeEntries = entriesForDate.filter(
-        (entry) => entry.status === "planned" || entry.status === "prepared",
+        (entry) => entry.status === 'planned' || entry.status === 'prepared'
       );
       const expectedCaloriesKcal = activeEntries.reduce(
         (total, entry) => total + entry.caloriesKcal,
-        0,
+        0
       );
       const expectedProteinG = activeEntries.reduce(
         (total, entry) => total + entry.proteinG,
-        0,
+        0
       );
       if (
         Math.abs(summary.plannedCaloriesKcal - expectedCaloriesKcal) > 0.001
       ) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message:
-            "Planned calories must equal the total for planned and prepared entries",
-          path: ["dailyNutrition", index, "plannedCaloriesKcal"],
+            'Planned calories must equal the total for planned and prepared entries',
+          path: ['dailyNutrition', index, 'plannedCaloriesKcal'],
         });
       }
       if (Math.abs(summary.plannedProteinG - expectedProteinG) > 0.001) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message:
-            "Planned protein must equal the total for planned and prepared entries",
-          path: ["dailyNutrition", index, "plannedProteinG"],
+            'Planned protein must equal the total for planned and prepared entries',
+          path: ['dailyNutrition', index, 'plannedProteinG'],
         });
       }
 
       const expectedEstimateComplete = !entriesForDate.some(
-        (entry) => entry.status === "eaten_out",
+        (entry) => entry.status === 'eaten_out'
       );
       if (summary.isEstimateComplete !== expectedEstimateComplete) {
         ctx.addIssue({
-          code: "custom",
+          code: 'custom',
           message:
-            "Estimate completeness must reflect whether the day contains an eating-out entry",
-          path: ["dailyNutrition", index, "isEstimateComplete"],
+            'Estimate completeness must reflect whether the day contains an eating-out entry',
+          path: ['dailyNutrition', index, 'isEstimateComplete'],
         });
       }
     });
 
     const summaryDates = new Set(
-      value.dailyNutrition.map((summary) => summary.date),
+      value.dailyNutrition.map((summary) => summary.date)
     );
     value.planEntries.forEach((entry, index) => {
       if (!summaryDates.has(entry.date)) {
         ctx.addIssue({
-          code: "custom",
-          message: "Meal-plan entry date must be covered by daily nutrition",
-          path: ["planEntries", index, "date"],
+          code: 'custom',
+          message: 'Meal-plan entry date must be covered by daily nutrition',
+          path: ['planEntries', index, 'date'],
         });
       }
     });

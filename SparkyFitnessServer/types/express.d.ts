@@ -11,6 +11,8 @@ declare global {
       activeUserId: string;
       /** Full Better Auth user object (includes role, email, etc.). */
       user: Record<string, unknown>;
+      /** True when the request is authenticated by a read-only API key. Set by authMiddleware. */
+      apiKeyReadOnly?: boolean;
     }
   }
 }

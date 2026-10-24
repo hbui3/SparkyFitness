@@ -19,6 +19,9 @@ export const checkInKeys = {
     [...checkInKeys.all, 'customEntries', categoryId, userId] as const,
   rawStressData: (userId: string, categoryId: string) =>
     [...checkInKeys.all, 'rawStressData', userId, categoryId] as const,
+  // Under checkInKeys.all so the measurement mutations, which invalidate the
+  // whole family, also refresh the day weights shown with the photos.
+  photoGallery: () => [...checkInKeys.all, 'photoGallery'] as const,
 };
 
 export const moodKeys = {
@@ -35,4 +38,14 @@ export const sleepKeys = {
   all: ['sleep'] as const,
   details: (startDate: string, endDate: string) =>
     [...sleepKeys.all, 'details', startDate, endDate] as const,
+};
+
+export const mindfulnessKeys = {
+  all: ['mindfulness'] as const,
+  daySummary: (date: string) =>
+    [...mindfulnessKeys.all, 'daySummary', date] as const,
+  entries: (date?: string) =>
+    [...mindfulnessKeys.all, 'entries', date] as const,
+  range: (startDate: string, endDate: string) =>
+    [...mindfulnessKeys.all, 'range', startDate, endDate] as const,
 };

@@ -124,3 +124,16 @@ describe('ExerciseEntryDisplay session-only metrics', () => {
     expect(screen.getByText('1: 10 reps · 40 kg')).toBeInTheDocument();
   });
 });
+describe('ExerciseEntryDisplay workout effort', () => {
+  it("shows the person's rating in the stats row", () => {
+    renderCard(makeEntry({ workout_effort: 7 }));
+
+    expect(screen.getByText('Effort 7/10')).toBeInTheDocument();
+  });
+
+  it('shows nothing when the workout was not rated', () => {
+    renderCard(makeEntry({ workout_effort: null }));
+
+    expect(screen.queryByText(/Effort/)).not.toBeInTheDocument();
+  });
+});

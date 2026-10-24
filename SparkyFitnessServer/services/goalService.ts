@@ -1,12 +1,13 @@
 import goalRepository from '../models/goalRepository.js';
 import weeklyGoalPlanRepository from '../models/weeklyGoalPlanRepository.js';
-import goalPresetRepository from '../models/goalPresetRepository.js';
 import userRepository from '../models/userRepository.js';
 import preferenceRepository from '../models/preferenceRepository.js';
 import measurementRepository from '../models/measurementRepository.js';
 import exerciseEntryRepository from '../models/exerciseEntry.js';
 import bmrService from './bmrService.js';
+import goalPresetService from './goalPresetService.js';
 import adaptiveTdeeService from './AdaptiveTdeeService.js';
+import type { AdaptiveTdeeResult } from './AdaptiveTdeeService.js';
 import { userAge } from '../utils/dateHelpers.js';
 import { log } from '../config/logging.js';
 import { addDays, format, getDay, isAfter, parseISO } from 'date-fns';
@@ -21,6 +22,7 @@ import {
   DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
   ACTIVITY_MULTIPLIERS,
   isUsableMeasuredBmr,
+  isAdaptiveActivitySeparated,
 } from '@workspace/shared';
 import customNutrientService from './customNutrientService.js';
 import { DEFAULT_GOALS } from '../constants/goals.js';
@@ -72,7 +74,9 @@ async function getUserGoalsForRange(
   const presetCache: Record<string, unknown> = {};
   const getPreset = async (presetId: string) => {
     if (!presetCache[presetId]) {
-      presetCache[presetId] = await goalPresetRepository.getGoalPresetById(
+      // Go through the service so the preset's `water_goal` column is mapped to
+      // the `water_goal_ml` field every other goal source uses.
+      presetCache[presetId] = await goalPresetService.getGoalPreset(
         presetId,
         userId
       );
@@ -130,7 +134,7 @@ async function getUserGoalsForRange(
   }
 
   let waterEstimatedMap: Record<string, number> = {};
-  let adaptiveTdeeMap: Record<string, any> = {};
+  let adaptiveTdeeMap: Record<string, AdaptiveTdeeResult> = {};
   if (adjust && userPreferences) {
     const adjustmentMode =
       userPreferences.calorie_goal_adjustment_mode || 'dynamic';
@@ -218,6 +222,15 @@ async function getUserGoalsForRange(
 
     // Clone to avoid mutating the source in the cache or repository
     let processedGoals = { ...goals };
+    // A preset may omit the water goal; keep the one already in effect before
+    // falling back to the default.
+    if (
+      processedGoals.water_goal_ml === null ||
+      processedGoals.water_goal_ml === undefined
+    ) {
+      processedGoals.water_goal_ml =
+        currentFallback.water_goal_ml ?? DEFAULT_GOALS.water_goal_ml;
+    }
 
     if (adjust) {
       let goalCalories =
@@ -286,6 +299,7 @@ async function getUserGoalsForRange(
         tdee: number;
         isFallback: boolean;
         daysOfData: number;
+        activityAdjustedTdee?: number;
       } | null = null;
       if (
         adjustmentMode === 'adaptive' ||
@@ -336,7 +350,13 @@ async function getUserGoalsForRange(
       // Must always run when bmr > 0 — even for 'maintain' — so that
       // calculationMethod='adaptive' replaces the stored goal with the
       // adaptive TDEE baseline (matches CalculationSettings preview).
-      if (bmr > 0) {
+      // A weekly offset on a saved manual baseline does not need a BMR estimate.
+      // Keep the existing prerequisite for adaptive full-day budgeting.
+      const hasWeeklyManualBaseline =
+        goalMode === 'weekly' &&
+        goalModeCalculationMethod === 'manual' &&
+        goalCalories > 0;
+      if (bmr > 0 || hasWeeklyManualBaseline) {
         const tz = userPreferences?.timezone || 'UTC';
         const age = userProfile
           ? (userAge(userProfile.date_of_birth ?? '', tz) ?? 30)
@@ -345,9 +365,18 @@ async function getUserGoalsForRange(
           goalMode,
           calculationMethod: goalModeCalculationMethod,
           customPercentage: goalModeCustomPercentage,
+          weeklyChangeKg: userPreferences?.goal_mode_weekly_change_kg ?? 0,
           bmr,
           activityLevelMultiplier: activityMultiplier,
-          adaptiveTdee: adaptiveTdeeData ? adaptiveTdeeData.tdee : null,
+          adaptiveTdee: adaptiveTdeeData
+            ? isAdaptiveActivitySeparated(
+                adjustmentMode,
+                goalModeCalculationMethod,
+                userPreferences?.adaptive_activity_separate
+              )
+              ? (adaptiveTdeeData.activityAdjustedTdee ?? adaptiveTdeeData.tdee)
+              : adaptiveTdeeData.tdee
+            : null,
           adaptiveTdeeFallback: adaptiveTdeeData
             ? (adaptiveTdeeData.isFallback ?? true)
             : true,
@@ -484,6 +513,7 @@ async function manageGoalTimeline(authenticatedUserId: string, goalData: any) {
       p_alcohol_g,
       p_target_exercise_calories_burned,
       p_target_exercise_duration_minutes,
+      p_target_steps,
       p_protein_percentage,
       p_carbs_percentage,
       p_fat_percentage,
@@ -557,6 +587,9 @@ async function manageGoalTimeline(authenticatedUserId: string, goalData: any) {
       log('debug', `cleanNumber: Returning cleaned number: ${num}`);
       return num;
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blankToNull = (value: any) =>
+      typeof value === 'string' && value.trim() === '' ? null : value;
     const activeCustomNutrients =
       await customNutrientService.getCustomNutrients(authenticatedUserId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -582,7 +615,13 @@ async function manageGoalTimeline(authenticatedUserId: string, goalData: any) {
       protein: cleanNumber(protein_to_store),
       carbs: cleanNumber(carbs_to_store),
       fat: cleanNumber(fat_to_store),
-      water_goal_ml: cleanNumber(p_water_goal_ml),
+      // A blank input means "no water goal", not 0.
+      water_goal_ml: cleanNumber(
+        typeof p_water_goal_ml === 'string' && p_water_goal_ml.trim() === ''
+          ? null
+          : p_water_goal_ml,
+        true
+      ),
       saturated_fat: cleanNumber(p_saturated_fat),
       polyunsaturated_fat: cleanNumber(p_polyunsaturated_fat),
       monounsaturated_fat: cleanNumber(p_monounsaturated_fat),
@@ -596,14 +635,22 @@ async function manageGoalTimeline(authenticatedUserId: string, goalData: any) {
       vitamin_c: cleanNumber(p_vitamin_c),
       calcium: cleanNumber(p_calcium),
       iron: cleanNumber(p_iron),
-      caffeine_mg: cleanNumber(p_caffeine_mg),
-      alcohol_g: cleanNumber(p_alcohol_g),
+      // Like water: a missing or blank caffeine/alcohol goal means "no limit set",
+      // not a limit of 0 (both are tracked as maximums).
+      caffeine_mg: cleanNumber(blankToNull(p_caffeine_mg), true),
+      alcohol_g: cleanNumber(blankToNull(p_alcohol_g), true),
       target_exercise_calories_burned: cleanNumber(
         p_target_exercise_calories_burned
       ),
       target_exercise_duration_minutes: cleanNumber(
         p_target_exercise_duration_minutes
       ),
+      // Blank means "no steps goal", not 0; omitted (older client) leaves the
+      // stored goal alone.
+      target_steps:
+        p_target_steps === undefined
+          ? undefined
+          : cleanNumber(blankToNull(p_target_steps), true),
       protein_percentage: cleanNumber(p_protein_percentage, true),
       carbs_percentage: cleanNumber(p_carbs_percentage, true),
       fat_percentage: cleanNumber(p_fat_percentage, true),

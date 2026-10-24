@@ -93,11 +93,31 @@ const REQUIRED_KEYS = [
   'widget_fat',
   'widget_search_food',
   'widget_scan_barcode',
+  'tile_log_water',
+  'tile_calories_left',
   'widget_preview_calories_left',
   'widget_preview_macros_left',
   'widget_preview_grams_protein',
   'widget_preview_grams_carbs',
   'widget_preview_grams_fat',
+  'sparky_water_widget_name',
+  'sparky_water_widget_description',
+  'widget_water_title',
+  'widget_water_amount',
+  'widget_water_amount_no_goal',
+  'widget_water_amount_empty',
+  'widget_water_unit_ml',
+  'widget_water_unit_oz',
+  'widget_water_unit_liter',
+  'widget_water_add',
+  'widget_water_remove',
+  'widget_water_status_sign_in',
+  'widget_water_status_pick_container',
+  'widget_water_status_expired',
+  'widget_water_status_unreachable',
+  'widget_water_status_failed',
+  'widget_water_status_nothing_to_remove',
+  'widget_preview_water_amount',
 ];
 
 // Keys that existed only for the removed resize/responsive experiment layouts.
@@ -127,13 +147,17 @@ const KOTLIN_TEMPLATES = [
   'MacroWidget.kt.tmpl',
   'CalorieWidgetReceiver.kt.tmpl',
   'MacroWidgetReceiver.kt.tmpl',
+  'WaterWidget.kt.tmpl',
+  'WaterWidgetReceiver.kt.tmpl',
   'CalorieWidgetModule.kt.tmpl',
   'WidgetLocale.kt.tmpl',
+  'QuickSettingsTiles.kt.tmpl',
 ];
 
 const WIDGET_INFO_XMLS = [
   'sparky_calorie_widget_info.xml',
   'sparky_macro_widget_info.xml',
+  'sparky_water_widget_info.xml',
 ];
 
 describe('Android widget localization contract', () => {
@@ -189,14 +213,22 @@ describe('Android widget localization contract', () => {
       // the native widget validator and the placeholder tests below.
     });
 
-    it('keeps the two widget names distinct in every shipped locale', () => {
+    it('keeps the widget names distinct in every shipped locale', () => {
+      const nameKeys = [
+        'sparky_calorie_widget_name',
+        'sparky_macro_widget_name',
+        'sparky_water_widget_name',
+      ];
       for (const locale of SHIPPED_WIDGET_LOCALES) {
         const strings = new Map(
           readWidgetStringResources(locale).map((r) => [r.name, r.value])
         );
-        expect(strings.get('sparky_calorie_widget_name')).not.toBe(
-          strings.get('sparky_macro_widget_name')
-        );
+        // An absent key is a non-blocking coverage gap that falls back to the
+        // distinct English names; only a present pair can collapse two.
+        const names = nameKeys
+          .map((key) => strings.get(key))
+          .filter((name): name is string => name !== undefined);
+        expect(new Set(names).size).toBe(names.length);
       }
     });
 
@@ -204,7 +236,13 @@ describe('Android widget localization contract', () => {
       const en = new Map(
         readWidgetStringResources().map((r) => [r.name, r.value])
       );
-      const placeholderKeys = ['widget_kcal_left', 'widget_grams'];
+      const placeholderKeys = [
+        'widget_kcal_left',
+        'widget_grams',
+        'widget_water_amount',
+        'widget_water_amount_no_goal',
+        'widget_water_amount_empty',
+      ];
       for (const locale of SHIPPED_WIDGET_LOCALES) {
         if (locale === SOURCE_LOCALE) continue;
         const target = new Map(
@@ -288,6 +326,216 @@ describe('Android widget localization contract', () => {
       expect(macroSrc).not.toMatch(/R\.string\.widget_kcal_left_value/);
     });
 
+    it('renders the Quick Settings tiles in the widget language from resources', () => {
+      const src = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'QuickSettingsTiles.kt.tmpl'),
+        'utf8'
+      );
+      expect(src).toMatch(
+        /render\(tile, WidgetLocale\.localizedContext\(this\)\)/
+      );
+      expect(src).toMatch(/context\.getString\(labelRes\)/);
+      expect(src).toMatch(/R\.string\.widget_kcal_left/);
+      // No label or subtitle set from a hardcoded string.
+      expect(src).not.toMatch(/tile\.(label|subtitle) = "/);
+    });
+
+    it('erases every snapshot on an account change, in order with the writes', () => {
+      const moduleSrc = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'CalorieWidgetModule.kt.tmpl'),
+        'utf8'
+      );
+      expect(moduleSrc).toMatch(/fun clearSnapshots\(promise: Promise\)/);
+      expect(moduleSrc).toMatch(/\.remove\(prefsKey\)\.commit\(\)/);
+      // Every widget, its stored copy and every instance's state, each part
+      // tried and redrawn past one that fails.
+      expect(moduleSrc).toMatch(
+        /CalorieWidgetReceiver\.PREFS_KEY_SNAPSHOT,\s*\n\s*CalorieWidget\(\),\s*\n\s*CalorieWidget\.SNAPSHOT_STATE_KEY/
+      );
+      expect(moduleSrc).toMatch(
+        /MacroWidgetReceiver\.PREFS_KEY_SNAPSHOT,\s*\n\s*MacroWidget\(\),\s*\n\s*MacroWidget\.SNAPSHOT_STATE_KEY/
+      );
+      expect(moduleSrc).toMatch(
+        /WaterWidgetReceiver\.PREFS_KEY_SNAPSHOT,\s*\n\s*WaterWidget\(\),\s*\n\s*WaterWidget\.SNAPSHOT_STATE_KEY/
+      );
+      // The water taps not yet sent were made for the previous account.
+      expect(moduleSrc).toMatch(/\+ clearWaterWidget\(ctx\)/);
+      expect(moduleSrc).toMatch(
+        /WaterWidgetStore\.onAccountChangedLocked\(ctx\)/
+      );
+      expect(moduleSrc).toMatch(
+        /updateAppWidgetState\(ctx, id\) \{ state -> state\.remove\(stateKey\) \}\s*\n\s*widget\.update\(ctx, id\)/
+      );
+      expect(moduleSrc.match(/failures \+= /g)?.length).toBeGreaterThanOrEqual(
+        3
+      );
+      // Writes and the clear share one serial executor and one lock, so a
+      // write for the previous account cannot land after the clear. The
+      // water widget's buttons, worker and receiver take the same lock.
+      expect(
+        moduleSrc.match(/moduleScope\.launch\(snapshotWrites\)/g)
+      ).toHaveLength(4);
+      expect(
+        moduleSrc.match(/WidgetSnapshotLock\.mutex\.withLock \{/g)
+      ).toHaveLength(4);
+      expect(moduleSrc).not.toMatch(/= Mutex\(\)/);
+
+      // A live Glance session reads the stored copy at composition instead of
+      // one captured at its start, which would bring a cleared snapshot back.
+      for (const template of ['CalorieWidget.kt.tmpl', 'MacroWidget.kt.tmpl']) {
+        const src = fs.readFileSync(path.join(KOTLIN_ROOT, template), 'utf8');
+        expect(src).not.toMatch(/fallbackSnapshot/);
+        expect(src).toMatch(
+          /parseSnapshot\(state\[SNAPSHOT_STATE_KEY\]\) \?: loadSnapshot\(context\)/
+        );
+      }
+      const waterSrc = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidget.kt.tmpl'),
+        'utf8'
+      );
+      expect(waterSrc).toMatch(
+        /WaterWidgetStore\.parse\(state\[SNAPSHOT_STATE_KEY\]\)\s*\n\s*\?: WaterWidgetStore\.loadSnapshot\(context\)/
+      );
+    });
+
+    it('keeps every water snapshot change under the shared widget lock', () => {
+      const lock = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WidgetSnapshots.kt'),
+        'utf8'
+      );
+      expect(lock).toMatch(
+        /object WidgetSnapshotLock \{\s*val mutex = Mutex\(\)/
+      );
+
+      const store = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidgetStore.kt'),
+        'utf8'
+      );
+      // Everything that writes the snapshot says it needs the lock held.
+      for (const fn of [
+        'mergeFromAppLocked',
+        'addTapLocked',
+        'takePendingLocked',
+        'applyOutcomeLocked',
+        'applyTotalsLocked',
+        'onAccountChangedLocked',
+      ]) {
+        expect(store).toMatch(new RegExp(`fun ${fn}\\(`));
+      }
+      // A late answer for the previous account is dropped.
+      expect(store).toMatch(
+        /if \(accountEpoch\(context\) != batch\.accountEpoch\) return/
+      );
+      expect(store).toMatch(/cancelUniqueWork\(WORK_NAME\)/);
+      // Taps go out in order, one request at a time.
+      expect(store).toMatch(/ExistingWorkPolicy\.APPEND_OR_REPLACE/);
+
+      const actions = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidgetActions.kt'),
+        'utf8'
+      );
+      expect(
+        actions.match(/WidgetSnapshotLock\.mutex\.withLock \{/g)
+      ).toHaveLength(4);
+      // A worker first forgets taps an earlier one took and never answered
+      // (stopped, or its process died), so they do not inflate the total.
+      const doWork = actions.slice(
+        actions.indexOf('override suspend fun doWork')
+      );
+      expect(doWork.indexOf('reclaimSendingLocked(context)')).toBeGreaterThan(
+        -1
+      );
+      expect(doWork.indexOf('reclaimSendingLocked(context)')).toBeLessThan(
+        doWork.indexOf('while (true)')
+      );
+      // An answer for a day the app has since moved past is dropped, and so
+      // is a shortcut total sent before an account change.
+      expect(store).toMatch(
+        /if \(obj\.optString\("date", ""\) != batch\.date\) return/
+      );
+      expect(store).toMatch(
+        /if \(accountEpoch != null && accountEpoch != accountEpoch\(context\)\) return/
+      );
+      // The manual part comes with every push and is never carried over.
+      const merge = store.slice(
+        store.indexOf('suspend fun mergeFromAppLocked'),
+        store.indexOf('suspend fun addTapLocked')
+      );
+      expect(merge).not.toMatch(/manualMl/);
+      expect(merge).toMatch(
+        /if \(!isSnapshotToday\(incoming\.optString\("date", ""\)\)\) return/
+      );
+      // The request itself is made outside the lock.
+      expect(actions).toMatch(
+        /withContext\(Dispatchers\.IO\) \{ postWaterChange\(context, batch\.drinks\) \}/
+      );
+
+      const receiver = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidgetReceiver.kt.tmpl'),
+        'utf8'
+      );
+      expect(receiver).toMatch(
+        /WidgetSnapshotLock\.mutex\.withLock \{\s*\n\s*WaterWidgetStore\.applyTotalsLocked/
+      );
+    });
+
+    it('shows the water buttons only for a container that logs plain water', () => {
+      const store = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidgetStore.kt'),
+        'utf8'
+      );
+      expect(store).toMatch(
+        /val showsButtons: Boolean = canLog && \(drinkMl \?: 0\.0\) > 0\.0/
+      );
+      const src = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidget.kt.tmpl'),
+        'utf8'
+      );
+      expect(src).toMatch(/if \(snapshot\?\.showsButtons == true\)/);
+      expect(src).toMatch(/actionRunCallback<WaterChangeAction>/);
+      // A greyed-out − stays clickable with a change of 0, which does
+      // nothing, so the tap never reaches the open-the-app action behind it.
+      expect(src).toMatch(/CHANGE_KEY to if \(enabled\) change else 0/);
+      const actions = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidgetActions.kt'),
+        'utf8'
+      );
+      expect(actions).toMatch(/if \(change == 0\) return/);
+      // cornerRadius is a no-op before Android 12, so the buttons' shape
+      // comes from a drawable there, in a light and a night colour.
+      expect(src).toMatch(
+        /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\s\S]*R\.drawable\.bg_widget_water_button/
+      );
+      expect(src).toMatch(
+        /if \(roundsCorners\) 0 else R\.drawable\.bg_widget_water_button_ripple/
+      );
+      expect(
+        fs.readFileSync(
+          path.join(RES_ROOT, 'drawable', 'bg_widget_water_button_ripple.xml'),
+          'utf8'
+        )
+      ).toMatch(/<corners android:radius="20dp" \/>/);
+      for (const dir of ['drawable', 'drawable-night']) {
+        expect(
+          fs.readFileSync(
+            path.join(RES_ROOT, dir, 'bg_widget_water_button.xml'),
+            'utf8'
+          )
+        ).toMatch(/<corners android:radius="20dp" \/>/);
+      }
+      expect(src).toMatch(
+        /contentDescription = widgetContext\.getString\(R\.string\.widget_water_add\)/
+      );
+      // A greyed-out − is announced as having nothing to remove.
+      expect(src).toMatch(
+        /if \(snapshot\.canRemove\) \{\s*R\.string\.widget_water_remove\s*\} else \{\s*R\.string\.widget_water_status_nothing_to_remove\s*\}/
+      );
+      // Amounts use the widget locale's separators.
+      expect(src).toMatch(
+        /NumberFormat\.getNumberInstance\(currentWidgetLocale\(context\)\)/
+      );
+    });
+
     it('localizes accessibility labels in the Kotlin widgets', () => {
       for (const template of ['CalorieWidget.kt.tmpl', 'MacroWidget.kt.tmpl']) {
         const src = fs.readFileSync(path.join(KOTLIN_ROOT, template), 'utf8');
@@ -353,6 +601,27 @@ describe('Android widget localization contract', () => {
       expect(helper).not.toMatch(/\.toLong\(\)/);
     });
 
+    it('sets the next midnight alarm even when the midnight redraw fails', () => {
+      // Each alarm fires once: a redraw that threw used to crash the process
+      // and leave no alarm for the following night.
+      for (const receiver of [
+        'CalorieWidgetReceiver.kt.tmpl',
+        'MacroWidgetReceiver.kt.tmpl',
+      ]) {
+        const src = fs.readFileSync(path.join(KOTLIN_ROOT, receiver), 'utf8');
+        const midnight = src.slice(
+          src.indexOf('if (intent.action == ACTION_MIDNIGHT_REFRESH)'),
+          src.indexOf('if (intent.action == Intent.ACTION_LOCALE_CHANGED)')
+        );
+        expect(midnight).toMatch(
+          /catch \(e: CancellationException\) \{\s*throw e\s*\} catch \(e: Exception\)/
+        );
+        expect(midnight).toMatch(
+          /\} finally \{[\s\S]*scheduleMidnightRefresh\(context\)[\s\S]*pending\.finish\(\)/
+        );
+      }
+    });
+
     it('updates every GlanceId and continues past a failing instance', () => {
       const moduleSrc = fs.readFileSync(
         path.join(KOTLIN_ROOT, 'CalorieWidgetModule.kt.tmpl'),
@@ -364,12 +633,15 @@ describe('Android widget localization contract', () => {
       expect(moduleSrc).toMatch(
         /getGlanceIds\(MacroWidget::class\.java\)\.forEach/
       );
+      expect(moduleSrc).toMatch(
+        /getGlanceIds\(WaterWidget::class\.java\)\.forEach/
+      );
       expect(moduleSrc).not.toMatch(/getGlanceIds\([^)]*\)\[0\]/);
       expect(moduleSrc).toMatch(/catch \(e: CancellationException\)/);
       expect(moduleSrc).toMatch(/var firstFailure: Exception\?/);
     });
 
-    it('keeps the midnight refresh mechanism with distinct request codes', () => {
+    it('keeps the midnight refresh mechanism with distinct alarm actions', () => {
       const calorieReceiver = fs.readFileSync(
         path.join(KOTLIN_ROOT, 'CalorieWidgetReceiver.kt.tmpl'),
         'utf8'
@@ -378,23 +650,51 @@ describe('Android widget localization contract', () => {
         path.join(KOTLIN_ROOT, 'MacroWidgetReceiver.kt.tmpl'),
         'utf8'
       );
+      const waterReceiver = fs.readFileSync(
+        path.join(KOTLIN_ROOT, 'WaterWidgetReceiver.kt.tmpl'),
+        'utf8'
+      );
 
-      for (const src of [calorieReceiver, macroReceiver]) {
+      // Each receiver's alarm carries its own action, so one widget's
+      // alarm never replaces another's.
+      const actions = new Set<string>();
+      for (const src of [calorieReceiver, macroReceiver, waterReceiver]) {
         expect(src).toMatch(/ACTION_MIDNIGHT_REFRESH/);
         expect(src).toMatch(/updateAll\(context\)/);
         expect(src).toMatch(/scheduleMidnightRefresh\(context\)/);
         expect(src).toMatch(/cancelMidnightRefresh\(context\)/);
         expect(src).toMatch(/setAndAllowWhileIdle/);
+        actions.add(
+          src.match(/ACTION_MIDNIGHT_REFRESH =\s*\n?\s*"([^"]+)"/)?.[1] ??
+            'missing'
+        );
       }
+      expect(actions.size).toBe(3);
+      // The water receiver sets the next alarm even when its redraw fails,
+      // since each alarm fires once.
+      const waterMidnight = waterReceiver.slice(
+        waterReceiver.indexOf('if (intent.action == ACTION_MIDNIGHT_REFRESH)'),
+        waterReceiver.indexOf(
+          'if (intent.action == Intent.ACTION_LOCALE_CHANGED)'
+        )
+      );
+      expect(waterMidnight).toMatch(
+        /catch \(e: CancellationException\) \{\s*throw e\s*\} catch \(e: Exception\)/
+      );
+      expect(waterMidnight).toMatch(
+        /\} finally \{[\s\S]*scheduleMidnightRefresh\(context\)[\s\S]*pending\.finish\(\)/
+      );
+      expect(actions.has('missing')).toBe(false);
     });
 
     it('re-renders all widget instances on ACTION_LOCALE_CHANGED', () => {
       // Out-of-app App Language changes (Android Settings) must refresh the
-      // widgets without the app foregrounding. Both receivers react to the
-      // manifest-registered LOCALE_CHANGED broadcast and call updateAll.
+      // widgets without the app foregrounding. Every receiver reacts to the
+      // manifest-registered LOCALE_CHANGED broadcast and calls updateAll.
       for (const template of [
         'CalorieWidgetReceiver.kt.tmpl',
         'MacroWidgetReceiver.kt.tmpl',
+        'WaterWidgetReceiver.kt.tmpl',
       ]) {
         const src = fs.readFileSync(path.join(KOTLIN_ROOT, template), 'utf8');
         expect(src).toMatch(/Intent\.ACTION_LOCALE_CHANGED/);
@@ -408,7 +708,7 @@ describe('Android widget localization contract', () => {
     // Localization must not change the default footprint or composition: the
     // classic 2x1 calorie card and 2x2 macro card stay fixed and are NOT
     // resizable. This PR removed the resize/responsive experiment entirely.
-    it('keeps resizeMode="none" on both provider XMLs', () => {
+    it('keeps resizeMode="none" on every provider XML', () => {
       for (const infoXml of WIDGET_INFO_XMLS) {
         const src = fs.readFileSync(
           path.join(RES_ROOT, 'xml', infoXml),
@@ -430,7 +730,7 @@ describe('Android widget localization contract', () => {
       }
     });
 
-    it('keeps the classic provider footprints (calorie 110x40 2x1, macro 110x110 2x2)', () => {
+    it('keeps the classic provider footprints (calorie 110x40 2x1, macro and water 110x110 2x2)', () => {
       const calorie = fs.readFileSync(
         path.join(RES_ROOT, 'xml', 'sparky_calorie_widget_info.xml'),
         'utf8'
@@ -446,14 +746,20 @@ describe('Android widget localization contract', () => {
       expect(calorie).toMatch(/android:targetCellWidth="2"/);
       expect(calorie).toMatch(/android:targetCellHeight="1"/);
 
-      // Macro: classic 2x2 footprint.
-      expect(macro).toMatch(/android:minWidth="110dp"/);
-      expect(macro).toMatch(/android:minHeight="110dp"/);
-      expect(macro).toMatch(/android:targetCellWidth="2"/);
-      expect(macro).toMatch(/android:targetCellHeight="2"/);
+      // Macro and water: classic 2x2 footprint.
+      const water = fs.readFileSync(
+        path.join(RES_ROOT, 'xml', 'sparky_water_widget_info.xml'),
+        'utf8'
+      );
+      for (const square of [macro, water]) {
+        expect(square).toMatch(/android:minWidth="110dp"/);
+        expect(square).toMatch(/android:minHeight="110dp"/);
+        expect(square).toMatch(/android:targetCellWidth="2"/);
+        expect(square).toMatch(/android:targetCellHeight="2"/);
+      }
     });
 
-    it('registers both widget receivers for APPWIDGET_UPDATE and LOCALE_CHANGED', () => {
+    it('registers every widget receiver for APPWIDGET_UPDATE and LOCALE_CHANGED', () => {
       // The config plugin declares the receiver intent-filter in the manifest.
       // LOCALE_CHANGED is an explicit exemption from the Android 8+ implicit
       // broadcast limits and covers per-app locale changes, so widgets can
@@ -468,23 +774,35 @@ describe('Android widget localization contract', () => {
       // broadcasts remain deliverable to non-exported manifest receivers.
       expect(pluginSrc).toMatch(/'android:exported': 'false'/);
       expect(pluginSrc).toMatch(/for \(const receiver of WIDGET_RECEIVERS\)/);
+      for (const receiver of [
+        'CalorieWidgetReceiver',
+        'MacroWidgetReceiver',
+        'WaterWidgetReceiver',
+      ]) {
+        expect(pluginSrc).toContain(`\${WIDGET_PACKAGE}.${receiver}\``);
+      }
+      expect(pluginSrc).toContain("'@xml/sparky_water_widget_info'");
       expect(pluginSrc).not.toMatch(/'android:exported': 'true'/);
     });
 
     it('restores the classic macro size mode (single 200x200 responsive size)', () => {
-      const macroSrc = fs.readFileSync(
-        path.join(KOTLIN_ROOT, 'MacroWidget.kt.tmpl'),
-        'utf8'
-      );
       // The pre-localization SizeMode: one responsive size matching the fixed
-      // 2x2 footprint — NOT resizable, NOT SizeMode.Exact.
-      expect(macroSrc).toMatch(
-        /SizeMode\.Responsive\(\s*setOf\(DpSize\(200\.dp, 200\.dp\)\),?\s*\)/
-      );
+      // 2x2 footprint — NOT resizable, NOT SizeMode.Exact. The water widget
+      // shares the footprint.
+      for (const template of ['MacroWidget.kt.tmpl', 'WaterWidget.kt.tmpl']) {
+        const src = fs.readFileSync(path.join(KOTLIN_ROOT, template), 'utf8');
+        expect(src).toMatch(
+          /SizeMode\.Responsive\(\s*setOf\(DpSize\(200\.dp, 200\.dp\)\),?\s*\)/
+        );
+      }
     });
 
     it('never uses SizeMode.Exact, LocalSize.current or size-driven logic in the Glance widgets', () => {
-      for (const template of ['CalorieWidget.kt.tmpl', 'MacroWidget.kt.tmpl']) {
+      for (const template of [
+        'CalorieWidget.kt.tmpl',
+        'MacroWidget.kt.tmpl',
+        'WaterWidget.kt.tmpl',
+      ]) {
         const src = fs.readFileSync(path.join(KOTLIN_ROOT, template), 'utf8');
         expect(src).not.toMatch(/import androidx\.glance\.LocalSize/);
         expect(src).not.toMatch(/LocalSize\.current/);
@@ -655,6 +973,7 @@ describe('Android widget localization contract', () => {
       for (const receiver of [
         'CalorieWidgetReceiver.kt.tmpl',
         'MacroWidgetReceiver.kt.tmpl',
+        'WaterWidgetReceiver.kt.tmpl',
       ]) {
         const src = fs.readFileSync(path.join(KOTLIN_ROOT, receiver), 'utf8');
         const refreshIndex = src.indexOf(
@@ -750,8 +1069,12 @@ describe('Android widget localization contract', () => {
       );
     });
 
-    it('makes both active widget compositions observe the locale revision state', () => {
-      for (const template of ['CalorieWidget.kt.tmpl', 'MacroWidget.kt.tmpl']) {
+    it('makes every active widget composition observe the locale revision state', () => {
+      for (const template of [
+        'CalorieWidget.kt.tmpl',
+        'MacroWidget.kt.tmpl',
+        'WaterWidget.kt.tmpl',
+      ]) {
         const src = fs.readFileSync(path.join(KOTLIN_ROOT, template), 'utf8');
         expect(src).toMatch(/currentState<Preferences>\(\)/);
         expect(src).toMatch(
@@ -775,8 +1098,14 @@ describe('Android widget localization contract', () => {
         'utf8'
       );
 
+      const waterInfo = fs.readFileSync(
+        path.join(RES_ROOT, 'xml', 'sparky_water_widget_info.xml'),
+        'utf8'
+      );
+
       expect(calorieInfo).toContain('@string/sparky_widget_description');
       expect(macroInfo).toContain('@string/sparky_macro_widget_description');
+      expect(waterInfo).toContain('@string/sparky_water_widget_description');
     });
   });
 
@@ -785,6 +1114,7 @@ describe('Android widget localization contract', () => {
       for (const layout of [
         'sparky_widget_initial_layout.xml',
         'sparky_macro_widget_initial_layout.xml',
+        'sparky_water_widget_initial_layout.xml',
       ]) {
         const src = fs.readFileSync(
           path.join(RES_ROOT, 'layout', layout),

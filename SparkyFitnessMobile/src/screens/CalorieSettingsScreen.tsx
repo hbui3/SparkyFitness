@@ -10,9 +10,12 @@ import Toast from 'react-native-toast-message';
 import Icon from '../components/Icon';
 import BottomSheetPicker from '../components/BottomSheetPicker';
 import FormInput from '../components/FormInput';
+import WeeklyWeightGoalFields from '../components/WeeklyWeightGoalFields';
 import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
 import Switch from '../components/ui/Switch';
 import { usePreferences } from '../hooks/usePreferences';
+import { useDailySummary } from '../hooks/useDailySummary';
+import { getTodayDate } from '../utils/dateUtils';
 import { updatePreferences } from '../services/api/preferencesApi';
 import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import { useScreenHeader } from '../hooks/useScreenHeader';
@@ -25,6 +28,9 @@ import {
   MAX_GOAL_MODE_PERCENTAGE,
   MIN_CALORIE_SAFETY_FLOOR,
   convertEnergyValue,
+  isAdaptiveEarnBackSuppressed,
+  isAdaptiveActivitySeparated,
+  todayInZone,
   type CalorieSafetyFloorMode,
   type GoalMode,
   type GoalModeCalculationMethod,
@@ -43,7 +49,9 @@ function normalizePreferences(prefs: UserPreferences | undefined) {
     tdeeAllowNegativeAdjustment: prefs?.tdee_allow_negative_adjustment ?? false,
     goalMode: prefs?.goal_mode ?? 'maintain',
     goalModeCalculationMethod: prefs?.goal_mode_calculation_method ?? 'manual',
+    adaptiveActivitySeparate: prefs?.adaptive_activity_separate ?? false,
     goalModeCustomPercentage: prefs?.goal_mode_custom_percentage ?? 0,
+    goalModeWeeklyChangeKg: prefs?.goal_mode_weekly_change_kg ?? 0,
     calorieSafetyFloorMode: prefs?.calorie_safety_floor_mode ?? 'standard',
     calorieSafetyFloorValue:
       prefs?.calorie_safety_floor_value ?? DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
@@ -113,6 +121,12 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
     },
   ];
   const goalModeOptions = [
+    {
+      label: t('calorieSettings.goalMode.weekly', {
+        defaultValue: 'Weekly weight change',
+      }),
+      value: 'weekly',
+    },
     {
       label: t('calorieSettings.goalMode.maintain', {
         defaultValue: 'Maintain (0%)',
@@ -212,6 +226,22 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
   const queryClient = useQueryClient();
   const { preferences } = usePreferences();
   const normalized = normalizePreferences(preferences);
+  const activitySeparated = isAdaptiveActivitySeparated(
+    normalized.mode,
+    normalized.goalModeCalculationMethod,
+    normalized.adaptiveActivitySeparate
+  );
+  const adaptiveEarnBackConfigured = isAdaptiveEarnBackSuppressed(
+    normalized.mode,
+    normalized.goalModeCalculationMethod,
+    normalized.adaptiveActivitySeparate
+  );
+  const { summary } = useDailySummary({
+    date: preferences?.timezone
+      ? todayInZone(preferences.timezone)
+      : getTodayDate(),
+    enabled: adaptiveEarnBackConfigured,
+  });
 
   const [percentageText, setPercentageText] = useState(() =>
     String(normalized.exerciseCaloriePercentage)
@@ -256,6 +286,7 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
   }
 
   const mutation = useMutation({
+    scope: { id: 'calorie-settings' },
     mutationFn: (data: Partial<UserPreferences>) => updatePreferences(data),
     onMutate: async (data) => {
       await queryClient.cancelQueries({ queryKey: preferencesQueryKey });
@@ -280,6 +311,10 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dailySummary'] });
+      queryClient.invalidateQueries({ queryKey: ['familyDailySummary'] });
+      queryClient.invalidateQueries({ queryKey: ['goals'] });
+      queryClient.invalidateQueries({ queryKey: ['goalsRange'] });
+      queryClient.invalidateQueries({ queryKey: ['nutritionTrends'] });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: preferencesQueryKey });
@@ -409,7 +444,12 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
   const optionsLayout = LinearTransition.delay(0).duration(250);
   const pipelineLayout = LinearTransition.delay(50).duration(250);
 
-  const showPercentage = normalized.mode === 'percentage';
+  // Match goalService: without a usable BMR the stored manual target remains
+  // active. Keep its earn-back control available until the balance is known.
+  const adaptiveEarnBackSuppressed =
+    adaptiveEarnBackConfigured && (summary?.calorieBalance?.bmr ?? 0) > 0;
+  const showPercentage =
+    normalized.mode === 'percentage' && !adaptiveEarnBackSuppressed;
   const showActivityLevel =
     normalized.mode === 'tdee' || normalized.mode === 'adaptive';
   const showNegativeAdjustment = normalized.mode === 'tdee';
@@ -438,11 +478,15 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
 
     let remainingFormula: string;
     let remainingNote: string | null;
-    switch (mode) {
+    switch (adaptiveEarnBackSuppressed ? 'adaptive' : mode) {
       case 'dynamic':
-        remainingFormula = t('calorieSettings.formulas.dynamic', {
-          defaultValue: 'Goal − Net Energy',
-        });
+        remainingFormula = activitySeparated
+          ? t('calorieSettings.formulas.dynamicActivitySeparated', {
+              defaultValue: 'Goal − Eaten + Activity',
+            })
+          : t('calorieSettings.formulas.dynamic', {
+              defaultValue: 'Goal − Net Energy',
+            });
         remainingNote = t('calorieSettings.notes.dynamic', {
           defaultValue: 'Goal grows as you move',
         });
@@ -460,9 +504,14 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
         remainingNote = null;
         break;
       case 'tdee':
-        remainingFormula = t('calorieSettings.formulas.tdee', {
-          defaultValue: 'Projected TDEE × Goal Mode − Eaten',
-        });
+        remainingFormula =
+          normalized.goalMode === 'weekly'
+            ? t('calorieSettings.formulas.tdeeWeekly', {
+                defaultValue: 'Projected TDEE + Weekly Goal Adjustment − Eaten',
+              })
+            : t('calorieSettings.formulas.tdee', {
+                defaultValue: 'Projected TDEE × Goal Mode − Eaten',
+              });
         remainingNote = t('calorieSettings.notes.tdee', {
           defaultValue:
             'The projection converges with the device total at midnight',
@@ -472,9 +521,15 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
         remainingFormula = t('calorieSettings.formulas.adaptive', {
           defaultValue: 'Goal − Eaten',
         });
-        remainingNote = t('calorieSettings.notes.adaptive', {
-          defaultValue: 'Goal = Adaptive TDEE',
-        });
+        remainingNote = adaptiveEarnBackSuppressed
+          ? null
+          : normalized.goalMode === 'weekly'
+            ? t('calorieSettings.notes.adaptiveWeekly', {
+                defaultValue: 'Goal = Adaptive TDEE + Weekly Goal Adjustment',
+              })
+            : t('calorieSettings.notes.adaptive', {
+                defaultValue: 'Goal = Adaptive TDEE',
+              });
         break;
       default:
         remainingFormula = t('calorieSettings.formulas.fixed', {
@@ -488,9 +543,12 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
 
     return { burned, net, remainingFormula, remainingNote };
   }, [
+    activitySeparated,
+    adaptiveEarnBackSuppressed,
     normalized.mode,
     normalized.includeBmrInNetCalories,
     normalized.exerciseCaloriePercentage,
+    normalized.goalMode,
     t,
   ]);
 
@@ -547,6 +605,52 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
               })}
             </Text>
           )}
+          {adaptiveEarnBackSuppressed && (
+            <Text className="text-text-secondary text-sm mt-3">
+              {t('calorieSettings.adaptiveEarnBack', {
+                defaultValue:
+                  'Adaptive targets already include activity. Remaining calories are Target minus Eaten. Exercise earn-back applies only to Manual targets.',
+              })}
+            </Text>
+          )}
+          {normalized.mode === 'dynamic' &&
+            normalized.goalModeCalculationMethod === 'adaptive' && (
+              <View className="mt-3">
+                <View className="flex-row items-center justify-between gap-3">
+                  <Text className="flex-1 text-base font-semibold text-text-primary">
+                    {t('calorieSettings.adaptiveActivitySeparate', {
+                      defaultValue: 'Count activity calories separately',
+                    })}
+                  </Text>
+                  <Switch
+                    value={normalized.adaptiveActivitySeparate}
+                    onValueChange={(value) =>
+                      mutation.mutate({ adaptive_activity_separate: value })
+                    }
+                    accessibilityLabel={t(
+                      'calorieSettings.adaptiveActivitySeparate',
+                      {
+                        defaultValue: 'Count activity calories separately',
+                      }
+                    )}
+                  />
+                </View>
+                <Text className="text-text-secondary text-sm mt-3">
+                  {t('calorieSettings.adaptiveActivitySeparateHint', {
+                    defaultValue:
+                      'Learn a baseline excluding historical activity and credit today’s steps and workouts once, without adding BMR again. This needs consistent food, weight, step and workout history. Until enough history is available, use BMR × your non-workout activity multiplier.',
+                  })}
+                </Text>
+                {activitySeparated && (
+                  <Text className="text-text-secondary text-sm mt-3">
+                    {t('calorieSettings.adaptiveActivitySeparateReporting', {
+                      defaultValue:
+                        'BMR stays in Burned and Net Energy when Include Resting Calories is enabled. Only steps and workouts are added to your remaining calorie budget.',
+                    })}
+                  </Text>
+                )}
+              </View>
+            )}
         </View>
 
         {/* Options */}
@@ -699,16 +803,31 @@ const CalorieSettingsScreen: React.FC<CalorieSettingsScreenProps> = () => {
             />
           </View>
           <Text className="text-text-secondary text-sm mt-3">
-            {normalized.mode === 'tdee'
-              ? t('calorieSettings.goalMode.deviceProjectionDescription', {
+            {normalized.goalMode === 'weekly'
+              ? t('calorieSettings.weeklyGoal.description', {
                   defaultValue:
-                    'This percentage is applied directly to the projected device TDEE.',
+                    'Choose how much weight you want to lose or gain each week, or keep your weight stable.',
                 })
-              : t('calorieSettings.goalMode.description', {
-                  defaultValue:
-                    'Adjusts your calorie target for maintenance, a deficit, or a surplus.',
-                })}
+              : normalized.mode === 'tdee'
+                ? t('calorieSettings.goalMode.deviceProjectionDescription', {
+                    defaultValue:
+                      'This percentage is applied directly to the projected device TDEE.',
+                  })
+                : t('calorieSettings.goalMode.description', {
+                    defaultValue:
+                      'Adjusts your calorie target for maintenance, a deficit, or a surplus.',
+                  })}
           </Text>
+          {normalized.goalMode === 'weekly' && (
+            <WeeklyWeightGoalFields
+              weeklyChangeKg={normalized.goalModeWeeklyChangeKg}
+              weightUnit={preferences?.default_weight_unit}
+              energyUnit={normalized.energyUnit}
+              onChange={(weeklyChangeKg) =>
+                mutation.mutate({ goal_mode_weekly_change_kg: weeklyChangeKg })
+              }
+            />
+          )}
           {normalized.goalMode === 'manual' && (
             <View className="mt-4">
               <Text className="text-sm font-semibold text-text-primary mb-2">

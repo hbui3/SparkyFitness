@@ -57,6 +57,18 @@ const DELIBERATE_OMISSIONS: Omission[] = [
       'user_goals has no water_ml column — water_goal_ml is the one water goal.',
   },
   {
+    file: /^screens\/GoalsScreen\.tsx$/,
+    columns: ['water_ml'],
+    reason:
+      'The goal editor mirrors user_goals, which has no water_ml column — water_goal_ml is the one water goal.',
+  },
+  {
+    file: /^services\/api\/goalsApi\.ts$/,
+    columns: ['water_ml'],
+    reason:
+      'The save payload mirrors user_goals, which has no water_ml column — water_goal_ml is the one water goal.',
+  },
+  {
     file: /^hooks\/useNutritionTrends\.ts$/,
     columns: ['water_ml'],
     reason:
@@ -66,6 +78,12 @@ const DELIBERATE_OMISSIONS: Omission[] = [
     file: /^services\/api\/reportsApi\.ts$/,
     columns: ['water_ml'],
     reason: 'Report totals read hydration from its own water arm.',
+  },
+  {
+    file: /^services\/onDeviceLabelScan\.ts$/,
+    columns: TRACKED_COLUMNS,
+    reason:
+      'The on-device model does not extract caffeine, water or alcohol; the result sets them to null once, and the range checks only cover fields the model returns.',
   },
   {
     file: /^components\/FoodForm\.tsx$/,

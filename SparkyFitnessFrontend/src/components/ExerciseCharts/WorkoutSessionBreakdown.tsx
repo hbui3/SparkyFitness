@@ -4,7 +4,8 @@ import { usePreferences, type WeightUnit } from '@/contexts/PreferencesContext';
 import { formatWeight } from '@/utils/numberFormatting';
 import { FaChevronDown, FaChevronUp, FaDumbbell } from 'react-icons/fa';
 import { useGroupedWorkoutSession } from '@/hooks/Exercises/useExercises';
-import type { ExerciseEntryResponse } from '@workspace/shared';
+import { type ExerciseEntryResponse } from '@workspace/shared';
+import { localizeMuscle } from '@/utils/exerciseTaxonomy';
 import MuscleBodyMap from './MuscleBodyMap';
 
 const formatExerciseName = (name: string | undefined | null): string => {
@@ -279,7 +280,9 @@ export const WorkoutSessionBreakdown = ({
           }`}
           onClick={() => setActiveTab('sets')}
         >
-          {t('workoutReport.sets', 'Sets')} ({setList.length})
+          {t('workoutReport.sets2', 'Sets ({{setListCount}})', {
+            setListCount: setList.length,
+          })}
         </button>
         <button
           className={`pb-3 px-4 text-sm font-semibold transition-colors border-b-2 ${
@@ -289,8 +292,11 @@ export const WorkoutSessionBreakdown = ({
           }`}
           onClick={() => setActiveTab('exercises')}
         >
-          {t('workoutReport.exercises', 'Exercises')} ({groupedExercises.length}
-          )
+          {t(
+            'workoutReport.exercises2',
+            'Exercises ({{groupedExercisesCount}})',
+            { groupedExercisesCount: groupedExercises.length }
+          )}
         </button>
         {hasTargetedMuscles && (
           <button
@@ -435,19 +441,47 @@ export const WorkoutSessionBreakdown = ({
                             <table className="w-full text-xs text-left border rounded bg-background">
                               <thead className="bg-muted/50 border-b">
                                 <tr>
-                                  <th className="py-2 px-3">Set #</th>
-                                  <th className="py-2 px-3">Time</th>
-                                  <th className="py-2 px-3">Rest</th>
-                                  <th className="py-2 px-3">Reps</th>
-                                  <th className="py-2 px-3">Weight</th>
-                                  <th className="py-2 px-3">Volume</th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.set',
+                                      'Set #'
+                                    )}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t('common.minutesUnit', 'Time')}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.rest',
+                                      'Rest'
+                                    )}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.reps',
+                                      'Reps'
+                                    )}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t('common.weight', 'Weight')}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.volume',
+                                      'Volume'
+                                    )}
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-border">
                                 {group.sets.map((s, idx) => (
                                   <tr key={`${s.setNumber}-${idx}`}>
                                     <td className="py-2 px-3 font-semibold">
-                                      Set {s.setNumber}
+                                      {t(
+                                        'exerciseCharts.workoutSessionBreakdown.set2',
+                                        'Set {{setNumber}}',
+                                        { setNumber: s.setNumber }
+                                      )}
                                     </td>
                                     <td className="py-2 px-3">
                                       {formatSeconds(s.durationSeconds)}
@@ -493,10 +527,24 @@ export const WorkoutSessionBreakdown = ({
               <thead className="bg-muted/50 border-b text-xs font-bold text-muted-foreground">
                 <tr>
                   <th className="py-3 px-3 w-10"></th>
-                  <th className="py-3 px-3">Muscle Group Name</th>
-                  <th className="py-3 px-3">Time</th>
-                  <th className="py-3 px-3">Reps</th>
-                  <th className="py-3 px-3">Volume</th>
+                  <th className="py-3 px-3">
+                    {t(
+                      'exerciseCharts.workoutSessionBreakdown.muscleGroupName',
+                      'Muscle Group Name'
+                    )}
+                  </th>
+                  <th className="py-3 px-3">
+                    {t('common.minutesUnit', 'Time')}
+                  </th>
+                  <th className="py-3 px-3">
+                    {t('exerciseCharts.workoutSessionBreakdown.reps', 'Reps')}
+                  </th>
+                  <th className="py-3 px-3">
+                    {t(
+                      'exerciseCharts.workoutSessionBreakdown.volume',
+                      'Volume'
+                    )}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -516,7 +564,7 @@ export const WorkoutSessionBreakdown = ({
                           )}
                         </td>
                         <td className="py-3 px-3 font-bold text-foreground capitalize">
-                          {mgSummary.muscleName}
+                          {localizeMuscle(t, mgSummary.muscleName)}
                         </td>
                         <td className="py-3 px-3 font-bold">
                           {formatSeconds(mgSummary.totalTimeSeconds)}
@@ -536,11 +584,33 @@ export const WorkoutSessionBreakdown = ({
                             <table className="w-full text-xs text-left border rounded bg-background">
                               <thead className="bg-muted/50 border-b">
                                 <tr>
-                                  <th className="py-2 px-3">Exercise Name</th>
-                                  <th className="py-2 px-3">Set</th>
-                                  <th className="py-2 px-3">Time</th>
-                                  <th className="py-2 px-3">Reps</th>
-                                  <th className="py-2 px-3">Volume</th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.exerciseName',
+                                      'Exercise Name'
+                                    )}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.set3',
+                                      'Set'
+                                    )}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t('common.minutesUnit', 'Time')}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.reps',
+                                      'Reps'
+                                    )}
+                                  </th>
+                                  <th className="py-2 px-3">
+                                    {t(
+                                      'exerciseCharts.workoutSessionBreakdown.volume',
+                                      'Volume'
+                                    )}
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y">

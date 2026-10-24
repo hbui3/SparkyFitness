@@ -8,11 +8,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumericInput } from '@/components/NumericInput';
 import { Label } from '@/components/ui/label';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { debug, info, warn } from '@/utils/logging';
 import type { Meal } from '@/types/meal';
 
+import { useTranslation } from 'react-i18next';
 interface MealUnitSelectorProps {
   meal: Meal;
   open: boolean;
@@ -36,6 +38,7 @@ const MealUnitSelector = ({
   description,
   confirmLabel,
 }: MealUnitSelectorProps) => {
+  const { t } = useTranslation();
   const { loggingLevel, energyUnit, convertEnergy } = usePreferences();
   debug(loggingLevel, 'MealUnitSelector component rendered.', { meal, open });
 
@@ -124,14 +127,27 @@ const MealUnitSelector = ({
           <DialogTitle>
             {title ??
               (initialQuantity
-                ? `Edit ${meal?.name}`
-                : `Add ${meal?.name} to Meal Plan`)}
+                ? t('foods.mealUnitSelector.editMeal', 'Edit {{name}}', {
+                    name: meal?.name,
+                  })
+                : t(
+                    'foods.mealUnitSelector.addMealToPlan',
+                    'Add {{name}} to Meal Plan',
+                    { name: meal?.name }
+                  ))}
           </DialogTitle>
           <DialogDescription>
             {description ??
               (initialQuantity
-                ? `Edit the quantity for ${meal?.name}.`
-                : `Select the quantity for this meal in your meal plan.`)}
+                ? t(
+                    'foods.mealUnitSelector.editQuantityFor',
+                    'Edit the quantity for {{name}}.',
+                    { name: meal?.name }
+                  )
+                : t(
+                    'foods.mealUnitSelector.selectTheQuantityForThis',
+                    'Select the quantity for this meal in your meal plan.'
+                  ))}
           </DialogDescription>
         </DialogHeader>
 
@@ -139,23 +155,29 @@ const MealUnitSelector = ({
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="quantity">Quantity</Label>
-                <Input
+                <Label htmlFor="quantity">
+                  {t('foods.mealUnitSelector.quantity', 'Quantity')}
+                </Label>
+                <NumericInput
                   id="quantity"
-                  type="number"
+                  allowExpressions
+                  decimals={3}
+                  required
                   step="any"
                   min="0.01"
                   value={quantity}
                   ref={focusAndSelect}
-                  onChange={(e) => {
-                    const newQuantity = Number(e.target.value);
+                  onValueChange={(value) => {
+                    const newQuantity = value ?? 0;
                     debug(loggingLevel, 'Meal quantity changed:', newQuantity);
                     setQuantity(newQuantity);
                   }}
                 />
               </div>
               <div>
-                <Label htmlFor="unit">Unit</Label>
+                <Label htmlFor="unit">
+                  {t('foods.mealUnitSelector.unit', 'Unit')}
+                </Label>
                 <Input
                   id="unit"
                   type="text"
@@ -169,7 +191,11 @@ const MealUnitSelector = ({
             {nutrition && (
               <div className="bg-muted p-3 rounded-lg">
                 <h4 className="font-medium mb-2">
-                  Nutrition for {quantity} {displayUnit}:
+                  {t(
+                    'foods.mealUnitSelector.nutritionFor',
+                    'Nutrition for {{quantity}} {{displayUnit}}:',
+                    { quantity, displayUnit }
+                  )}
                 </h4>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
@@ -178,9 +204,23 @@ const MealUnitSelector = ({
                     )}{' '}
                     {getEnergyUnitString(energyUnit)}
                   </div>
-                  <div>{nutrition.protein.toFixed(1)}g protein</div>
-                  <div>{nutrition.carbs.toFixed(1)}g carbs</div>
-                  <div>{nutrition.fat.toFixed(1)}g fat</div>
+                  <div>
+                    {t(
+                      'foods.mealUnitSelector.gProtein2',
+                      '{{protein}}g protein',
+                      { protein: nutrition.protein.toFixed(1) }
+                    )}
+                  </div>
+                  <div>
+                    {t('foods.mealUnitSelector.gCarbs2', '{{carbs}}g carbs', {
+                      carbs: nutrition.carbs.toFixed(1),
+                    })}
+                  </div>
+                  <div>
+                    {t('foods.mealUnitSelector.gFat2', '{{fat}}g fat', {
+                      fat: nutrition.fat.toFixed(1),
+                    })}
+                  </div>
                 </div>
               </div>
             )}
@@ -191,11 +231,16 @@ const MealUnitSelector = ({
                 variant="outline"
                 onClick={() => onOpenChange(false)}
               >
-                Cancel
+                {t('common.cancel', 'Cancel')}
               </Button>
               <Button type="submit">
                 {confirmLabel ??
-                  (initialQuantity ? 'Update Meal' : 'Add to Meal Plan')}
+                  (initialQuantity
+                    ? t('foods.mealUnitSelector.updateMeal', 'Update Meal')
+                    : t(
+                        'foods.mealUnitSelector.addToMealPlan',
+                        'Add to Meal Plan'
+                      ))}
               </Button>
             </div>
           </div>

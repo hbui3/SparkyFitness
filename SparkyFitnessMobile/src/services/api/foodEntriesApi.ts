@@ -45,6 +45,22 @@ export interface CreateFoodEntryPayload {
 }
 
 /**
+ * Fetches every food entry in an inclusive `YYYY-MM-DD` range.
+ */
+export const fetchFoodEntriesRange = async (
+  startDate: string,
+  endDate: string
+): Promise<FoodEntry[]> => {
+  return apiFetch<FoodEntry[]>({
+    endpoint: `/api/food-entries/range/${encodeURIComponent(
+      startDate
+    )}/${encodeURIComponent(endDate)}`,
+    serviceName: 'Food Entries API',
+    operation: 'fetch food entries range',
+  });
+};
+
+/**
  * Creates a food entry.
  */
 export const createFoodEntry = async (

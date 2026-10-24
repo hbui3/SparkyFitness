@@ -5,14 +5,14 @@ import { CartesianChart, Bar } from 'victory-native';
 import { Line as SkiaLine } from '@shopify/react-native-skia';
 import { useCSSVariable } from 'uniwind';
 import {
-  makeChartFont,
+  useChartFont,
   formatXLabel7d,
   formatXLabel30d90d,
   formatTooltipDate,
   formatChartYLabel,
 } from './charts/chartFormatting';
 import { formatLocalizedNumber } from '../localization';
-import type { TrendRange } from '../hooks/useNutritionTrends';
+import type { TrendRange } from '../utils/trendRange';
 import ChartTouchOverlay, {
   ChartLayoutReporter,
   EMPTY_CHART_TOUCH_LAYOUT,
@@ -33,6 +33,10 @@ type NutrientBarChartProps = {
   nutrientLabel: string;
   unit: string;
   goal?: number;
+  /** Fired when a bar is touched; the selection outlives the touch, unlike the tooltip. */
+  onSelectDay?: (day: string) => void;
+  /** Day kept highlighted after the touch ends; the other bars are dimmed. */
+  selectedDay?: string | null;
 };
 
 const INNER_PADDING: Record<TrendRange, number> = {
@@ -47,7 +51,8 @@ const X_TICK_COUNT: Record<TrendRange, number> = {
   '90d': 5,
 };
 
-const font = makeChartFont(11);
+/** Opacity of the bars that are not the selected day. */
+const DIMMED_BAR_OPACITY = 0.35;
 
 const formatYLabel = (value: number) => {
   if (value >= 1000) return formatChartYLabel(value);
@@ -98,8 +103,11 @@ const NutrientBarChart: React.FC<NutrientBarChartProps> = ({
   nutrientLabel,
   unit,
   goal,
+  onSelectDay,
+  selectedDay,
 }) => {
   const { t } = useTranslation();
+  const font = useChartFont(11);
   const [accentColor, textMuted] = useCSSVariable([
     '--color-accent-primary',
     '--color-text-muted',
@@ -118,6 +126,10 @@ const NutrientBarChart: React.FC<NutrientBarChartProps> = ({
     }
     return undefined;
   }, [data, goal]);
+
+  const selectedDayIndex = selectedDay
+    ? data.findIndex((point) => point.day === selectedDay)
+    : -1;
 
   const formatXLabel = range === '7d' ? formatXLabel7d : formatXLabel30d90d;
 
@@ -157,8 +169,9 @@ const NutrientBarChart: React.FC<NutrientBarChartProps> = ({
       }
 
       setSelectedIndex(index);
+      onSelectDay?.(point.day);
     },
-    [data]
+    [data, onSelectDay]
   );
 
   const handleClearSelection = useCallback(() => {
@@ -240,14 +253,38 @@ const NutrientBarChart: React.FC<NutrientBarChartProps> = ({
                     points={points.value}
                     onChange={handleTouchLayoutChange}
                   />
-                  <Bar
-                    points={points.value}
-                    chartBounds={chartBounds}
-                    color={accentColor}
-                    innerPadding={INNER_PADDING[range]}
-                    animate={{ type: 'timing', duration: 300 }}
-                    roundedCorners={{ topLeft: 6, topRight: 6 }}
-                  />
+                  {selectedDayIndex >= 0 ? (
+                    <>
+                      <Bar
+                        points={points.value.filter(
+                          (_, index) => index !== selectedDayIndex
+                        )}
+                        barCount={points.value.length}
+                        chartBounds={chartBounds}
+                        color={accentColor}
+                        opacity={DIMMED_BAR_OPACITY}
+                        innerPadding={INNER_PADDING[range]}
+                        roundedCorners={{ topLeft: 6, topRight: 6 }}
+                      />
+                      <Bar
+                        points={[points.value[selectedDayIndex]]}
+                        barCount={points.value.length}
+                        chartBounds={chartBounds}
+                        color={accentColor}
+                        innerPadding={INNER_PADDING[range]}
+                        roundedCorners={{ topLeft: 6, topRight: 6 }}
+                      />
+                    </>
+                  ) : (
+                    <Bar
+                      points={points.value}
+                      chartBounds={chartBounds}
+                      color={accentColor}
+                      innerPadding={INNER_PADDING[range]}
+                      animate={{ type: 'timing', duration: 300 }}
+                      roundedCorners={{ topLeft: 6, topRight: 6 }}
+                    />
+                  )}
                   {goalY !== null && (
                     <SkiaLine
                       p1={{ x: chartBounds.left, y: goalY }}

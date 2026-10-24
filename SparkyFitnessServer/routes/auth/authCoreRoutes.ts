@@ -15,6 +15,7 @@ import {
 } from '../../services/passkeyTicketService.js';
 import { isDemoMode } from '../../middleware/demoGuardMiddleware.js';
 import { getClientIp } from '../../utils/clientIp.js';
+import { isPasskeyLoginDisabled } from '../../utils/passkeyLogin.js';
 import {
   getDemoCredentials,
   seedDemoUser,
@@ -120,6 +121,7 @@ router.get('/settings', async (req, res) => {
       email: {
         enabled: emailEnabled,
       },
+      passkey: { enabled: globalSettings.enable_passkey_login },
       oidc: {
         enabled: oidcEnabled,
         providers: activeProviders,
@@ -139,6 +141,7 @@ router.get('/settings', async (req, res) => {
     res.json({
       trusted_origin: null,
       email: { enabled: forceEmailLogin || !disableEmailLogin },
+      passkey: { enabled: !isPasskeyLoginDisabled() },
       oidc: {
         enabled: process.env.SPARKY_FITNESS_OIDC_AUTH_ENABLED === 'true',
         providers: [],

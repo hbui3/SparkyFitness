@@ -95,12 +95,13 @@ Actions:
 
             case 'update_preferences': {
               const preferenceData = {
-                timezone: args.timezone ?? null,
-                energy_unit: args.energy_unit ?? null,
-                default_weight_unit: args.default_weight_unit ?? null,
-                default_measurement_unit: args.default_measurement_unit ?? null,
-                default_distance_unit: args.default_distance_unit ?? null,
-                water_display_unit: args.water_display_unit ?? null,
+                timezone: args.timezone ?? undefined,
+                energy_unit: args.energy_unit ?? undefined,
+                default_weight_unit: args.default_weight_unit ?? undefined,
+                default_measurement_unit:
+                  args.default_measurement_unit ?? undefined,
+                default_distance_unit: args.default_distance_unit ?? undefined,
+                water_display_unit: args.water_display_unit ?? undefined,
               };
               try {
                 await preferenceService.updateUserPreferences(

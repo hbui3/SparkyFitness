@@ -21,6 +21,7 @@ import {
   useRefetchOnFocus,
   useProfile,
 } from '../hooks';
+import { useActiveWorkoutPlan } from '../hooks/useActiveWorkoutPlan';
 import {
   deriveShareStatus,
   filterByOwnership,
@@ -38,6 +39,7 @@ import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import { formatLocalizedNumber } from '../localization';
 import {
   CATEGORY_ICON_MAP,
+  buildPresetLiveExerciseConfigs,
   buildPresetStartExercisesPayload,
   buildSingleExerciseStartPayload,
 } from '../utils/workoutSession';
@@ -77,6 +79,7 @@ const PresetSearchScreen: React.FC<PresetSearchScreenProps> = ({
   const [startingId, setStartingId] = useState<string | number | null>(null);
 
   const { presets, isLoading, isError, refetch } = useWorkoutPresets();
+  const { plan: activePlan } = useActiveWorkoutPlan();
   const { searchResults, isSearching, isSearchActive, isSearchError } =
     useWorkoutPresetSearch(searchText);
   const filteredPresets = useMemo(
@@ -129,7 +132,10 @@ const PresetSearchScreen: React.FC<PresetSearchScreenProps> = ({
       void startLiveWorkout({
         name: preset.name,
         exercises: buildPresetStartExercisesPayload(preset),
+        exerciseConfigs: buildPresetLiveExerciseConfigs(preset),
         sourcePresetId: preset.id,
+        workoutFormat: preset.workout_format ?? 'standard',
+        timeCapSeconds: preset.time_cap_seconds ?? null,
       });
     },
     [startLiveWorkout]
@@ -217,6 +223,17 @@ const PresetSearchScreen: React.FC<PresetSearchScreenProps> = ({
                 >
                   {item.name}
                 </Text>
+                {activePlan?.next_assignment?.workout_preset_id != null &&
+                  Number(activePlan.next_assignment.workout_preset_id) ===
+                    Number(item.id) && (
+                    <View className="bg-accent-primary/20 px-1.5 py-0.5 rounded">
+                      <Text className="text-[10px] text-accent-primary font-bold">
+                        {t('exerciseSummary.suggestedPlanSession', {
+                          defaultValue: 'Suggested',
+                        })}
+                      </Text>
+                    </View>
+                  )}
                 <ShareStatusBadge status={status} />
               </View>
               <Text className="text-sm mt-0.5" style={{ color: textSecondary }}>
@@ -263,6 +280,7 @@ const PresetSearchScreen: React.FC<PresetSearchScreenProps> = ({
       getImageSource,
       profile,
       t,
+      activePlan,
     ]
   );
 

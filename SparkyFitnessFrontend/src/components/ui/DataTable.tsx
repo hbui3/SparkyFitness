@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   flexRender,
   useTable,
@@ -36,6 +36,7 @@ interface DataTableProps<TData extends RowData> {
   onSortingChange?: (sorting: SortingState) => void;
   onRowSelectionChange?: (selection: RowSelectionState) => void;
   onRowDoubleClick?: (row: TData) => void;
+  onRowClick?: (row: TData) => void;
   getRowId?: (row: TData) => string;
   manualPagination?: boolean;
   manualSorting?: boolean;
@@ -72,6 +73,7 @@ export function DataTable<TData extends RowData>({
   onSortingChange,
   onRowSelectionChange,
   onRowDoubleClick,
+  onRowClick,
   getRowId,
   manualPagination = false,
   manualSorting = false,
@@ -136,6 +138,34 @@ export function DataTable<TData extends RowData>({
     },
   });
 
+  // Single-click handler that ignores clicks originating on interactive
+  // elements (checkboxes, buttons, links, inputs) so row actions keep working.
+  // Radix menus render through a Portal, but React synthetic events still
+  // bubble to the row's onClick, so menu items (divs with role="menuitem")
+  // must be excluded explicitly or a menu click also triggers the row action
+  // (e.g. the foods row opened the edit dialog before the chosen action ran).
+  // On the mobile card view, a single tap falls back to onRowDoubleClick when
+  // no onRowClick is given, because dblclick is unreliable on touch devices.
+  // The desktop table keeps double-click for those consumers.
+  const handleRowClick = (
+    event: ReactMouseEvent,
+    row: TData,
+    fallbackToDoubleClick: boolean
+  ) => {
+    const handler =
+      onRowClick ?? (fallbackToDoubleClick ? onRowDoubleClick : undefined);
+    if (!handler) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest(
+        'button, a, input, [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="menu"], [data-radix-popper-content-wrapper]'
+      )
+    ) {
+      return;
+    }
+    handler(row);
+  };
+
   const resolvedTitleColumnId = useMemo(() => {
     const visibleColumns = table.getVisibleFlatColumns();
 
@@ -156,7 +186,9 @@ export function DataTable<TData extends RowData>({
         <div className="relative">
           <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
           <Input
-            placeholder={searchPlaceholder || 'Search...'}
+            placeholder={
+              searchPlaceholder || t('ui.dataTable.search', 'Search...')
+            }
             onChange={(event) => onSearchChange(event.target.value)}
             className="pl-10 max-w-sm"
           />
@@ -240,8 +272,11 @@ export function DataTable<TData extends RowData>({
                     key={row.id}
                     data-state={row.getIsSelected() && 'selected'}
                     onDoubleClick={() => onRowDoubleClick?.(row.original)}
+                    onClick={(event) =>
+                      handleRowClick(event, row.original, false)
+                    }
                     className={cn(
-                      onRowDoubleClick &&
+                      (onRowClick || onRowDoubleClick) &&
                         'cursor-pointer select-none transition-colors hover:bg-muted/50',
                       isLoading && 'opacity-70 grayscale-[0.3]'
                     )}
@@ -295,11 +330,12 @@ export function DataTable<TData extends RowData>({
               <Card
                 key={row.id}
                 onDoubleClick={() => onRowDoubleClick?.(row.original)}
+                onClick={(event) => handleRowClick(event, row.original, true)}
                 className={`transition-all duration-200 border-2 overflow-hidden shadow-sm ${
                   row.getIsSelected()
                     ? 'border-blue-500 bg-blue-50/30 dark:bg-blue-900/10'
                     : 'border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900'
-                } ${onRowDoubleClick ? 'active:scale-[0.98]' : ''} ${
+                } ${onRowClick || onRowDoubleClick ? 'active:scale-[0.98]' : ''} ${
                   isLoading ? 'opacity-70 grayscale-[0.3]' : ''
                 }`}
               >
@@ -318,10 +354,7 @@ export function DataTable<TData extends RowData>({
                           : null;
                       })()}
 
-                      <div
-                        className="truncate font-bold text-gray-900 dark:text-gray-100 text-sm flex-1"
-                        onClick={() => onRowDoubleClick?.(row.original)}
-                      >
+                      <div className="truncate font-bold text-gray-900 dark:text-gray-100 text-sm flex-1">
                         {(() => {
                           const titleCell = row
                             .getVisibleCells()

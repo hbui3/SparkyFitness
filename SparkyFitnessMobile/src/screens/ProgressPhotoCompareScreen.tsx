@@ -9,7 +9,11 @@ import {
   View,
 } from 'react-native';
 import Toast from 'react-native-toast-message';
-import { daysBetween } from '@workspace/shared';
+import {
+  daysBetween,
+  formatSignedWeightChange,
+  framesForAngle,
+} from '@workspace/shared';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
 import i18n from '../localization/i18n';
@@ -66,14 +70,7 @@ const ProgressPhotoCompareScreen: React.FC<Props> = ({ navigation, route }) => {
 
   // Oldest first reads left-to-right as progression, which is how the two
   // panes are laid out.
-  const timeline = useMemo<ProgressPhotoDay[]>(
-    () =>
-      days
-        .filter((day) => day.photos[angle])
-        .slice()
-        .reverse(),
-    [days, angle]
-  );
+  const timeline = useMemo(() => framesForAngle(days, angle), [days, angle]);
 
   const [pickingSide, setPickingSide] = useState<Side>('before');
   const calendarRef = useRef<CalendarSheetRef>(null);
@@ -160,8 +157,7 @@ const ProgressPhotoCompareScreen: React.FC<Props> = ({ navigation, route }) => {
         ? weightFromKg(kg, 'lbs')
         : weightFromKg(kg, weightMode);
     const unit = weightMode === 'st_lbs' ? 'lb' : weightMode;
-    const rounded = Math.round(converted * 10) / 10;
-    return `${rounded > 0 ? '+' : ''}${rounded} ${unit}`;
+    return `${formatSignedWeightChange(converted)} ${unit}`;
   };
 
   const renderPane = (

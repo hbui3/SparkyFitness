@@ -442,6 +442,35 @@ describe('LocaleValidator', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('passes when a translated string repeats a valid source placeholder', () => {
+    const tmpDir = createFixtureStructure({
+      en: '{"msg": "{{name}} paused at {{done}} of {{total}}."}',
+      pl: '{"msg": "{{name}} wstrzymano na {{done}} (z {{done}} / {{total}})."}',
+    });
+
+    const validator = new LocaleValidator(
+      path.join(
+        tmpDir,
+        'src',
+        'localization',
+        'locales',
+        'en',
+        'translation.json'
+      ),
+      path.join(
+        tmpDir,
+        'src',
+        'localization',
+        'locales',
+        'pl',
+        'translation.json'
+      )
+    );
+
+    const result = validator.validate();
+    expect(result.errors).toHaveLength(0);
+  });
+
   it('fails for duplicate locale keys (singular colliding with plural group)', () => {
     const tmpDir = createFixtureStructure({
       en: '{"item": "Item", "item_one": "One item", "item_other": "Items"}',
@@ -1274,14 +1303,22 @@ describe('Scan failure fail-closed behavior', () => {
       { 'ok.ts': 'export const ok = 1;' }
     );
 
-    // A broken symlink with a source extension: readFileSync throws, and the
-    // audit must fail closed instead of silently passing with partial coverage.
-    fs.symlinkSync(
-      path.join(tmpDir, 'does-not-exist-target'),
-      path.join(tmpDir, 'src', 'broken.ts')
-    );
-
-    const result = auditRun(tmpDir);
+    const brokenPath = path.join(tmpDir, 'src', 'broken.ts');
+    fs.writeFileSync(brokenPath, 'export const broken = true;');
+    const originalRead = fs.readFileSync;
+    const read = jest.spyOn(fs, 'readFileSync').mockImplementation(((
+      ...args: Parameters<typeof fs.readFileSync>
+    ) => {
+      if (String(args[0]) === brokenPath)
+        throw new Error('Source is unreadable');
+      return originalRead(...args);
+    }) as typeof fs.readFileSync);
+    let result: AuditResult;
+    try {
+      result = auditRun(tmpDir);
+    } finally {
+      read.mockRestore();
+    }
 
     expect(result.hasErrors).toBe(true);
     const scanError = result.report.localeStructuralErrors.find(

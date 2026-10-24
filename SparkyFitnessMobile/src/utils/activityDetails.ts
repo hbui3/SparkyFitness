@@ -1,6 +1,7 @@
 import type { ActivityDetailResponse } from '@workspace/shared';
 import type { TFunction } from 'i18next';
 import { formatLocalizedNumber } from '../localization';
+import { wodScoreFormat } from './wodScore';
 
 export interface ActivitySummaryItem {
   label: string;
@@ -47,6 +48,17 @@ const activityLabel = (
       });
     case 'activitySummary.heartRateZonePeak':
       return t('activitySummary.heartRateZonePeak', { defaultValue: 'Peak' });
+    case 'activitySummary.wodScoreFormat':
+      return t('activitySummary.wodScoreFormat', {
+        defaultValue: '{{format}} Score',
+        ...interpolation,
+      });
+    case 'activitySummary.timeCap':
+      return t('activitySummary.timeCap', { defaultValue: 'Time Cap' });
+    case 'activitySummary.scalingNotes':
+      return t('activitySummary.scalingNotes', {
+        defaultValue: 'Scaling Notes',
+      });
     default:
       return defaultValue;
   }
@@ -125,6 +137,87 @@ export function extractActivitySummary(
 
     const record = toRecord(data);
     if (!record) continue;
+
+    if (detail.detail_type === 'wod_score') {
+      const wodFormat = wodScoreFormat(record);
+      const formatStr = wodFormat
+        ? wodFormat.toUpperCase().replace('_', ' ')
+        : 'WOD';
+      const rounds =
+        typeof record.rounds_completed === 'number'
+          ? record.rounds_completed
+          : 0;
+      const reps =
+        typeof record.reps_completed === 'number' ? record.reps_completed : 0;
+      const status =
+        typeof record.status === 'string' ? record.status.toUpperCase() : null;
+      const notes =
+        typeof record.scaling_notes === 'string' ? record.scaling_notes : null;
+      const timeCapSec =
+        typeof record.time_cap_seconds === 'number'
+          ? record.time_cap_seconds
+          : null;
+
+      const scoreType =
+        typeof record.score_type === 'string' ? record.score_type : null;
+
+      let scoreVal = '';
+      if (scoreType === 'total_reps') {
+        scoreVal = `${reps} reps`;
+      } else if (
+        scoreType === 'rounds_reps' ||
+        (!scoreType && wodFormat === 'amrap')
+      ) {
+        scoreVal = `${rounds} rounds + ${reps} reps`;
+      } else if (
+        scoreType === 'time' ||
+        (!scoreType && wodFormat === 'for_time')
+      ) {
+        const elapsed =
+          typeof record.elapsed_seconds === 'number'
+            ? record.elapsed_seconds
+            : null;
+        scoreVal = elapsed ? formatDuration(elapsed, t) : 'Completed';
+      } else if (scoreType === 'completion') {
+        scoreVal = 'Completed';
+      } else {
+        scoreVal = `${rounds} rounds`;
+      }
+
+      if (status) {
+        scoreVal += ` (${status})`;
+      }
+
+      items.push({
+        label: activityLabel(
+          t,
+          'activitySummary.wodScoreFormat',
+          '{{format}} Score',
+          { format: formatStr }
+        ).replace('{{format}}', formatStr),
+        value: scoreVal,
+      });
+
+      if (timeCapSec) {
+        items.push({
+          label: activityLabel(t, 'activitySummary.timeCap', 'Time Cap'),
+          value: formatDuration(timeCapSec, t),
+        });
+      }
+
+      if (notes) {
+        items.push({
+          label: activityLabel(
+            t,
+            'activitySummary.scalingNotes',
+            'Scaling Notes'
+          ),
+          value: notes,
+        });
+      }
+
+      continue;
+    }
 
     const providerName = detail.provider_name.toLowerCase();
 

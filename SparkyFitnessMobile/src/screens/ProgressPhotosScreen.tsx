@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatSignedWeightChange } from '@workspace/shared';
 import { useCSSVariable } from 'uniwind';
 import i18n from '../localization/i18n';
 import Icon from '../components/Icon';
@@ -323,9 +324,7 @@ const ProgressPhotosScreen: React.FC<Props> = ({ navigation, route }) => {
         ? weightFromKg(deltaKg, 'lbs')
         : weightFromKg(deltaKg, weightMode);
     const unit = weightMode === 'st_lbs' ? 'lb' : weightMode;
-    const rounded = Math.round(converted * 10) / 10;
-    const sign = rounded > 0 ? '+' : '';
-    return `${sign}${rounded} ${unit}`;
+    return `${formatSignedWeightChange(converted)} ${unit}`;
   };
 
   const renderRow = ({ item }: { item: TimelineRow }) => {

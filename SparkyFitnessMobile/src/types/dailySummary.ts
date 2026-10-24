@@ -28,6 +28,8 @@ export interface DailySummary {
   exerciseMinutes: number;
   exerciseMinutesGoal: number;
   exerciseCaloriesGoal: number;
+  /** The user's daily steps goal; 0 when none is set. */
+  stepsGoal: number;
   waterConsumed: number;
   waterGoal: number;
   /**
@@ -36,6 +38,11 @@ export interface DailySummary {
    * or on a server that predates the breakdown.
    */
   waterFromFood: number;
+  /**
+   * The portion of `waterConsumed` logged by hand, which is all a "remove a
+   * drink" can take off; null on a server that predates the breakdown.
+   */
+  waterManual: number | null;
   foodEntries: FoodEntry[];
   /**
    * The day's supplement contribution, already folded into the macro and calorie figures

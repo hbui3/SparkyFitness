@@ -22,6 +22,7 @@ struct SyncStatusIcon: View {
         let state = state ?? store.lastCapturedState
         Button {
             guard state == .failed else { return }
+            Haptics.tap()
             if let onRetry {
                 onRetry()
             } else {

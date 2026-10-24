@@ -60,6 +60,12 @@ import type { Exercise } from '../types/exercise';
 import type { ExternalExerciseItem } from '../types/externalExercises';
 import type { RootStackScreenProps } from '../types/navigation';
 import { localizeExerciseTaxonomyValue } from '../localization/exerciseTaxonomy';
+import ExerciseAlternativesList from '../components/ExerciseAlternativesList';
+import {
+  exerciseFromAlternative,
+  externalItemFromAlternative,
+} from '../utils/exerciseReplace';
+import type { ExerciseAlternative } from '@workspace/shared';
 
 type ExerciseSearchScreenProps = RootStackScreenProps<'ExerciseSearch'>;
 
@@ -68,13 +74,13 @@ type ExerciseSection = {
   data: Exercise[];
 };
 
-type TabKey = 'search' | 'online';
+type TabKey = 'suggested' | 'search' | 'online';
 
 const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
   navigation,
   route,
 }) => {
-  const { returnKey } = route.params;
+  const { returnKey, replaceFor } = route.params;
   const { t } = useTranslation();
 
   const insets = useSafeAreaInsets();
@@ -91,7 +97,10 @@ const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
   const { isNavigationLocked, runNavigationAction } =
     useNavigationActionGuard(navigation);
 
-  const [activeTab, setActiveTab] = useState<TabKey>('search');
+  // Replacing opens on ranked alternatives; free search is one tap away.
+  const [activeTab, setActiveTab] = useState<TabKey>(
+    replaceFor ? 'suggested' : 'search'
+  );
   const ownershipFilter = useAppPreferencesStore(
     (s) => s.exerciseSearchOwnershipFilter
   );
@@ -244,6 +253,28 @@ const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
       });
     },
     [runNavigationAction, navigation, returnKey, t]
+  );
+
+  const handleSelectAlternative = useCallback(
+    (alternative: ExerciseAlternative) => {
+      if (alternative.origin === 'catalog') {
+        void handleImportExercise(externalItemFromAlternative(alternative));
+        return;
+      }
+      handleSelectExercise(exerciseFromAlternative(alternative));
+    },
+    [handleImportExercise, handleSelectExercise]
+  );
+
+  const handlePreviewAlternative = useCallback(
+    (alternative: ExerciseAlternative) => {
+      if (alternative.origin === 'catalog') {
+        handlePreviewExternalExercise(externalItemFromAlternative(alternative));
+        return;
+      }
+      handlePreviewExercise(exerciseFromAlternative(alternative));
+    },
+    [handlePreviewExercise, handlePreviewExternalExercise]
   );
 
   // --- Shared renderers ---
@@ -847,8 +878,34 @@ const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
     );
   };
 
+  const renderSuggestedTab = () => {
+    if (!replaceFor) return null;
+    if (!isConnected) {
+      return (
+        <StatusView
+          icon="cloud-offline"
+          title={t('exerciseSearch.states.connectToView', {
+            defaultValue: 'Connect to a server to view exercises',
+          })}
+        />
+      );
+    }
+    return (
+      <ExerciseAlternativesList
+        replaceFor={replaceFor}
+        disabled={isNavigationLocked || importingExerciseId !== null}
+        importingId={importingExerciseId}
+        onSelect={handleSelectAlternative}
+        onPreview={handlePreviewAlternative}
+        onSearchAll={() => setActiveTab('search')}
+      />
+    );
+  };
+
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'suggested':
+        return renderSuggestedTab();
       case 'search':
         return renderSearchTab();
       case 'online':
@@ -858,6 +915,16 @@ const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
 
   const tabs = useMemo(
     () => [
+      ...(replaceFor
+        ? [
+            {
+              key: 'suggested' as const,
+              label: t('exerciseSearch.tabs.suggested', {
+                defaultValue: 'Suggested',
+              }),
+            },
+          ]
+        : []),
       {
         key: 'search' as const,
         label: t('exerciseSearch.tabs.search', { defaultValue: 'Search' }),
@@ -867,11 +934,13 @@ const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
         label: t('exerciseSearch.tabs.online', { defaultValue: 'Online' }),
       },
     ],
-    [t]
+    [t, replaceFor]
   );
 
   const header = useScreenHeader({
-    title: t('exerciseSearch.title', { defaultValue: 'Exercises' }),
+    title: replaceFor
+      ? t('exerciseSearch.replaceTitle', { defaultValue: 'Replace Exercise' })
+      : t('exerciseSearch.title', { defaultValue: 'Exercises' }),
     left: {
       kind: 'dismiss',
       onPress: () => navigation.goBack(),
@@ -923,8 +992,9 @@ const ExerciseSearchScreen: React.FC<ExerciseSearchScreenProps> = ({
         />
       </View>
 
-      {/* Search bar */}
-      {renderSearchBar()}
+      {/* Search bar — the Suggested tab ranks, it does not filter by text */}
+      {activeTab !== 'suggested' && renderSearchBar()}
+      {activeTab === 'suggested' && <View className="h-2" />}
 
       {/* Tab content */}
       {renderTabContent()}

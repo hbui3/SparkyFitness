@@ -1,6 +1,8 @@
 import express, { RequestHandler } from 'express';
 import { z } from 'zod';
 import {
+  exerciseAlternativesQuerySchema,
+  exerciseAlternativesResponseSchema,
   exerciseSearchQuerySchema,
   exerciseStatsQuerySchema,
   exerciseStatsResponseSchema,
@@ -9,6 +11,10 @@ import {
 import { authenticate } from '../../middleware/authMiddleware.js';
 import checkPermissionMiddleware from '../../middleware/checkPermissionMiddleware.js';
 import exerciseService from '../../services/exerciseService.js';
+import {
+  ExerciseNotFoundError,
+  getExerciseAlternatives,
+} from '../../services/exerciseAlternativesService.js';
 import { log } from '../../config/logging.js';
 
 const router = express.Router();
@@ -223,6 +229,139 @@ router.get(
   '/:exerciseId/stats',
   checkPermissionMiddleware('diary'),
   statsHandler
+);
+
+/**
+ * @swagger
+ * /v2/exercises/{exerciseId}/alternatives:
+ *   get:
+ *     summary: Ranked alternatives for an exercise
+ *     tags: [Exercise & Workouts]
+ *     description: |
+ *       Suggests substitutes for an exercise (busy equipment, injury, variety), drawn from the caller's visible
+ *       library and, unless disabled, the Free Exercise DB catalog. Candidates must share a primary muscle and
+ *       modality with the source. They are ranked by primary-muscle overlap, then matching equipment (in `similar`
+ *       mode), movement pattern, and how recently the user performed them. Each result lists the reasons it was
+ *       chosen. Catalog results (`origin: catalog`) must be imported with `POST /freeexercisedb/add` before logging.
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: exerciseId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: mode
+ *         schema:
+ *           type: string
+ *           enum: [similar, different_equipment]
+ *           default: similar
+ *         description: "`different_equipment` only returns exercises that use none of the source's equipment."
+ *       - in: query
+ *         name: equipment
+ *         schema:
+ *           type: string
+ *         description: Comma-separated equipment the user has; results need nothing else.
+ *       - in: query
+ *         name: excludeMuscles
+ *         schema:
+ *           type: string
+ *         description: Comma-separated muscles to avoid (primary or secondary), e.g. for an injury.
+ *       - in: query
+ *         name: excludeIds
+ *         schema:
+ *           type: string
+ *         description: Comma-separated library or catalog ids to leave out (e.g. exercises already in the workout).
+ *       - in: query
+ *         name: includeCatalog
+ *         schema:
+ *           type: string
+ *           enum: ['true', 'false']
+ *           default: 'true'
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Ranked alternatives. `rankable` is false when the source has no recognisable primary muscle.
+ *       400:
+ *         description: Invalid exerciseId or query parameters.
+ *       401:
+ *         description: Unauthenticated.
+ *       403:
+ *         description: Forbidden (no diary permission when acting on behalf of another user).
+ *       404:
+ *         description: Exercise not found or not visible to the caller.
+ *       500:
+ *         description: Internal server error.
+ */
+const alternativesHandler: RequestHandler = async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({ exerciseId: z.string().uuid() })
+      .safeParse(req.params);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Invalid exerciseId',
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+    const parsedQuery = exerciseAlternativesQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      res.status(400).json({
+        error: 'Invalid query parameters',
+        details: parsedQuery.error.flatten().fieldErrors,
+      });
+      return;
+    }
+    const {
+      mode,
+      equipment,
+      excludeMuscles,
+      excludeIds,
+      includeCatalog,
+      limit,
+    } = parsedQuery.data;
+    const result = await getExerciseAlternatives(
+      req.userId,
+      req.authenticatedUserId,
+      parsed.data.exerciseId,
+      { mode, equipment, excludeMuscles, excludeIds, includeCatalog, limit }
+    );
+    res.status(200).json(exerciseAlternativesResponseSchema.parse(result));
+  } catch (error: unknown) {
+    if (error instanceof ExerciseNotFoundError) {
+      res.status(404).json({ error: error.message });
+      return;
+    }
+    if (error instanceof Error && error.name === 'ZodError') {
+      log(
+        'error',
+        'v2 exercises alternatives response validation failed:',
+        error
+      );
+      next(
+        Object.assign(new Error('Internal response validation failed'), {
+          status: 500,
+        })
+      );
+      return;
+    }
+    next(error);
+  }
+};
+
+router.get(
+  '/:exerciseId/alternatives',
+  checkPermissionMiddleware('diary'),
+  alternativesHandler
 );
 
 module.exports = router;

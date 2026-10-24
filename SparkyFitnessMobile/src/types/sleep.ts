@@ -21,6 +21,14 @@ export type SleepStageLane = (typeof SLEEP_STAGE_LANES)[number];
 const FALLBACK_STAGE_LANE: SleepStageLane = 'other';
 
 /**
+ * HealthKit InBed envelopes and unspecified samples. These are not sleep
+ * stages — they belong on the session's bedtime–wake span, not the hypnogram.
+ * `laneForStageType` still maps them to `other` so an unrecognized future value
+ * has a lane; plotted charts skip them via `isPlottedSleepStage`.
+ */
+const UNPLOTTED_STAGE_TYPES = new Set(['in_bed', 'unknown']);
+
+/**
  * Normalizes a server `stage_type` onto a lane.
  *
  * `stage_type` is an unconstrained `varchar(50)`, so anything outside the named stages
@@ -36,6 +44,10 @@ export const laneForStageType = (stageType: string): SleepStageLane => {
 
   return isNamedStage ? (normalized as SleepStageLane) : FALLBACK_STAGE_LANE;
 };
+
+/** False for envelope-only types that should not occupy a hypnogram / timeline lane. */
+export const isPlottedSleepStage = (stageType: string): boolean =>
+  !UNPLOTTED_STAGE_TYPES.has(stageType.toLowerCase());
 
 /** One contiguous run of a single stage, as absolute instants. */
 export interface SleepTimelineSegment {
@@ -117,7 +129,7 @@ export interface SleepStageEvent {
  * One sleep session row, as returned by `GET /api/sleep`.
  *
  * Only the fields the mobile UI reads are declared; the row carries more columns
- * (respiration, HRV, body battery, stress) that nothing here displays yet.
+ * (the Sleep Analytics report reads respiration, HRV, body battery and stress).
  *
  * Two of these types are load-bearing and easy to get wrong. The server's pool sets
  * `NUMERIC -> parseFloat` and `DATE -> identity` (`db/poolManager.ts`), so `sleep_score`
@@ -146,6 +158,14 @@ export interface SleepEntry {
   lowest_spo2_value: number | null;
   highest_spo2_value: number | null;
   resting_heart_rate: number | null;
+  /** Mean respiration rate in breaths per minute, for sources that report it. */
+  average_respiration_value?: number | null;
+  /** Average overnight HRV in milliseconds, for sources that report it. */
+  avg_overnight_hrv?: number | null;
+  /** Average stress score during sleep (0-100), for sources that report it. */
+  avg_sleep_stress?: number | null;
+  /** Body battery points gained overnight, for sources that report it. */
+  body_battery_change?: number | null;
   /**
    * IANA timezone the session was recorded in, when the source reported one. Null for
    * rows written before the column existed and for sources that only report an offset.

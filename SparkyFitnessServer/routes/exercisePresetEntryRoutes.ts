@@ -96,6 +96,33 @@ router.post('/', isAuthenticated, async (req, res, next) => {
     handleRouteError(error, res, next);
   }
 });
+
+/**
+ * @swagger
+ * /exercise-preset-entries/locations:
+ *   get:
+ *     summary: Get distinct workout locations previously logged by the user
+ *     tags: [Fitness & Workouts]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: List of location names.
+ *       401:
+ *         description: Unauthorized.
+ */
+router.get('/locations', isAuthenticated, async (req, res, next) => {
+  try {
+    const locations = await exercisePresetEntryRepository.getDistinctLocations(
+      req.userId
+    );
+    res.status(200).json(locations);
+  } catch (error) {
+    log('error', 'Error fetching distinct workout locations:', error);
+    handleRouteError(error, res, next);
+  }
+});
+
 /**
  * @swagger
  * /exercise-preset-entries/{id}:

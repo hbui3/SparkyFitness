@@ -1,8 +1,18 @@
 import React from 'react';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
+import * as Reanimated from 'react-native-reanimated';
+import { Alert, AppState, Keyboard } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { ComposerPrimitive } from '@assistant-ui/react-native';
+import type { ActionSheetRef as MockActionSheetRef } from '../../src/components/ActionSheet';
+import { transcribeVoiceRecording } from '../../src/services/api/voiceTranscriptionApi';
+import {
+  pickChatImageFromCamera,
+  pickChatImagesFromLibrary,
+} from '../../src/utils/pickImage';
 import ChatScreen from '../../src/screens/ChatScreen';
 import { getActiveServerConfig } from '../../src/services/storage';
 import { useActiveAiServiceSetting, useChatHistory } from '../../src/hooks';
@@ -13,9 +23,89 @@ import { useActiveAiServiceSetting, useChatHistory } from '../../src/hooks';
 // controllable flags so the empty state and Send↔Cancel gating are exercised.
 // Streaming behavior itself is covered by on-device manual verification.
 
+const mockPhotoSheet = {
+  present: jest.fn(),
+  dismiss: jest.fn(),
+  finishDismiss: () => {},
+};
+
+jest.mock('../../src/components/ActionSheet', () => {
+  const React: typeof import('react') = require('react');
+  const {
+    View,
+    Text,
+    Pressable,
+  }: typeof import('react-native') = require('react-native');
+  type MockSheetProps = React.ComponentPropsWithoutRef<
+    typeof import('../../src/components/ActionSheet').default
+  >;
+  return {
+    __esModule: true,
+    default: React.forwardRef<MockActionSheetRef, MockSheetProps>(
+      (props, ref) => {
+        const [visible, setVisible] = React.useState(false);
+        React.useImperativeHandle(ref, () => ({
+          present: () => {
+            mockPhotoSheet.present();
+            setVisible(true);
+          },
+          dismiss: mockPhotoSheet.dismiss,
+        }));
+        const { onDismiss } = props;
+        React.useEffect(() => {
+          mockPhotoSheet.finishDismiss = () => {
+            setVisible(false);
+            onDismiss?.();
+          };
+        }, [onDismiss]);
+        if (!visible) return null;
+        return React.createElement(
+          View,
+          { testID: `photo-source-${props.layout}` },
+          React.createElement(Text, null, props.title),
+          props.items.map((item) =>
+            React.createElement(
+              Pressable,
+              { key: item.key, onPress: item.onPress },
+              React.createElement(Text, null, item.label)
+            )
+          )
+        );
+      }
+    ),
+  };
+});
+
 // expo/fetch's FetchResponse extends the global Response (absent in jsdom); the
 // transport is stubbed here anyway.
 jest.mock('expo/fetch', () => ({ fetch: jest.fn() }));
+
+// Native speech recognition is unavailable under jsdom; stub the module and
+// capture the registered event handlers so tests can drive transcripts.
+jest.mock('expo-speech-recognition', () => {
+  const handlers: Record<string, (event: unknown) => void> = {};
+  (
+    globalThis as typeof globalThis & {
+      __mockSpeechHandlers: typeof handlers;
+    }
+  ).__mockSpeechHandlers = handlers;
+  return {
+    __esModule: true,
+    ExpoSpeechRecognitionModule: {
+      getPermissionsAsync: jest.fn(async () => ({ granted: false })),
+      requestPermissionsAsync: jest.fn(async () => ({ granted: true })),
+      start: jest.fn(),
+      stop: jest.fn(),
+      abort: jest.fn(),
+    },
+    useSpeechRecognitionEvent: (
+      event: string,
+      handler: (event: unknown) => void
+    ) => {
+      handlers[event] = handler;
+    },
+  };
+});
 
 jest.mock('@assistant-ui/react-ai-sdk', () => ({
   __esModule: true,
@@ -29,6 +119,8 @@ jest.mock('@assistant-ui/react-ai-sdk', () => ({
     return {};
   },
 }));
+
+const mockAuiListeners = new Map<string, Set<() => void>>();
 
 jest.mock('@assistant-ui/react-native', () => {
   const React = require('react');
@@ -50,13 +142,46 @@ jest.mock('@assistant-ui/react-native', () => {
           }
           (global as any).__mockComposerSetText?.(value);
         },
+        addAttachment: async (attachment: unknown) => {
+          await mockPhotoState.__mockComposerAddAttachment(attachment);
+        },
+        attachment: (selector: { id: string } | { index: number }) => ({
+          remove: async () => {
+            await mockPhotoState.__mockComposerRemoveAttachment(selector);
+          },
+        }),
       }),
     }),
-    useAuiEvent: () => undefined,
-    useAuiState: (selector: (s: any) => any) =>
+    useAuiEvent: (event: string, handler: () => void) => {
+      React.useEffect(() => {
+        const listeners = mockAuiListeners.get(event) ?? new Set<() => void>();
+        mockAuiListeners.set(event, listeners);
+        listeners.add(handler);
+        return () => {
+          listeners.delete(handler);
+        };
+      }, [event, handler]);
+    },
+    useAuiState: <T,>(
+      selector: (state: {
+        thread: { isRunning: boolean };
+        composer: { text: string; attachments: readonly unknown[] };
+        message: MockPhotoMessage;
+      }) => T
+    ) =>
       selector({
-        thread: { isRunning: !!(global as any).__mockChatIsRunning },
-        composer: { text: (global as any).__mockComposerText ?? '' },
+        thread: { isRunning: mockPhotoState.__mockChatIsRunning },
+        composer: {
+          text: mockPhotoState.__mockComposerText ?? '',
+          attachments: mockPhotoState.__mockComposerAttachments,
+        },
+        message: mockPhotoState.__mockMessageState ?? {
+          role: 'user',
+          status: { type: 'complete' },
+          content: [],
+          parts: [],
+          attachments: [],
+        },
       }),
     ThreadPrimitive: {
       Root: Box,
@@ -65,15 +190,31 @@ jest.mock('@assistant-ui/react-native', () => {
           ? null
           : React.createElement(React.Fragment, null, children),
       Messages: React.forwardRef(
-        ({ children: _children, ...props }: any, ref: any) => {
+        (
+          {
+            children,
+            ...props
+          }: {
+            children?: (args: { message: MockPhotoMessage }) => React.ReactNode;
+          },
+          ref: React.ForwardedRef<{ scrollToEnd: (options: unknown) => void }>
+        ) => {
           React.useImperativeHandle(ref, () => ({
             scrollToEnd: (options: unknown) =>
               (global as any).__mockMessagesScrollToEnd?.(options),
           }));
-          return React.createElement(View, {
-            testID: 'thread-messages',
-            ...props,
-          });
+          const renderedMessage =
+            mockPhotoState.__mockMessageState && typeof children === 'function'
+              ? children({ message: mockPhotoState.__mockMessageState })
+              : null;
+          return React.createElement(
+            View,
+            {
+              testID: 'thread-messages',
+              ...props,
+            },
+            renderedMessage
+          );
         }
       ),
       If: ({ children, running, empty }: any) => {
@@ -99,15 +240,61 @@ jest.mock('@assistant-ui/react-native', () => {
     ComposerPrimitive: {
       Root: Box,
       Input: () => React.createElement(View, { testID: 'composer-input' }),
-      Send: ({ children }: any) =>
-        React.createElement(View, { testID: 'composer-send' }, children),
+      Send: ({
+        children,
+        disabled,
+      }: {
+        children: React.ReactNode;
+        disabled?: boolean;
+      }) =>
+        React.createElement(
+          View,
+          {
+            testID: 'composer-send',
+            accessibilityState: { disabled: disabled ?? false },
+          },
+          children
+        ),
       Cancel: ({ children }: any) =>
         React.createElement(View, { testID: 'composer-cancel' }, children),
     },
     MessagePrimitive: {
       Root: Box,
-      Content: () => null,
-      If: ({ children }: any) => children,
+      Content: ({
+        renderText,
+      }: {
+        renderText?: (args: {
+          part: { type: 'text'; text: string };
+          index: number;
+        }) => React.ReactNode;
+      }) => {
+        const msg = mockPhotoState.__mockMessageState;
+        const parts = msg?.parts ?? msg?.content ?? [];
+        return React.createElement(
+          React.Fragment,
+          null,
+          parts
+            .filter((part) => part.type === 'text' && part.text)
+            .map((part, index) =>
+              React.createElement(
+                React.Fragment,
+                { key: index },
+                renderText ? renderText({ part, index }) : null
+              )
+            )
+        );
+      },
+      If: ({
+        children,
+        user,
+        assistant,
+      }: React.PropsWithChildren<{ user?: boolean; assistant?: boolean }>) => {
+        const role = mockPhotoState.__mockMessageState?.role ?? 'user';
+        if (user !== undefined && user !== (role === 'user')) return null;
+        if (assistant !== undefined && assistant !== (role === 'assistant'))
+          return null;
+        return children;
+      },
     },
     ErrorPrimitive: {
       Root: Box,
@@ -140,9 +327,35 @@ jest.mock('../../src/services/api/apiClient', () => ({
   normalizeUrl: (url: string) => url,
 }));
 
+jest.mock('../../src/services/api/voiceTranscriptionApi', () => ({
+  transcribeVoiceRecording: jest.fn(async () => ({
+    text: 'Привет из Gemini',
+    model: 'gemini-test',
+  })),
+}));
+
+jest.mock('../../src/utils/pickImage', () => ({
+  MAX_CHAT_ATTACHMENTS: 5,
+  pickChatImageFromCamera: jest.fn(),
+  pickChatImagesFromLibrary: jest.fn(),
+}));
+
+const mockVoicePreferences = { enabled: true, refetch: jest.fn() };
 jest.mock('../../src/hooks', () => ({
   useActiveAiServiceSetting: jest.fn(),
   useChatHistory: jest.fn(),
+  usePreferences: jest.fn(() => ({
+    preferences: {
+      active_voice_ai_service_id:
+        (
+          globalThis as typeof globalThis & {
+            __mockVoiceServiceId?: string | null;
+          }
+        ).__mockVoiceServiceId ?? null,
+      voice_input_enabled: mockVoicePreferences.enabled,
+    },
+    refetch: mockVoicePreferences.refetch,
+  })),
   chatHistoryQueryKey: ['chatHistory'],
 }));
 
@@ -181,6 +394,7 @@ const mockNavigation = {
 jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual('@react-navigation/native'),
   useNavigation: () => mockNavigation,
+  useFocusEffect: jest.fn(),
 }));
 
 const navigation = mockNavigation;
@@ -195,13 +409,15 @@ function renderScreen() {
   // A real QueryClient backs the screen's useQueryClient() call; useChatHistory
   // is mocked so no actual queries run through it.
   const queryClient = new QueryClient();
-  return render(
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider initialMetrics={initialMetrics}>
         <ChatScreen navigation={navigation} route={route} />
       </SafeAreaProvider>
     </QueryClientProvider>
   );
+  const screen = render(tree());
+  return { ...screen, rerenderThread: () => screen.rerender(tree()) };
 }
 
 const SERVER_CONFIG = {
@@ -213,6 +429,8 @@ const ACTIVE_SETTING = { id: 'svc-1', service_type: 'openai' } as any;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockAuiListeners.clear();
+  mockVoicePreferences.enabled = true;
   (global as any).__mockChatIsRunning = false;
   (global as any).__mockChatIsEmpty = true;
   (global as any).__mockCapturedOnError = undefined;
@@ -220,7 +438,12 @@ beforeEach(() => {
   (global as any).__mockMessagesScrollToEnd = undefined;
   (global as any).__mockComposerText = '';
   (global as any).__mockComposerSetText = jest.fn();
+  mockPhotoState.__mockComposerAddAttachment = jest.fn();
+  mockPhotoState.__mockComposerRemoveAttachment = jest.fn();
+  mockPhotoState.__mockComposerAttachments = [];
+  mockPhotoState.__mockMessageState = undefined;
   (global as any).__mockComposerDeferEchoes = false;
+  voiceTestState.__mockVoiceServiceId = null;
   mockGetActiveServerConfig.mockResolvedValue(SERVER_CONFIG);
   mockUseActiveAiServiceSetting.mockReturnValue({
     data: ACTIVE_SETTING,
@@ -257,6 +480,15 @@ describe('ChatScreen config gating', () => {
 });
 
 describe('ChatScreen thread', () => {
+  it('hides dictation when disabled without hiding the text composer', async () => {
+    mockVoicePreferences.enabled = false;
+    const screen = renderScreen();
+    await screen.findByPlaceholderText('Message Sparky…');
+    expect(screen.queryByLabelText('Dictate message')).toBeNull();
+    expect(screen.queryByLabelText('Dictate with AI')).toBeNull();
+    expect(screen.getByTestId('composer-send')).toBeTruthy();
+  });
+
   it('renders the empty state with the configured starter suggestions', async () => {
     const { findByText, getByText } = renderScreen();
     expect(
@@ -309,6 +541,158 @@ describe('ChatScreen thread', () => {
         text2: 'bad config',
       })
     );
+  });
+
+  it('starts system dictation, shows a waveform, and streams transcript into the composer', async () => {
+    const {
+      findByPlaceholderText,
+      findByLabelText,
+      getByLabelText,
+      queryByPlaceholderText,
+    } = renderScreen();
+    await findByPlaceholderText('Message Sparky…');
+
+    const { ExpoSpeechRecognitionModule } = jest.requireMock(
+      'expo-speech-recognition'
+    );
+    const mic = getByLabelText('Dictate message');
+    await act(async () => {
+      fireEvent.press(mic);
+    });
+
+    expect(
+      ExpoSpeechRecognitionModule.requestPermissionsAsync
+    ).toHaveBeenCalled();
+    expect(ExpoSpeechRecognitionModule.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        interimResults: true,
+        volumeChangeEventOptions: { enabled: true, intervalMillis: 80 },
+      })
+    );
+    expect(await findByLabelText('Listening')).toBeTruthy();
+    expect(queryByPlaceholderText('Message Sparky…')).toBeNull();
+
+    // Partial then final results accumulate into the composer text.
+    await act(async () => {
+      voiceTestState.__mockSpeechHandlers.result?.({
+        isFinal: false,
+        results: [{ transcript: 'log an apple' }],
+      });
+    });
+    expect(voiceTestState.__mockComposerSetText).toHaveBeenCalledWith(
+      'log an apple'
+    );
+
+    await act(async () => {
+      voiceTestState.__mockSpeechHandlers.result?.({
+        isFinal: true,
+        results: [{ transcript: 'log an apple and run' }],
+      });
+    });
+    expect(voiceTestState.__mockComposerSetText).toHaveBeenCalledWith(
+      'log an apple and run'
+    );
+
+    // Final results do not auto-send. The active mic stops recognition and
+    // restores the editable composer containing the recognized text.
+    await act(async () => {
+      fireEvent.press(getByLabelText('Stop dictation'));
+    });
+    expect(ExpoSpeechRecognitionModule.stop).toHaveBeenCalled();
+    expect(await findByPlaceholderText('Message Sparky…')).toBeTruthy();
+  });
+
+  it('smooths microphone levels without re-rendering the recording UI on every sample', async () => {
+    const timing = jest.spyOn(Reanimated, 'withTiming');
+    const reducedMotion = jest.spyOn(Reanimated, 'useReducedMotion');
+    try {
+      const { findByPlaceholderText, getByLabelText } = renderScreen();
+      await findByPlaceholderText('Message Sparky…');
+      await act(async () => {
+        fireEvent.press(getByLabelText('Dictate message'));
+      });
+
+      const renders = reducedMotion.mock.calls.length;
+      const { __mockSpeechHandlers: handlers } =
+        globalThis as typeof globalThis & {
+          __mockSpeechHandlers: {
+            volumechange: (event: { value: number }) => void;
+          };
+        };
+      act(() => handlers.volumechange({ value: 7 }));
+      expect(timing).toHaveBeenLastCalledWith(
+        expect.closeTo((0.75 - 0.08) / 0.92),
+        expect.objectContaining({ duration: 100 })
+      );
+      act(() => handlers.volumechange({ value: -2 }));
+      expect(timing).toHaveBeenLastCalledWith(
+        0,
+        expect.objectContaining({ duration: 280 })
+      );
+      expect(reducedMotion).toHaveBeenCalledTimes(renders);
+    } finally {
+      timing.mockRestore();
+      reducedMotion.mockRestore();
+    }
+  });
+
+  it('records and sends audio to the selected AI voice provider', async () => {
+    voiceTestState.__mockVoiceServiceId = 'voice-svc-1';
+    const { findByPlaceholderText, findByLabelText, getByLabelText } =
+      renderScreen();
+    await findByPlaceholderText('Message Sparky…');
+
+    const audio = jest.requireMock('expo-audio');
+    const { transcribeVoiceRecording } = jest.requireMock(
+      '../../src/services/api/voiceTranscriptionApi'
+    );
+
+    await act(async () => {
+      fireEvent.press(getByLabelText('Dictate with AI'));
+    });
+    const recorder = audio.useAudioRecorder.mock.results[0].value;
+    expect(recorder.prepareToRecordAsync).toHaveBeenCalled();
+    expect(recorder.record).toHaveBeenCalled();
+    expect(await findByLabelText('Listening')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByLabelText('Stop dictation'));
+    });
+    expect(recorder.stop).toHaveBeenCalled();
+    expect(transcribeVoiceRecording).toHaveBeenCalledWith({
+      uri: 'file:///voice.m4a',
+      serviceConfigId: 'voice-svc-1',
+      signal: expect.any(AbortSignal),
+    });
+    await waitFor(() => {
+      expect(voiceTestState.__mockComposerSetText).toHaveBeenCalledWith(
+        'Привет из Gemini'
+      );
+    });
+  });
+
+  it('shows a specific no-speech message instead of a generic failure', async () => {
+    const { findByPlaceholderText, getByLabelText } = renderScreen();
+    await findByPlaceholderText('Message Sparky…');
+    await act(async () => {
+      fireEvent.press(getByLabelText('Dictate message'));
+    });
+    act(() => {
+      voiceTestState.__mockSpeechHandlers.error?.({
+        error: 'no-speech',
+        message: 'No speech input',
+      });
+    });
+    expect(Toast.show).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'info', text1: 'No speech detected' })
+    );
+  });
+
+  it('hides the mic while a stream is running', async () => {
+    voiceTestState.__mockChatIsRunning = true;
+    const { queryByLabelText } = renderScreen();
+    expect(queryByLabelText('Dictate message')).toBeNull();
+    voiceTestState.__mockChatIsRunning = false;
   });
 
   it('keeps typed composer text local while forwarding it to assistant-ui', async () => {
@@ -533,6 +917,271 @@ describe('ChatScreen auto-scroll pinning', () => {
   });
 });
 
+interface MockRecorder {
+  prepareToRecordAsync: jest.Mock<Promise<void>>;
+  record: jest.Mock;
+  stop: jest.Mock<Promise<void>>;
+}
+const voiceTestState = globalThis as typeof globalThis & {
+  __mockVoiceServiceId: string | null;
+  __mockComposerText: string;
+  __mockComposerSetText: jest.Mock;
+  __mockChatIsRunning: boolean;
+  __mockSpeechHandlers: Record<string, (event: unknown) => void>;
+};
+const mockTranscribe = jest.mocked(transcribeVoiceRecording);
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function startAiRecording() {
+  voiceTestState.__mockVoiceServiceId = 'voice-svc-1';
+  const screen = renderScreen();
+  await screen.findByPlaceholderText('Message Sparky…');
+  await act(async () => {
+    fireEvent.press(screen.getByLabelText('Dictate with AI'));
+  });
+  return screen;
+}
+
+function beginExternalChatRun(screen: ReturnType<typeof renderScreen>) {
+  act(() => {
+    // Quick replies and retries start a run without a composer.send event.
+    [...(mockAuiListeners.get('thread.runStart') ?? [])].forEach((listener) =>
+      listener()
+    );
+    voiceTestState.__mockChatIsRunning = true;
+    screen.rerenderThread();
+  });
+}
+
+function finishExternalChatRun(screen: ReturnType<typeof renderScreen>) {
+  act(() => {
+    voiceTestState.__mockChatIsRunning = false;
+    screen.rerenderThread();
+  });
+}
+
+describe('voice recording lifecycle', () => {
+  it('cancels System dictation on a quick-reply run and leaves an editable draft afterwards', async () => {
+    voiceTestState.__mockComposerText = 'Draft to keep';
+    const screen = renderScreen();
+    await screen.findByPlaceholderText('Message Sparky…');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Dictate message'));
+    });
+    expect(screen.getByLabelText('Listening')).toBeTruthy();
+    beginExternalChatRun(screen);
+    const speech = jest.requireMock<{
+      ExpoSpeechRecognitionModule: { abort: jest.Mock };
+    }>('expo-speech-recognition');
+    expect(speech.ExpoSpeechRecognitionModule.abort).toHaveBeenCalled();
+    expect(screen.queryByLabelText('Listening')).toBeNull();
+    expect(screen.queryByLabelText('Dictate message')).toBeNull();
+    act(() =>
+      voiceTestState.__mockSpeechHandlers.result?.({
+        isFinal: true,
+        results: [{ transcript: 'late words' }],
+      })
+    );
+    finishExternalChatRun(screen);
+    expect(screen.getByPlaceholderText('Message Sparky…').props.value).toBe(
+      'Draft to keep'
+    );
+    expect(screen.getByPlaceholderText('Message Sparky…').props.editable).toBe(
+      true
+    );
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState.disabled
+    ).toBe(false);
+    expect(voiceTestState.__mockComposerSetText).not.toHaveBeenCalled();
+  });
+
+  it('stops AI capture without uploading when a quick reply starts a run', async () => {
+    const screen = await startAiRecording();
+    const audio = jest.requireMock<{
+      useAudioRecorder: jest.Mock<MockRecorder>;
+    }>('expo-audio');
+    const recorder = audio.useAudioRecorder.mock.results[0]
+      ?.value as MockRecorder;
+    beginExternalChatRun(screen);
+    await act(async () => {});
+    expect(recorder.stop).toHaveBeenCalled();
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Listening')).toBeNull();
+    finishExternalChatRun(screen);
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState.disabled
+    ).toBe(false);
+  });
+
+  it('aborts an AI upload on an external run and ignores its late result without leaving the composer locked', async () => {
+    voiceTestState.__mockComposerText = 'Draft to keep';
+    const pending = deferred<{ text: string; model: string }>();
+    mockTranscribe.mockReturnValueOnce(pending.promise);
+    const screen = await startAiRecording();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Stop dictation'));
+    });
+    const signal = mockTranscribe.mock.calls[0]?.[0].signal;
+    beginExternalChatRun(screen);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      pending.resolve({ text: 'late transcript', model: 'voice-model' });
+    });
+    finishExternalChatRun(screen);
+    expect(voiceTestState.__mockComposerSetText).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('Message Sparky…').props.value).toBe(
+      'Draft to keep'
+    );
+    expect(screen.getByPlaceholderText('Message Sparky…').props.editable).toBe(
+      true
+    );
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState.disabled
+    ).toBe(false);
+  });
+
+  it('locks editing and Send until the transcript has been appended to the original draft', async () => {
+    voiceTestState.__mockComposerText = 'For lunch';
+    const pending = deferred<{ text: string; model: string }>();
+    mockTranscribe.mockReturnValueOnce(pending.promise);
+    const screen = await startAiRecording();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Stop dictation'));
+    });
+    expect(screen.getByPlaceholderText('Message Sparky…').props.editable).toBe(
+      false
+    );
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState.disabled
+    ).toBe(true);
+    await act(async () => {
+      pending.resolve({ text: 'an apple', model: 'voice-model' });
+    });
+    expect(voiceTestState.__mockComposerSetText).toHaveBeenCalledWith(
+      'For lunch an apple'
+    );
+    expect(screen.getByPlaceholderText('Message Sparky…').props.editable).toBe(
+      true
+    );
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState.disabled
+    ).toBe(false);
+  });
+
+  it('aborts upload and ignores a late transcript after the screen unmounts', async () => {
+    const pending = deferred<{ text: string; model: string }>();
+    mockTranscribe.mockReturnValueOnce(pending.promise);
+    const screen = await startAiRecording();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Stop dictation'));
+    });
+    const signal = mockTranscribe.mock.calls[0]?.[0].signal;
+    screen.unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      pending.resolve({ text: 'late transcript', model: 'voice-model' });
+    });
+    expect(voiceTestState.__mockComposerSetText).not.toHaveBeenCalled();
+  });
+
+  it('stops the recorder and restores playback mode when navigating away', async () => {
+    const audio = jest.requireMock<{
+      useAudioRecorder: jest.Mock<MockRecorder>;
+      setAudioModeAsync: jest.Mock;
+    }>('expo-audio');
+    const screen = await startAiRecording();
+    const recorder = audio.useAudioRecorder.mock.results[0]
+      ?.value as MockRecorder;
+    screen.unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(recorder.stop).toHaveBeenCalled();
+    expect(audio.setAudioModeAsync).toHaveBeenCalledWith({
+      allowsRecording: false,
+    });
+    expect(mockTranscribe).not.toHaveBeenCalled();
+  });
+
+  it('does not re-request granted microphone permission on Android', async () => {
+    const audio = jest.requireMock<{
+      getRecordingPermissionsAsync: jest.Mock;
+      requestRecordingPermissionsAsync: jest.Mock;
+    }>('expo-audio');
+    audio.getRecordingPermissionsAsync.mockResolvedValueOnce({ granted: true });
+    const screen = await startAiRecording();
+    expect(screen.getByLabelText('Stop dictation')).toBeTruthy();
+    expect(audio.requestRecordingPermissionsAsync).not.toHaveBeenCalled();
+    screen.unmount();
+    await act(async () => {});
+  });
+
+  it('does not re-request granted system speech permissions', async () => {
+    const { ExpoSpeechRecognitionModule: speech } = jest.requireMock<{
+      ExpoSpeechRecognitionModule: {
+        getPermissionsAsync: jest.Mock;
+        requestPermissionsAsync: jest.Mock;
+      };
+    }>('expo-speech-recognition');
+    speech.getPermissionsAsync.mockResolvedValueOnce({ granted: true });
+    const screen = renderScreen();
+    await screen.findByPlaceholderText('Message Sparky…');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Dictate message'));
+    });
+    expect(screen.getByLabelText('Stop dictation')).toBeTruthy();
+    expect(speech.requestPermissionsAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not start recording if microphone permission arrives after unmount', async () => {
+    const pending = deferred<{ granted: boolean }>();
+    const audio = jest.requireMock<{
+      requestRecordingPermissionsAsync: jest.Mock<
+        Promise<{ granted: boolean }>
+      >;
+      useAudioRecorder: jest.Mock<MockRecorder>;
+    }>('expo-audio');
+    audio.requestRecordingPermissionsAsync.mockReturnValueOnce(pending.promise);
+    const screen = await startAiRecording();
+    const recorder = audio.useAudioRecorder.mock.results[0]
+      ?.value as MockRecorder;
+    screen.unmount();
+    await act(async () => {
+      pending.resolve({ granted: true });
+    });
+    expect(recorder.prepareToRecordAsync).not.toHaveBeenCalled();
+    expect(recorder.record).not.toHaveBeenCalled();
+  });
+
+  it('cancels system recognition when the app backgrounds', async () => {
+    const appState = jest.mocked(AppState.addEventListener);
+    const screen = renderScreen();
+    await screen.findByPlaceholderText('Message Sparky…');
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Dictate message'));
+    });
+    act(() =>
+      appState.mock.calls
+        .filter(([event]) => event === 'change')
+        .forEach(([, handler]) => handler('background'))
+    );
+    const speech = jest.requireMock<{
+      ExpoSpeechRecognitionModule: { abort: jest.Mock };
+    }>('expo-speech-recognition');
+    expect(speech.ExpoSpeechRecognitionModule.abort).toHaveBeenCalled();
+    expect(screen.queryByLabelText('Listening')).toBeNull();
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState.disabled
+    ).toBe(false);
+  });
+});
+
 describe('ChatScreen history seeding', () => {
   it('seeds the runtime with the loaded history messages', async () => {
     const seed = [
@@ -575,5 +1224,359 @@ describe('ChatScreen history seeding', () => {
         'Ask Sparky anything about your nutrition, exercise, or goals.'
       )
     ).toBeNull();
+  });
+});
+
+interface MockPhotoMessage {
+  id?: string;
+  role: 'user' | 'assistant';
+  status?: { type: string };
+  content: { type: 'text'; text: string }[];
+  parts?: { type: 'text'; text: string }[];
+  attachments: readonly unknown[];
+}
+
+const mockPhotoState = globalThis as typeof globalThis & {
+  __mockComposerText: string;
+  __mockChatIsRunning: boolean;
+  __mockChatIsEmpty: boolean;
+  __mockComposerAttachments: readonly unknown[];
+  __mockComposerAddAttachment: jest.Mock;
+  __mockComposerRemoveAttachment: jest.Mock;
+  __mockMessageState: MockPhotoMessage | undefined;
+};
+const photoTestState = mockPhotoState;
+
+describe('ChatScreen photo attachments', () => {
+  const mockPickCamera = jest.mocked(pickChatImageFromCamera);
+  const mockPickLibrary = jest.mocked(pickChatImagesFromLibrary);
+
+  beforeEach(() => {
+    mockPickCamera.mockReset();
+    mockPickLibrary.mockReset();
+    jest
+      .mocked(useFocusEffect)
+      .mockImplementation(function useMockFocus(effect) {
+        React.useEffect(effect, [effect]);
+      });
+  });
+
+  afterEach(() => {
+    jest.mocked(useFocusEffect).mockReset();
+    jest.restoreAllMocks();
+  });
+
+  async function openPhotoSheet() {
+    const screen = renderScreen();
+    fireEvent.press(await screen.findByTestId('composer-attach-photo'));
+    return screen;
+  }
+
+  it('opens an icon-tile sheet instead of a system alert and dismisses the keyboard', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert');
+    const keyboardSpy = jest.spyOn(Keyboard, 'dismiss');
+    const screen = await openPhotoSheet();
+    expect(screen.getByTestId('photo-source-grid')).toBeTruthy();
+    expect(screen.getByText('Take Photo')).toBeTruthy();
+    expect(screen.getByText('Choose from Library')).toBeTruthy();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(keyboardSpy).toHaveBeenCalled();
+    expect(
+      screen.getByTestId('composer-attach-photo').props.accessibilityState
+    ).toMatchObject({ expanded: true });
+    fireEvent.press(screen.getByTestId('composer-attach-photo'));
+    expect(mockPhotoSheet.present).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the camera only after the sheet finishes closing', async () => {
+    mockPickCamera.mockResolvedValueOnce({
+      status: 'ok',
+      image: {
+        uri: 'file:///camera-meal.jpg',
+        dataUrl: 'data:image/jpeg;base64,CAMERA_BASE64',
+        name: 'camera-meal.jpg',
+        mimeType: 'image/jpeg',
+      },
+    });
+
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Take Photo'));
+    expect(mockPhotoSheet.dismiss).toHaveBeenCalledTimes(1);
+    expect(mockPickCamera).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByText('Choose from Library'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(mockPickLibrary).not.toHaveBeenCalled();
+
+    expect(mockPickCamera).toHaveBeenCalled();
+    expect(photoTestState.__mockComposerAddAttachment).toHaveBeenCalledWith({
+      type: 'image',
+      name: 'camera-meal.jpg',
+      contentType: 'image/jpeg',
+      content: [
+        {
+          type: 'image',
+          image: 'data:image/jpeg;base64,CAMERA_BASE64',
+          filename: 'camera-meal.jpg',
+        },
+      ],
+    });
+  });
+
+  it('shows a permission toast when camera access is denied', async () => {
+    mockPickCamera.mockResolvedValueOnce({ status: 'denied' });
+
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Take Photo'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+
+    expect(Toast.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        text1: 'Camera permission needed',
+        text2: 'Enable camera access to add a photo.',
+      })
+    );
+    expect(photoTestState.__mockComposerAddAttachment).not.toHaveBeenCalled();
+  });
+
+  it('attaches selected photos from the library', async () => {
+    mockPickLibrary.mockResolvedValueOnce([
+      {
+        uri: 'file:///lib-1.jpg',
+        dataUrl: 'data:image/jpeg;base64,LIB1',
+        name: 'lib-1.jpg',
+        mimeType: 'image/jpeg',
+      },
+      {
+        uri: 'file:///lib-2.jpg',
+        dataUrl: 'data:image/jpeg;base64,LIB2',
+        name: 'lib-2.jpg',
+        mimeType: 'image/jpeg',
+      },
+    ]);
+
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Choose from Library'));
+    expect(mockPickLibrary).not.toHaveBeenCalled();
+    await act(async () => mockPhotoSheet.finishDismiss());
+
+    expect(mockPickLibrary).toHaveBeenCalledWith(5);
+    expect(photoTestState.__mockComposerAddAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  it('can dismiss and reopen the sheet without opening a native picker', async () => {
+    const screen = await openPhotoSheet();
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(mockPickCamera).not.toHaveBeenCalled();
+    expect(mockPickLibrary).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId('composer-attach-photo').props.accessibilityState
+    ).toMatchObject({ expanded: false });
+    fireEvent.press(screen.getByTestId('composer-attach-photo'));
+    expect(mockPhotoSheet.present).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not open a queued picker after leaving chat', async () => {
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Take Photo'));
+    screen.unmount();
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(mockPickCamera).not.toHaveBeenCalled();
+  });
+
+  it('drops the queued selection if a response starts before dismissal finishes', async () => {
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Take Photo'));
+    photoTestState.__mockChatIsRunning = true;
+    screen.rerenderThread();
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(mockPickCamera).not.toHaveBeenCalled();
+  });
+
+  it('leaves normal Send availability to the runtime, including image-only messages', async () => {
+    const screen = renderScreen();
+    await screen.findByTestId('composer-send');
+    expect(
+      screen.UNSAFE_getByType(ComposerPrimitive.Send).props.disabled
+    ).toBeUndefined();
+    photoTestState.__mockComposerAttachments = [
+      {
+        id: 'photo',
+        type: 'image',
+        content: [{ type: 'image', image: 'data:image/jpeg;base64,PHOTO' }],
+      },
+    ];
+    screen.rerenderThread();
+    expect(
+      screen.UNSAFE_getByType(ComposerPrimitive.Send).props.disabled
+    ).toBeUndefined();
+  });
+
+  it('keeps Send disabled while the native picker is open', async () => {
+    let finishPick:
+      | ((value: Awaited<ReturnType<typeof pickChatImageFromCamera>>) => void)
+      | undefined;
+    mockPickCamera.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishPick = resolve;
+      })
+    );
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Take Photo'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(
+      screen.getByTestId('composer-send').props.accessibilityState
+    ).toMatchObject({
+      disabled: true,
+    });
+    expect(screen.getByTestId('composer-attach-photo')).toBeDisabled();
+    await act(async () => finishPick?.({ status: 'cancelled' }));
+    expect(screen.getByTestId('composer-attach-photo')).toBeEnabled();
+  });
+
+  it('discards native picker results after leaving chat', async () => {
+    const pending =
+      deferred<Awaited<ReturnType<typeof pickChatImagesFromLibrary>>>();
+    mockPickLibrary.mockReturnValueOnce(pending.promise);
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Choose from Library'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+    screen.unmount();
+    await act(async () =>
+      pending.resolve([
+        {
+          uri: 'file:///late.jpg',
+          dataUrl: 'data:image/jpeg;base64,LATE',
+          name: 'late.jpg',
+          mimeType: 'image/jpeg',
+        },
+      ])
+    );
+    expect(photoTestState.__mockComposerAddAttachment).not.toHaveBeenCalled();
+  });
+
+  it('unlocks the picker after an error and allows retrying', async () => {
+    mockPickLibrary.mockRejectedValueOnce(new Error('Cannot decode photo'));
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Choose from Library'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(Toast.show).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', text1: 'Could not add photo' })
+    );
+    expect(screen.getByTestId('composer-attach-photo')).toBeEnabled();
+    mockPickLibrary.mockResolvedValueOnce([]);
+    fireEvent.press(screen.getByTestId('composer-attach-photo'));
+    fireEvent.press(screen.getByText('Choose from Library'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(mockPickLibrary).toHaveBeenCalledTimes(2);
+  });
+
+  it('respects the available slots even if the native picker returns extra photos', async () => {
+    photoTestState.__mockComposerAttachments = Array.from(
+      { length: 4 },
+      (_, index) => ({
+        id: String(index),
+        type: 'image',
+        content: [{ type: 'image', image: 'data:image/jpeg;base64,EXISTING' }],
+      })
+    );
+    mockPickLibrary.mockResolvedValueOnce(
+      Array.from({ length: 3 }, (_, index) => ({
+        uri: `file:///photo-${index}.jpg`,
+        dataUrl: `data:image/jpeg;base64,PHOTO${index}`,
+        name: `photo-${index}.jpg`,
+        mimeType: 'image/jpeg',
+      }))
+    );
+    const screen = await openPhotoSheet();
+    fireEvent.press(screen.getByText('Choose from Library'));
+    await act(async () => mockPhotoSheet.finishDismiss());
+    expect(mockPickLibrary).toHaveBeenCalledWith(1);
+    expect(photoTestState.__mockComposerAddAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot open the sheet at the five-photo limit', async () => {
+    photoTestState.__mockComposerAttachments = Array.from(
+      { length: 5 },
+      (_, index) => ({
+        id: String(index),
+        type: 'image',
+        content: [{ type: 'image', image: 'data:image/jpeg;base64,IMAGE' }],
+      })
+    );
+    const screen = renderScreen();
+    const button = await screen.findByTestId('composer-attach-photo');
+    expect(button).toBeDisabled();
+    fireEvent.press(button);
+    expect(mockPhotoSheet.present).not.toHaveBeenCalled();
+  });
+
+  it('renders pending composer image attachments, opens lightbox on tap, and removes on close', async () => {
+    photoTestState.__mockComposerAttachments = [
+      {
+        id: 'att-1',
+        type: 'image',
+        name: 'bowl.jpg',
+        content: [{ type: 'image', image: 'data:image/jpeg;base64,BOWL' }],
+      },
+    ];
+
+    const screen = renderScreen();
+    const thumb = await screen.findByTestId('composer-attachment-0');
+    const removeBtn = screen.getByTestId('composer-attachment-remove-0');
+
+    fireEvent.press(thumb);
+    expect(screen.getByTestId('lightbox-close')).toBeTruthy();
+
+    fireEvent.press(removeBtn);
+    expect(photoTestState.__mockComposerRemoveAttachment).toHaveBeenCalledWith({
+      id: 'att-1',
+    });
+  });
+
+  it('renders user message image attachments and hides the empty text bubble and Copy button for image-only messages', async () => {
+    photoTestState.__mockChatIsEmpty = false;
+    photoTestState.__mockMessageState = {
+      id: 'msg-img-only',
+      role: 'user',
+      status: { type: 'complete' },
+      content: [],
+      parts: [],
+      attachments: [
+        {
+          id: '0',
+          type: 'image',
+          name: 'plate.jpg',
+          content: [{ type: 'image', image: 'data:image/jpeg;base64,PLATE' }],
+        },
+      ],
+    };
+
+    const screen = renderScreen();
+    expect(await screen.findByTestId('message-attachment-0')).toBeTruthy();
+    expect(screen.queryByTestId('user-message-bubble')).toBeNull();
+    expect(screen.queryByText('Copy')).toBeNull();
+
+    photoTestState.__mockMessageState = {
+      id: 'msg-img-text',
+      role: 'user',
+      status: { type: 'complete' },
+      content: [{ type: 'text', text: 'How many calories in this?' }],
+      parts: [{ type: 'text', text: 'How many calories in this?' }],
+      attachments: [
+        {
+          id: '0',
+          type: 'image',
+          name: 'plate.jpg',
+          content: [{ type: 'image', image: 'data:image/jpeg;base64,PLATE' }],
+        },
+      ],
+    };
+    screen.rerenderThread();
+
+    expect(screen.getByTestId('message-attachment-0')).toBeTruthy();
+    expect(screen.getByTestId('user-message-bubble')).toBeTruthy();
+    expect(screen.getByText('How many calories in this?')).toBeTruthy();
+    expect(screen.getByText('Copy')).toBeTruthy();
   });
 });

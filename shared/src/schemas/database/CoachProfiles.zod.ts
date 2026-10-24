@@ -1,17 +1,17 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachProfilesIdSchema = z.string().and(
   z.object({
-    __brand: z.literal("public.coach_profiles"),
-  }),
+    __brand: z.literal('public.coach_profiles'),
+  })
 );
 
 export const coachDietaryPatternSchema = z.enum([
-  "omnivore",
-  "vegetarian",
-  "vegan",
-  "pescatarian",
-  "other",
+  'omnivore',
+  'vegetarian',
+  'vegan',
+  'pescatarian',
+  'other',
 ]);
 
 export const coachProfilesSchema = z.object({
@@ -30,7 +30,7 @@ export const coachProfilesSchema = z.object({
   adaptive_end_time: z.string(),
   adaptive_interval_minutes: z.number().int().min(30).max(360),
   proactive_categories: z.array(
-    z.enum(["nutrition", "hydration", "training", "recovery"]),
+    z.enum(['nutrition', 'hydration', 'training', 'recovery'])
   ),
   adaptive_last_signature: z.string().nullable(),
   memory_enabled: z.boolean(),
@@ -63,7 +63,7 @@ export const coachProfilesInitializerSchema = coachProfilesSchema
     adaptive_end_time: z.string().optional(),
     adaptive_interval_minutes: z.number().int().min(30).max(360).optional(),
     proactive_categories: z
-      .array(z.enum(["nutrition", "hydration", "training", "recovery"]))
+      .array(z.enum(['nutrition', 'hydration', 'training', 'recovery']))
       .optional(),
     adaptive_last_signature: z.string().nullable().optional(),
     memory_enabled: z.boolean().optional(),

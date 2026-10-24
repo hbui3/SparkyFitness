@@ -164,10 +164,13 @@ async function upsertStepData(
         source,
         sourceId
       );
+      // A concurrent write may have created the day since the lookup; apply
+      // the same max-wins update to it instead of failing on the unique key.
       const insertResult = await client.query(
-        `INSERT INTO check_in_measurements
-           (user_id, entry_date, steps, source_provenance, created_by_user_id, updated_by_user_id, created_at, updated_at)
+        `INSERT INTO check_in_measurements AS cm (user_id, entry_date, steps, source_provenance, created_by_user_id, updated_by_user_id, created_at, updated_at)
          VALUES ($1, $2, $3, $5::jsonb, $4, $4, now(), now())
+         ON CONFLICT (user_id, entry_date) DO UPDATE
+         SET source_provenance = CASE WHEN cm.steps IS NULL OR EXCLUDED.steps >= cm.steps THEN COALESCE(cm.source_provenance, '{}'::jsonb) || EXCLUDED.source_provenance ELSE cm.source_provenance END, steps = GREATEST(EXCLUDED.steps, cm.steps), updated_at = now(), updated_by_user_id = EXCLUDED.updated_by_user_id
          RETURNING *`,
         [userId, date, value, actingUserId, JSON.stringify(provenance)]
       );
@@ -469,7 +472,15 @@ async function upsertCheckInMeasurements(
         new Date().toISOString(),
         new Date().toISOString(),
       ];
-      query = `INSERT INTO check_in_measurements (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+      // A concurrent write may have created the day since the lookup; update
+      // it the same way the branch above would instead of failing on the key.
+      const conflictUpdates = measurementKeys
+        .map((key) => `${key} = EXCLUDED.${key}`)
+        .join(', ');
+      query = `INSERT INTO check_in_measurements (${cols.join(', ')}) VALUES (${placeholders})
+        ON CONFLICT (user_id, entry_date) DO UPDATE
+        SET ${conflictUpdates}, updated_at = now(), updated_by_user_id = EXCLUDED.updated_by_user_id
+        RETURNING *`;
     }
     const result = await client.query(query, values);
     return result.rows[0];
@@ -641,10 +652,22 @@ async function bulkUpsertCheckInMeasurements(
           nowIso,
           nowIso,
         ]);
+        // A concurrent write may have created a day since the lookup; merge
+        // into it exactly as the batch UPDATE above does.
+        const conflictUpdates = insertColumns
+          .map((column) =>
+            column === 'steps'
+              ? 'steps = GREATEST(EXCLUDED.steps, cm.steps)'
+              : `${column} = COALESCE(EXCLUDED.${column}, cm.${column})`
+          )
+          .join(', ');
         const insertResult = await client.query(
           format(
-            `INSERT INTO check_in_measurements (user_id, entry_date, ${insertColumns.join(', ')}, source_provenance, created_by_user_id, updated_by_user_id, created_at, updated_at)
-             VALUES %L RETURNING *`,
+            `INSERT INTO check_in_measurements AS cm (user_id, entry_date, ${insertColumns.join(', ')}, source_provenance, created_by_user_id, updated_by_user_id, created_at, updated_at)
+             VALUES %L
+             ON CONFLICT (user_id, entry_date) DO UPDATE
+             SET ${conflictUpdates}, source_provenance = COALESCE(cm.source_provenance, '{}'::jsonb) || (EXCLUDED.source_provenance - 'steps') || CASE WHEN EXCLUDED.steps IS NOT NULL AND (cm.steps IS NULL OR EXCLUDED.steps >= cm.steps) THEN jsonb_build_object('steps', EXCLUDED.source_provenance -> 'steps') ELSE '{}'::jsonb END, updated_at = now(), updated_by_user_id = EXCLUDED.updated_by_user_id
+             RETURNING *`,
             insertRows
           )
         );
@@ -861,12 +884,27 @@ async function getCustomCategories(userId: any) {
   }
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface CustomCategoryRow {
+  id: string;
+  name: string;
+  display_name: string | null;
+  frequency: string;
+  measurement_type: string;
+  data_type: string | null;
+}
 async function createCustomCategory(categoryData: any) {
   const client = await getClient(categoryData.created_by_user_id); // User-specific operation, using created_by_user_id for RLS context
   try {
+    // One category per user and name. A concurrent create of the same name
+    // waits for the first and then gets that category, with its settings, so a
+    // caller never applies its own defaults to a category someone else made.
+    const columns =
+      'id, name, display_name, frequency, measurement_type, data_type';
     const result = await client.query(
       `INSERT INTO custom_categories (user_id, name, display_name, frequency, measurement_type, data_type, created_by_user_id, updated_by_user_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, now(), now()) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, now(), now())
+       ON CONFLICT (user_id, name) DO NOTHING
+       RETURNING ${columns}`,
       [
         categoryData.user_id,
         categoryData.name,
@@ -877,7 +915,16 @@ async function createCustomCategory(categoryData: any) {
         categoryData.created_by_user_id,
       ]
     );
-    return result.rows[0];
+    if (result.rows.length > 0) {
+      const category: CustomCategoryRow = result.rows[0];
+      return { id: category.id, created: true, category };
+    }
+    const existing = await client.query(
+      `SELECT ${columns} FROM custom_categories WHERE user_id = $1 AND name = $2`,
+      [categoryData.user_id, categoryData.name]
+    );
+    const category: CustomCategoryRow = existing.rows[0];
+    return { id: category.id, created: false, category };
   } finally {
     client.release();
   }
@@ -1081,6 +1128,36 @@ async function getLatestManualCustomEntriesOnOrBeforeDate(
          AND cm.value IS NOT NULL
        ORDER BY cm.category_id, cm.entry_date DESC, cm.entry_timestamp DESC, cm.id DESC`,
       [userId, date]
+    );
+    return result.rows;
+  } finally {
+    client.release();
+  }
+}
+
+async function getCustomMeasurementEntriesByDateRange(
+  userId: string,
+  startDate: string,
+  endDate: string
+) {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      `SELECT cm.id, cm.category_id, cm.value, cm.notes, cm.source,
+              cm.entry_date::TEXT, cm.entry_hour, cm.entry_timestamp,
+              json_build_object(
+                'id', cc.id,
+                'name', cc.name,
+                'display_name', cc.display_name,
+                'measurement_type', cc.measurement_type,
+                'data_type', cc.data_type
+              ) AS custom_categories
+       FROM custom_measurements cm
+       JOIN custom_categories cc ON cm.category_id = cc.id
+       WHERE cm.user_id = $1
+         AND cm.entry_date BETWEEN $2 AND $3
+       ORDER BY cm.entry_date ASC, cm.entry_timestamp ASC, cm.id ASC`,
+      [userId, startDate, endDate]
     );
     return result.rows;
   } finally {
@@ -1740,6 +1817,7 @@ export { updateCustomCategory };
 export { deleteCustomCategory };
 export { getCustomMeasurementEntries };
 export { getCustomMeasurementEntriesByDate };
+export { getCustomMeasurementEntriesByDateRange };
 export { getLatestManualCustomEntriesOnOrBeforeDate };
 export { getCheckInMeasurementsByDateRange };
 export { getCustomMeasurementsByDateRange };
@@ -2213,17 +2291,19 @@ async function getWaterIntakeLogEntryOwnerId(id: string, userId: string) {
 async function updateWaterIntakeLogTime(
   id: string,
   userId: string,
-  loggedAt: string
+  loggedAt: string,
+  client?: PoolClient
 ) {
-  const client = await getClient(userId);
+  const ownClient = !client;
+  const activeClient = client ?? (await getClient(userId));
   try {
-    const result = await client.query(
+    const result = await activeClient.query(
       'UPDATE water_intake_entries SET logged_at = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
       [loggedAt, id, userId]
     );
     return result.rows[0] || null;
   } finally {
-    client.release();
+    if (ownClient) activeClient.release();
   }
 }
 
@@ -2346,6 +2426,7 @@ export default {
   deleteCustomCategory,
   getCustomMeasurementEntries,
   getCustomMeasurementEntriesByDate,
+  getCustomMeasurementEntriesByDateRange,
   getLatestManualCustomEntriesOnOrBeforeDate,
   getCheckInMeasurementsByDateRange,
   getCustomMeasurementsByDateRange,

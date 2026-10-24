@@ -8,6 +8,7 @@ export type NativeHeaderDatePickerOptions = {
   onDatePress: () => void;
   onNextDate: () => void;
   tintColor: string;
+  dateTintColor?: string;
   accessibilityLabel: string;
   previousDayLabel?: string;
   nextDayLabel?: string;
@@ -57,6 +58,7 @@ export function createNativeHeaderDatePickerItems({
   onDatePress,
   onNextDate,
   tintColor,
+  dateTintColor,
   accessibilityLabel,
   previousDayLabel,
   nextDayLabel,
@@ -81,8 +83,12 @@ export function createNativeHeaderDatePickerItems({
       type: 'button',
       label: dateLabel ?? `${formatDateLabel(selectedDate, t, locale)} ▾`,
       onPress: onDatePress,
-      tintColor,
-      labelStyle: { fontSize: 15, fontWeight: '600', color: tintColor },
+      tintColor: dateTintColor ?? tintColor,
+      labelStyle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: dateTintColor ?? tintColor,
+      },
       accessibilityLabel,
       identifier: 'date-picker',
       sharesBackground: true,

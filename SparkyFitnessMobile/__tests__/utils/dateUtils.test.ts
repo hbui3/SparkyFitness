@@ -5,6 +5,7 @@ import {
   normalizeDate,
   formatDateLabel,
   formatDate,
+  getDateRelationToToday,
   formatRelativeTime,
 } from '../../src/utils/dateUtils';
 import i18n, { initializeI18n } from '../../src/localization/i18n';
@@ -131,6 +132,16 @@ describe('with a pinned clock', () => {
         formatDate('2024-06-13', 'en-US')
       );
       await i18n.changeLanguage('en');
+    });
+  });
+
+  describe('getDateRelationToToday', () => {
+    test('classifies today, past, and future relative to the pinned clock', () => {
+      expect(getDateRelationToToday('2024-06-15')).toBe('today');
+      expect(getDateRelationToToday('2024-06-14')).toBe('past');
+      expect(getDateRelationToToday('2024-06-01')).toBe('past');
+      expect(getDateRelationToToday('2024-06-16')).toBe('future');
+      expect(getDateRelationToToday('2024-06-30')).toBe('future');
     });
   });
 

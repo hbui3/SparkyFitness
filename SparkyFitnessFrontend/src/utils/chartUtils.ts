@@ -79,7 +79,7 @@ export function calculateSmartYAxisDomain(
   if (forceMin !== undefined) {
     domainMin = forceMin;
   } else if (useZeroBaseline) {
-    domainMin = Math.min(0, domainMin); // Ensure it starts at 0 or below if useZeroBaseline is true
+    domainMin = min >= 0 ? 0 : min - margin; // Ensure it starts at 0 or below if useZeroBaseline is true
   } else {
     // If not using zero baseline, and min is positive, ensure domainMin doesn't go negative
     if (min >= 0 && domainMin < 0) {

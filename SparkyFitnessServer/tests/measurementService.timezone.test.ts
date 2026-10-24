@@ -310,9 +310,14 @@ describe('processHealthData timezone resolution', () => {
     // Default account timezone: UTC
     setAccountTimezone('UTC');
     measurementRepository.getCustomCategories = vi.fn().mockResolvedValue([]);
+    // A fresh create stores what it was given.
     measurementRepository.createCustomCategory = vi
       .fn()
-      .mockResolvedValue({ id: 'cat-new' });
+      .mockImplementation(async (data) => ({
+        id: 'cat-new',
+        created: true,
+        category: { ...data, id: 'cat-new' },
+      }));
     measurementRepository.bulkUpsertCustomMeasurements = vi
       .fn()
       .mockResolvedValue([{ id: 'entry-1' }]);

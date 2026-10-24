@@ -31,6 +31,7 @@ import {
   type WritebackDateRange,
 } from '../WritebackMetrics';
 import { enabledWritebackPermissions } from '../services/shared/healthPermissionSets';
+import { hasAnyEnrichedSessions } from '../services/shared/enrichedSessionCache';
 import HealthSourceLabel from '../components/HealthSourceLabel';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
@@ -41,6 +42,7 @@ import {
   loadHealthPreference,
   saveHealthPreference,
   requestHealthPermissions,
+  requestGrantedHealthPermissions,
   refreshEnabledMetricPermissions,
   loadAllEnabledPermissions,
   enableBackgroundDeliveryForMetric,
@@ -80,7 +82,12 @@ import type { TimeRange } from '../services/storage';
 import { addLog } from '../services/LogService';
 import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import { useScreenHeader } from '../hooks/useScreenHeader';
-import { formatRelativeTime } from '../utils/dateUtils';
+import { formatRelativeTime, formatShortDate } from '../utils/dateUtils';
+import { getSyncStartDate } from '../utils/syncUtils';
+import ActionSheet, {
+  type ActionSheetItem,
+  type ActionSheetRef,
+} from '../components/ActionSheet';
 import { getErrorMessage } from '../utils/errors';
 import { HEALTH_METRICS, getHealthMetricLabel } from '../HealthMetrics';
 import type { HealthMetric } from '../HealthMetrics';
@@ -91,6 +98,7 @@ import type {
 import { useSyncHealthData, usePreferences } from '../hooks';
 import type { RootStackScreenProps } from '../types/navigation';
 import { fetchHealthDisplayData } from '../services/healthDataDisplay';
+import { metricsCoveredByGrant } from '../utils/healthPermissionGrants';
 import { shareHealthDiagnosticReport } from '../services/healthDiagnosticService';
 
 type SyncScreenProps = RootStackScreenProps<'Sync'>;
@@ -167,6 +175,7 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
     Record<string, boolean>
   >({});
   const dateRangeSheetRef = useRef<DateRangeSheetRef>(null);
+  const syncChoiceSheetRef = useRef<ActionSheetRef>(null);
   const [isBackgroundSyncEnabled, setIsBackgroundSyncEnabled] =
     useState<boolean>(false);
   const [isSyncOnOpenEnabled, setIsSyncOnOpenEnabled] =
@@ -606,24 +615,48 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
       );
 
       try {
-        const granted = await requestHealthPermissions(allPermissions);
+        const grantedPermissions =
+          await requestGrantedHealthPermissions(allPermissions);
+        const granted = allPermissions.every((permission) =>
+          grantedPermissions.some(
+            (g) =>
+              g.recordType === permission.recordType &&
+              g.accessType === permission.accessType
+          )
+        );
 
         if (!granted) {
+          // Keep each metric whose own permissions were granted: one that
+          // was declined, or that this Health Connect can't grant, must not
+          // switch every other metric off.
+          const covered = metricsCoveredByGrant(
+            HEALTH_METRICS,
+            grantedPermissions
+          );
+          const onlyWritebackDeclined = covered.size === HEALTH_METRICS.length;
           Alert.alert(
             t('syncScreen.permissionRequired.allTitle', {
               defaultValue: 'Permissions Required',
             }),
-            t('syncScreen.permissionRequired.allMessage', {
-              defaultValue:
-                'Some permissions were not granted. Please enable all required health permissions in the {{settings}} to sync all data.',
-              settings: healthSettingsName,
-            })
+            onlyWritebackDeclined
+              ? t('syncScreen.permissionRequired.writebackMessage', {
+                  defaultValue:
+                    'Every metric will sync. To write your data back, grant the missing permissions in {{settings}}.',
+                  settings: healthSettingsName,
+                })
+              : t('syncScreen.permissionRequired.allMessage', {
+                  defaultValue:
+                    'Some permissions were not granted. Please enable all required health permissions in the {{settings}} to sync all data.',
+                  settings: healthSettingsName,
+                })
           );
           HEALTH_METRICS.forEach((metric) => {
-            newHealthMetricStates[metric.stateKey] = false;
+            newHealthMetricStates[metric.stateKey] = covered.has(
+              metric.stateKey
+            );
           });
           addLog(
-            '[SyncScreen] Not all permissions were granted. Reverting "Enable All".',
+            `[SyncScreen] Not all permissions were granted. Enabled the ${covered.size}/${HEALTH_METRICS.length} metrics that were.`,
             'WARNING'
           );
         } else {
@@ -714,10 +747,96 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
     setIsSharingReport(false);
   };
 
-  const handleSync = (): void => {
+  const runSync = useCallback(
+    (forceTelemetry: boolean): void => {
+      syncMutation.mutate({
+        timeRange: selectedTimeRange,
+        healthMetricStates,
+        forceTelemetry,
+      });
+    },
+    [syncMutation, selectedTimeRange, healthMetricStates]
+  );
+
+  /**
+   * Manual sync. Offers to re-send workout details as well as new data.
+   *
+   * Workout routes and sample series are collected once per workout and then
+   * skipped on every later run, so a plain sync cannot bring them back — and
+   * because that record lives on the device, deleting the data server-side
+   * does not clear it either. Asking here is what makes the expensive option
+   * reachable at all, and keeps it a deliberate choice rather than a button
+   * that is quietly slow every time.
+   *
+   * With nothing collected yet the two options do identical work, so the
+   * prompt is skipped rather than asking a question with one real answer.
+   */
+  // Concrete dates rather than "Last 30 Days": the window is what the choice
+  // applies to, so showing it removes a step of interpretation. Formatted
+  // through the app locale, like every other date in the app.
+  const syncRangeTitle = useMemo(() => {
+    const toDay = (d: Date): string =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
+    const start = formatShortDate(
+      toDay(getSyncStartDate(selectedTimeRange)),
+      dateLocale
+    );
+    const end = formatShortDate(toDay(new Date()), dateLocale);
+    return start === end
+      ? t('syncScreen.syncChoice.titleSingleDay', {
+          defaultValue: 'Sync {{day}}',
+          day: end,
+        })
+      : t('syncScreen.syncChoice.title', {
+          defaultValue: 'Sync {{start}} – {{end}}',
+          start,
+          end,
+        });
+  }, [selectedTimeRange, dateLocale, t]);
+
+  const syncChoiceItems = useMemo<ActionSheetItem[]>(
+    () => [
+      {
+        key: 'quick',
+        label: t('syncScreen.syncChoice.quick', { defaultValue: 'Quick Sync' }),
+        description: t('syncScreen.syncChoice.quickDescription', {
+          defaultValue:
+            'Sends all your health data. Workouts already synced keep the map and heart rate they have.',
+        }),
+        onPress: () => runSync(false),
+      },
+      {
+        key: 'all',
+        label: t('syncScreen.syncChoice.all', { defaultValue: 'All Sync' }),
+        description: t('syncScreen.syncChoice.allDescription', {
+          defaultValue:
+            'The same, and also re-reads the map and heart rate for workouts already synced. Slower.',
+        }),
+        onPress: () => runSync(true),
+      },
+    ],
+    [t, runSync]
+  );
+
+  const handleSync = useCallback((): void => {
     if (syncMutation.isPending || isSyncClaimed()) return;
-    syncMutation.mutate({ timeRange: selectedTimeRange, healthMetricStates });
-  };
+    void (async () => {
+      let canForce = false;
+      try {
+        canForce = await hasAnyEnrichedSessions();
+      } catch {
+        // Unreadable cache: fall through to a normal sync rather than
+        // blocking the button on a diagnostic question.
+      }
+      if (!canForce) {
+        runSync(false);
+        return;
+      }
+      syncChoiceSheetRef.current?.present();
+    })();
+  }, [syncMutation.isPending, runSync]);
 
   const header = useScreenHeader({
     title: t('syncScreen.title', { defaultValue: 'Health Data Sync' }),
@@ -907,6 +1026,12 @@ const SyncScreen: React.FC<SyncScreenProps> = ({ navigation }) => {
         <DateRangeSheet
           ref={dateRangeSheetRef}
           onConfirm={(from, to) => doRemoveWritebackData({ from, to })}
+        />
+
+        <ActionSheet
+          ref={syncChoiceSheetRef}
+          title={syncRangeTitle}
+          items={syncChoiceItems}
         />
 
         {/* Health Data Report — Android only */}

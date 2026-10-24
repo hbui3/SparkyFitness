@@ -5,7 +5,15 @@ import type { SortableExerciseItemData } from '@/types/workout';
 
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (_key: string, defaultValue?: string) => defaultValue,
+    t: (
+      _key: string,
+      options?: string | ({ defaultValue?: string } & Record<string, unknown>)
+    ) =>
+      typeof options === 'string' || options == null
+        ? options
+        : (options.defaultValue ?? '').replace(/\{\{(\w+)\}\}/g, (_m, k) =>
+            String(options[k])
+          ),
   }),
 }));
 
@@ -199,5 +207,100 @@ describe('SortableExerciseItem replace/duplicate exercise actions', () => {
     expect(
       screen.queryByRole('button', { name: 'Duplicate exercise' })
     ).not.toBeInTheDocument();
+  });
+
+  describe('per-set ramp and progression increment units', () => {
+    const renderPresetItem = (
+      fields: Record<string, unknown>,
+      weightUnit: string
+    ) => {
+      const onExerciseFieldChange = jest.fn();
+      render(
+        <SortableExerciseItem
+          ex={createExercise({
+            category: 'strength',
+            modality: 'weight_reps',
+            sets: [{ set_number: 1, reps: 5, weight: 80 }],
+            ...fields,
+          })}
+          exerciseIndex={0}
+          onRemoveExercise={() => {}}
+          onSetChange={() => {}}
+          onDuplicateSet={() => {}}
+          onRemoveSet={() => {}}
+          onExerciseFieldChange={onExerciseFieldChange}
+          weightUnit={weightUnit}
+        />
+      );
+      return onExerciseFieldChange;
+    };
+
+    it('stores a pound ramp as kg and a negative one as a back-off', () => {
+      const onExerciseFieldChange = renderPresetItem({}, 'lbs');
+      const input = screen.getByLabelText('Add per set (this workout, lbs)');
+
+      fireEvent.change(input, { target: { value: '10' } });
+      expect(onExerciseFieldChange).toHaveBeenLastCalledWith(
+        0,
+        'ramp_increment',
+        expect.closeTo(4.5359, 3)
+      );
+
+      fireEvent.change(input, { target: { value: '-10' } });
+      expect(onExerciseFieldChange).toHaveBeenLastCalledWith(
+        0,
+        'ramp_increment',
+        expect.closeTo(-4.5359, 3)
+      );
+
+      fireEvent.change(input, { target: { value: '' } });
+      expect(onExerciseFieldChange).toHaveBeenLastCalledWith(
+        0,
+        'ramp_increment',
+        null
+      );
+    });
+
+    it('shows stored kg increments in the lifter unit', () => {
+      renderPresetItem(
+        {
+          ramp_increment: 4.54,
+          progression_mode: 'rep_goal',
+          increment_type: 'weight',
+          increment_value: 2.27,
+        },
+        'lbs'
+      );
+      expect(
+        screen.getByLabelText('Add per set (this workout, lbs)')
+      ).toHaveValue(10);
+      expect(screen.getByPlaceholderText('+5')).toHaveValue(5);
+    });
+
+    it('stores a weight progression increment typed in pounds as kg', () => {
+      const onExerciseFieldChange = renderPresetItem(
+        { progression_mode: 'rep_goal', increment_type: 'weight' },
+        'lbs'
+      );
+      fireEvent.change(screen.getByPlaceholderText('+5'), {
+        target: { value: '5' },
+      });
+      expect(onExerciseFieldChange).toHaveBeenLastCalledWith(
+        0,
+        'increment_value',
+        expect.closeTo(2.268, 3)
+      );
+    });
+
+    it('omits the ramp where the edit cannot be saved', () => {
+      renderItem(
+        createExercise({
+          category: 'strength',
+          modality: 'weight_reps',
+          sets: [{ set_number: 1, reps: 5, weight: 80 }],
+        })
+      );
+      expect(screen.queryByLabelText(/Add per set/)).not.toBeInTheDocument();
+    });
   });
 });

@@ -96,7 +96,8 @@ interface StepperInputProps {
   onBlur?: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
-  keyboardType?: 'decimal-pad' | 'number-pad';
+  keyboardType?:
+    'decimal-pad' | 'number-pad' | 'numbers-and-punctuation' | 'numeric';
   placeholder?: string;
   selectTextOnFocus?: boolean;
   /** Override the TextInput component (e.g., BottomSheetTextInput) */

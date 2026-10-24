@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { TimeInput } from '@/components/ui/TimeInput';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -282,7 +283,11 @@ const LogExerciseEntryDialog: React.FC<LogExerciseEntryDialogProps> = ({
         notes,
         entry_date: selectedDate,
         entry_time: entryTime || null,
-        calories_burned: Number(caloriesBurnedInput),
+        // Omit when blank so the server estimates from calories_per_hour;
+        // sending 0 would be stored as-is and skip the auto-calculation.
+        ...(caloriesBurnedInput !== '' && {
+          calories_burned: Number(caloriesBurnedInput),
+        }),
         duration_minutes: totalDuration,
         imageFile,
         distance:
@@ -355,18 +360,26 @@ const LogExerciseEntryDialog: React.FC<LogExerciseEntryDialogProps> = ({
                 collisionDetection={closestCenter}
                 onDragEnd={handleDragEnd}
               >
-                <SetColumnHeaders modality={toSetTableModality(modality)} />
+                <SetColumnHeaders
+                  modality={toSetTableModality(modality)}
+                  showRir
+                />
                 <SortableContext items={sets.map((set) => set._dndId)}>
                   <div className="space-y-0.5">
                     {sets.map((set, index) => (
                       <SortableSetItem
+                        showRir
                         key={set._dndId}
                         id={set._dndId}
                         set={set}
                         setIndex={index}
                         exerciseIndex={0}
                         onSetChange={(_, sIdx, field, value) =>
-                          handleSetChange(sIdx, field, value ?? undefined)
+                          handleSetChange(
+                            sIdx,
+                            field as Parameters<typeof handleSetChange>[1],
+                            value ?? undefined
+                          )
                         }
                         onDuplicateSet={(_, sIdx) => handleDuplicateSet(sIdx)}
                         onRemoveSet={(_, sIdx) => handleRemoveSet(sIdx)}
@@ -393,8 +406,11 @@ const LogExerciseEntryDialog: React.FC<LogExerciseEntryDialogProps> = ({
           {/* Start Time (optional) */}
           <div className="space-y-1.5 max-w-[280px]">
             <div className="flex items-center justify-between">
-              <Label htmlFor="entryTime" className="text-sm">
-                Start Time (optional)
+              <Label id="entryTime-label" className="text-sm">
+                {t(
+                  'diary.logExerciseEntryDialog.startTimeOptional',
+                  'Start Time (optional)'
+                )}
               </Label>
               <div className="flex items-center gap-1.5">
                 <button
@@ -402,10 +418,13 @@ const LogExerciseEntryDialog: React.FC<LogExerciseEntryDialogProps> = ({
                   onClick={() => setEntryTime('')}
                   disabled={!entryTime}
                   className="inline-flex items-center gap-1 rounded-md border border-input bg-background px-3 py-1 text-sm font-medium text-muted-foreground shadow-sm hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-40 disabled:pointer-events-none"
-                  title="Clear time"
+                  title={t(
+                    'diary.logExerciseEntryDialog.clearTime',
+                    'Clear time'
+                  )}
                 >
                   <X className="h-4 w-4" />
-                  Clear
+                  {t('diary.logExerciseEntryDialog.clear', 'Clear')}
                 </button>
                 <button
                   type="button"
@@ -416,18 +435,21 @@ const LogExerciseEntryDialog: React.FC<LogExerciseEntryDialogProps> = ({
                     );
                   }}
                   className="inline-flex items-center gap-1 rounded-md border border-input bg-background px-3 py-1 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-                  title="Set to current local time"
+                  title={t(
+                    'diary.logExerciseEntryDialog.setToCurrentLocalTime',
+                    'Set to current local time'
+                  )}
                 >
                   <Clock className="h-4 w-4" />
-                  Now
+                  {t('diary.logExerciseEntryDialog.now', 'Now')}
                 </button>
               </div>
             </div>
-            <Input
+            <TimeInput
               id="entryTime"
-              type="time"
+              aria-labelledby="entryTime-label"
               value={entryTime}
-              onChange={(e) => setEntryTime(e.target.value)}
+              onChange={setEntryTime}
               className="text-sm h-9"
             />
           </div>

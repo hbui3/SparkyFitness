@@ -1,27 +1,27 @@
-import { z } from "zod";
-import { isDayString } from "../../utils/timezone.ts";
+import { z } from 'zod';
+import { isDayString } from '../../utils/timezone.ts';
 
 export const coachMealPlanningUnitSchema = z.enum([
-  "g",
-  "ml",
-  "piece",
-  "tsp",
-  "tbsp",
+  'g',
+  'ml',
+  'piece',
+  'tsp',
+  'tbsp',
 ]);
 
 export const coachMealPlanningCategorySchema = z.enum([
-  "chilled",
-  "produce",
-  "pantry",
-  "frozen",
-  "other",
+  'chilled',
+  'produce',
+  'pantry',
+  'frozen',
+  'other',
 ]);
 
-export const coachMealPlanningRetailerSchema = z.enum(["coop", "migros"]);
+export const coachMealPlanningRetailerSchema = z.enum(['coop', 'migros']);
 
 export const coachMealPlanningDaySchema = z
   .string()
-  .refine(isDayString, "Expected a valid YYYY-MM-DD calendar day");
+  .refine(isDayString, 'Expected a valid YYYY-MM-DD calendar day');
 
 export const coachMealPlanningQuantitySchema = z
   .number()
@@ -52,9 +52,9 @@ export const coachPantryItemsSchema = z
       (value.preferred_retailer === null) ===
       (value.preferred_retailer_product_id === null),
     {
-      message: "Preferred retailer and product id must be supplied together",
-      path: ["preferred_retailer_product_id"],
-    },
+      message: 'Preferred retailer and product id must be supplied together',
+      path: ['preferred_retailer_product_id'],
+    }
   );
 
 export type CoachMealPlanningUnit = z.infer<typeof coachMealPlanningUnitSchema>;

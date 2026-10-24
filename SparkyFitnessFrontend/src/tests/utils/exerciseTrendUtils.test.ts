@@ -1,5 +1,7 @@
 import {
+  calculateEstimated1RMTrendData,
   calculateMaxWeightTrendData,
+  calculateVolumeTrendData,
   extractTelemetryActivityEntries,
 } from '@/utils/exerciseTrendUtils';
 import { providerLabel } from '@/utils/activityReportUtil';
@@ -118,6 +120,60 @@ describe('calculateMaxWeightTrendData', () => {
     const trend = calculateMaxWeightTrendData(data, {}, formatDate, parseISO);
 
     expect(trend[0]?.maxWeight).toBe(20);
+  });
+});
+
+describe('bodyweight exercises', () => {
+  // Dips at 80 kg body weight: +20 kg on the belt moves 100 kg, −30 kg of
+  // band assistance moves 50 kg.
+  const dips = (overrides: Partial<ExerciseProgressResponse> = {}) => ({
+    Dips: [
+      makeEntry({
+        category: 'strength',
+        modality: 'bodyweight_reps',
+        body_weight_kg: 80,
+        sets: [
+          { set_number: 1, reps: 8, weight: 20 },
+          { set_number: 2, reps: 10, weight: -30 },
+        ],
+        ...overrides,
+      }),
+    ],
+  });
+
+  it('counts body weight plus the added or assisting weight', () => {
+    const volume = calculateVolumeTrendData(dips(), {}, formatDate, parseISO);
+    expect(volume[0]?.volume).toBe(100 * 8 + 50 * 10);
+
+    const max = calculateMaxWeightTrendData(dips(), {}, formatDate, parseISO);
+    expect(max[0]?.maxWeight).toBe(100);
+
+    const oneRm = calculateEstimated1RMTrendData(
+      dips(),
+      {},
+      formatDate,
+      parseISO
+    );
+    expect(oneRm[0]?.estimated1RM).toBeCloseTo(100 * (1 + 8 / 30));
+  });
+
+  it('falls back to the added weight when body weight is unknown', () => {
+    const max = calculateMaxWeightTrendData(
+      dips({ body_weight_kg: null }),
+      {},
+      formatDate,
+      parseISO
+    );
+    expect(max[0]?.maxWeight).toBe(20);
+
+    const volume = calculateVolumeTrendData(
+      dips({ body_weight_kg: null }),
+      {},
+      formatDate,
+      parseISO
+    );
+    // The assisted set moves nothing we can measure, rather than negative.
+    expect(volume[0]?.volume).toBe(20 * 8);
   });
 });
 

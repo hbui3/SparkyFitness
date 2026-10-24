@@ -1,3 +1,4 @@
+import { isEntryTimeString } from '@workspace/shared';
 import {
   RecordingMethod,
   type NutritionRecord,
@@ -73,13 +74,22 @@ const MEAL_TYPE_INT: Record<string, number> = {
 };
 const mealSlugToInt = (slug: string): number => MEAL_TYPE_INT[slug] ?? 4;
 
-// Food entries carry only a calendar date; HC needs an instant. Anchor each meal
-// to a representative local time so records order sensibly within the day.
+// Default meal start times when an entry does not have a recorded entry_time.
+// Anchor each meal to a representative local time so records order sensibly within the day.
 const MEAL_START_HM: Record<string, [number, number]> = {
   breakfast: [8, 0],
   lunch: [12, 30],
   dinner: [19, 0],
   snacks: [15, 0],
+};
+
+const resolveFoodEntryTime = (entry: FoodEntry): [number, number, number] => {
+  if (entry.entry_time && isEntryTimeString(entry.entry_time)) {
+    const parts = entry.entry_time.split(':').map(Number);
+    return [parts[0], parts[1], parts[2] || 0];
+  }
+  const [hour, minute] = MEAL_START_HM[entry.meal_type] ?? MEAL_START_HM.snacks;
+  return [hour, minute, 0];
 };
 
 // Consumed amount of a per-serving snapshot value — same formula the diary uses
@@ -98,15 +108,20 @@ const scaleConsumed = (
 
 const MINUTE_MS = 60_000;
 
-const localDayInstant = (date: string, hour: number, minute: number): Date => {
+const localDayInstant = (
+  date: string,
+  hour: number,
+  minute: number,
+  second = 0
+): Date => {
   // Construct from parts in local time. `new Date('YYYY-MM-DDT00:00:00')` is parsed
   // as UTC in some JS engines, which shifts the calendar day for non-UTC offsets.
   const [year, month, day] = date.split('-').map(Number);
-  return new Date(year, month - 1, day, hour, minute, 0, 0);
+  return new Date(year, month - 1, day, hour, minute, second, 0);
 };
 
-// A short interval anchored to a representative local meal time. Returns null when
-// the anchor is still in the future — Health Connect rejects records whose time is
+// A short interval anchored to the entry's logged time or a representative local meal time.
+// Returns null when the anchor is still in the future — Health Connect rejects records whose time is
 // after "now" (and one bad record fails the whole insert batch). A snack logged at
 // 13:00 anchors to 15:00, so we defer it; a later sync writes it once 15:00 has
 // passed (the entry's day stays in the writeback window). Past dates never defer.
@@ -114,27 +129,30 @@ const recordInterval = (
   date: string,
   hour: number,
   minute: number,
+  second = 0,
   now: Date = new Date()
 ): { start: string; end: string } | null => {
-  const start = localDayInstant(date, hour, minute);
+  const start = localDayInstant(date, hour, minute, second);
   const end = new Date(start.getTime() + MINUTE_MS);
-  if (end.getTime() > now.getTime()) return null;
-  return { start: start.toISOString(), end: end.toISOString() };
+  if (start.getTime() >= now.getTime()) return null;
+  const boundedEnd = end.getTime() > now.getTime() ? now : end;
+  return { start: start.toISOString(), end: boundedEnd.toISOString() };
 };
 
 /**
  * Map one Sparky food entry to a Health Connect NutritionRecord.
- * Returns null when the entry can't be scaled (serving_size === 0) or its meal-time
+ * Returns null when the entry can't be scaled (serving_size === 0) or its time
  * anchor is still in the future (deferred to a later sync).
  */
 export const foodEntryToNutritionRecord = (
   entry: FoodEntry,
-  clientRecordVersion: number
+  clientRecordVersion: number,
+  now: Date = new Date()
 ): NutritionRecord | null => {
   if (!entry.serving_size) return null; // 0 / null / undefined — can't scale
 
-  const [hour, minute] = MEAL_START_HM[entry.meal_type] ?? MEAL_START_HM.snacks;
-  const interval = recordInterval(entry.entry_date, hour, minute);
+  const [hour, minute, second] = resolveFoodEntryTime(entry);
+  const interval = recordInterval(entry.entry_date, hour, minute, second, now);
   if (!interval) return null; // anchor still in the future — defer to a later sync
 
   // Built as a loose record because nutrient columns are assigned by dynamic key.
@@ -188,11 +206,12 @@ export const foodEntryToNutritionRecord = (
 export const waterMlToHydrationRecord = (
   entryDate: string,
   ml: number,
-  clientRecordVersion: number
+  clientRecordVersion: number,
+  now: Date = new Date()
 ): HydrationRecord | null => {
   if (ml <= 0) return null;
 
-  const interval = recordInterval(entryDate, 12, 0); // Hydration is an interval record
+  const interval = recordInterval(entryDate, 12, 0, 0, now); // Hydration is an interval record
   if (!interval) return null; // noon anchor still in the future — defer to a later sync
 
   return {

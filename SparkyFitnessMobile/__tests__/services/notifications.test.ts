@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
-import { createAudioPlayer } from 'expo-audio';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { Alert, AppState, Platform } from 'react-native';
 import Toast from 'react-native-toast-message';
 import {
@@ -16,11 +16,15 @@ import {
   maybePromptForExactAlarmPermission,
   scheduleFastGoalNotification,
   scheduleRestNotification,
+  scheduleWaterReminderNotifications,
   setNotificationsEnabled,
   setRestTimerNotificationsEnabled,
 } from '../../src/services/notifications';
 import { ExactAlarmBridge } from '../../src/services/ExactAlarmBridge';
-import { __resetSoundsForTests } from '../../src/services/sounds';
+import {
+  __resetSoundsForTests,
+  setRestKeepAlive,
+} from '../../src/services/sounds';
 import { useAppPreferencesStore } from '../../src/stores/appPreferencesStore';
 import i18n, { initializeI18n } from '../../src/localization/i18n';
 
@@ -77,6 +81,13 @@ const mockDismiss =
   >;
 const mockToastShow = Toast.show as jest.MockedFunction<typeof Toast.show>;
 
+function setAppState(state: string): void {
+  Object.defineProperty(AppState, 'currentState', {
+    get: () => state,
+    configurable: true,
+  });
+}
+
 describe('notifications service', () => {
   beforeEach(async () => {
     await initializeI18n('en');
@@ -96,6 +107,7 @@ describe('notifications service', () => {
     mockGetPresented.mockReset().mockResolvedValue([]);
     mockDismiss.mockReset().mockResolvedValue(undefined as any);
     mockToastShow.mockClear();
+    setAppState('active');
     Object.defineProperty(Platform, 'OS', {
       get: () => 'ios',
       configurable: true,
@@ -170,6 +182,37 @@ describe('notifications service', () => {
       );
     });
 
+    it('creates a dedicated hydration Android channel', async () => {
+      Object.defineProperty(Platform, 'OS', {
+        get: () => 'android',
+        configurable: true,
+      });
+      await initNotifications();
+      expect(mockSetChannel).toHaveBeenCalledWith(
+        'hydration',
+        expect.objectContaining({ name: 'Hydration reminders' })
+      );
+    });
+
+    it('creates a dedicated mood check-in Android channel before medication reminders', async () => {
+      Object.defineProperty(Platform, 'OS', {
+        get: () => 'android',
+        configurable: true,
+      });
+      await initNotifications();
+      const ids = mockSetChannel.mock.calls.map((call) => call[0]);
+      expect(mockSetChannel).toHaveBeenCalledWith(
+        'mood-checkin',
+        expect.objectContaining({
+          name: 'Mood check-ins',
+          importance: Notifications.AndroidImportance.HIGH,
+        })
+      );
+      expect(ids.indexOf('mood-checkin')).toBeLessThan(
+        ids.indexOf('medication-reminders')
+      );
+    });
+
     it('registers the rest-complete category with a background Complete Set action', async () => {
       await initNotifications();
       expect(mockSetCategory).toHaveBeenCalledWith('rest-complete', [
@@ -197,6 +240,17 @@ describe('notifications service', () => {
         request: { content: { categoryIdentifier } },
       }) as Notifications.Notification;
 
+    it('shows a banner for mood check-in reminders', async () => {
+      const handler = await getHandler();
+      const result = await handler({
+        request: {
+          content: { categoryIdentifier: null, data: { kind: 'mood-checkin' } },
+        },
+      } as unknown as Notifications.Notification);
+      expect(result.shouldShowBanner).toBe(true);
+      expect(result.shouldShowList).toBe(true);
+    });
+
     it('mutes the rest ping sound while the rest chime is enabled', async () => {
       const handler = await getHandler();
       const result = await handler(notificationWith('rest-complete'));
@@ -208,6 +262,49 @@ describe('notifications service', () => {
       const handler = await getHandler();
       const result = await handler(notificationWith('rest-complete'));
       expect(result.shouldPlaySound).toBe(true);
+    });
+
+    it('hides the rest ping while the app is on screen', async () => {
+      const handler = await getHandler();
+      const result = await handler(notificationWith('rest-complete'));
+      expect(result.shouldShowBanner).toBe(false);
+      expect(result.shouldShowList).toBe(false);
+    });
+
+    it('sounds and shows the rest ping when the app is only inactive', async () => {
+      // The chime is foreground-only, so here the ping is the only cue left.
+      setAppState('inactive');
+      const handler = await getHandler();
+      const result = await handler(notificationWith('rest-complete'));
+      expect(result.shouldPlaySound).toBe(true);
+      expect(result.shouldShowBanner).toBe(true);
+      expect(result.shouldShowList).toBe(true);
+    });
+
+    it('mutes the ping off screen when the iOS background chime owns the cue', async () => {
+      useAppPreferencesStore.getState().setRestChimeThroughSilent(true);
+      setAppState('inactive');
+      const handler = await getHandler();
+      const result = await handler(notificationWith('rest-complete'));
+      expect(result.shouldPlaySound).toBe(false);
+      expect(result.shouldShowBanner).toBe(true);
+    });
+
+    it('keeps the ping audible off screen when the background chime could not start', async () => {
+      useAppPreferencesStore.getState().setRestChimeThroughSilent(true);
+      (setAudioModeAsync as jest.Mock).mockRejectedValueOnce(
+        new Error('background audio rejected')
+      );
+      try {
+        setRestKeepAlive(true);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        setAppState('inactive');
+        const handler = await getHandler();
+        const result = await handler(notificationWith('rest-complete'));
+        expect(result.shouldPlaySound).toBe(true);
+      } finally {
+        __resetSoundsForTests();
+      }
     });
 
     it('keeps sound for non-rest notifications regardless of the chime preference', async () => {
@@ -265,7 +362,9 @@ describe('notifications service', () => {
         content: expect.objectContaining({
           title: 'Rest complete',
           body: 'Bench Press',
+          sound: true,
           categoryIdentifier: 'rest-complete',
+          interruptionLevel: 'timeSensitive',
         }),
         trigger: expect.objectContaining({
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -273,6 +372,34 @@ describe('notifications service', () => {
           channelId: 'workout-timer',
         }),
       });
+    });
+
+    it('schedules a silent ping when the iOS background chime is on', async () => {
+      mockGetPerms.mockResolvedValue({ status: 'granted' } as any);
+      mockSchedule.mockResolvedValue('mock-id' as any);
+      useAppPreferencesStore.getState().setRestChimeThroughSilent(true);
+      await scheduleRestNotification('Bench Press', 60);
+      expect(mockSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.objectContaining({ sound: false }),
+        })
+      );
+    });
+
+    it('keeps the ping audible when iOS rejects the background audio mode', async () => {
+      mockGetPerms.mockResolvedValue({ status: 'granted' } as any);
+      mockSchedule.mockResolvedValue('mock-id' as any);
+      useAppPreferencesStore.getState().setRestChimeThroughSilent(true);
+      (setAudioModeAsync as jest.Mock).mockRejectedValueOnce(
+        new Error('background audio rejected')
+      );
+      setRestKeepAlive(true);
+      await scheduleRestNotification('Bench Press', 60);
+      expect(mockSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.objectContaining({ sound: true }),
+        })
+      );
     });
 
     it('sweeps stale delivered rest pings, leaving other notifications alone', async () => {
@@ -343,6 +470,87 @@ describe('notifications service', () => {
 
     it('returns null on an invalid date string', async () => {
       expect(await scheduleFastGoalNotification('not-a-date')).toBeNull();
+      expect(mockSchedule).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('scheduleWaterReminderNotifications', () => {
+    const inHours = (hours: number) =>
+      new Date(Date.now() + hours * 60 * 60 * 1000);
+
+    beforeEach(() => {
+      useAppPreferencesStore.getState().setWaterReminderEnabled(true);
+    });
+
+    it('schedules each future time as a DATE notification on the hydration channel', async () => {
+      mockSchedule
+        .mockResolvedValueOnce('water-1' as any)
+        .mockResolvedValueOnce('water-2' as any);
+
+      const ids = await scheduleWaterReminderNotifications([
+        inHours(1),
+        inHours(3),
+      ]);
+
+      expect(ids).toEqual(['water-1', 'water-2']);
+      expect(mockSchedule).toHaveBeenCalledTimes(2);
+      expect(mockSchedule).toHaveBeenCalledWith({
+        content: expect.objectContaining({
+          title: 'Time to hydrate 💧',
+          body: "You haven't logged any water in a while.",
+        }),
+        trigger: expect.objectContaining({
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          channelId: 'hydration',
+        }),
+      });
+    });
+
+    it('skips times that are already in the past', async () => {
+      const ids = await scheduleWaterReminderNotifications([
+        new Date(Date.now() - 60 * 1000),
+        inHours(1),
+      ]);
+      expect(ids).toEqual(['notif-id']);
+      expect(mockSchedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels what it scheduled when a later reminder fails', async () => {
+      mockSchedule
+        .mockResolvedValueOnce('water-1' as any)
+        .mockRejectedValueOnce(new Error('scheduling unavailable'));
+
+      const ids = await scheduleWaterReminderNotifications([
+        inHours(1),
+        inHours(2),
+      ]);
+
+      expect(ids).toEqual([]);
+      expect(mockCancel).toHaveBeenCalledWith('water-1');
+    });
+
+    it('schedules nothing while the water reminder toggle is off', async () => {
+      useAppPreferencesStore.getState().setWaterReminderEnabled(false);
+      expect(await scheduleWaterReminderNotifications([inHours(1)])).toEqual(
+        []
+      );
+      expect(mockSchedule).not.toHaveBeenCalled();
+    });
+
+    it('schedules nothing while the master notifications toggle is off', async () => {
+      useAppPreferencesStore.getState().setNotificationsEnabled(false);
+      expect(await scheduleWaterReminderNotifications([inHours(1)])).toEqual(
+        []
+      );
+      expect(mockSchedule).not.toHaveBeenCalled();
+    });
+
+    it('never prompts and schedules nothing without OS permission', async () => {
+      mockGetPerms.mockResolvedValue({ status: 'undetermined' } as any);
+      expect(await scheduleWaterReminderNotifications([inHours(1)])).toEqual(
+        []
+      );
+      expect(mockRequestPerms).not.toHaveBeenCalled();
       expect(mockSchedule).not.toHaveBeenCalled();
     });
   });

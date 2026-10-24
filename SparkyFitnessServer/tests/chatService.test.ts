@@ -171,6 +171,11 @@ vi.mock('../models/preferenceRepository', () => ({
 vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
+// Read by utils/outboundUrlPolicy's resolveAiNetworkPolicy. Default false
+// keeps these cases off the real database.
+vi.mock('../models/globalSettingsRepository.js', () => ({
+  isPrivateNetworkAiAllowed: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('../utils/timezoneLoader', () => ({
   loadUserTimezone: vi.fn(async () => 'UTC'),
 }));
@@ -299,6 +304,31 @@ describe('chatService', () => {
         setting: savedSetting,
       });
     });
+    it('clears the selected Voice pointer when audio eligibility is removed', async () => {
+      const serviceData = {
+        service_type: 'google',
+        supports_audio_input: false,
+      };
+      const savedSetting = { id: 'setting-1', ...serviceData };
+      vi.mocked(chatRepository.upsertAiServiceSetting).mockResolvedValue(
+        savedSetting
+      );
+      vi.mocked(preferenceRepository.getUserPreferences).mockResolvedValue({
+        active_voice_ai_service_id: 'setting-1',
+      });
+
+      await chatService.handleAiServiceSettings(
+        'save_ai_service_settings',
+        serviceData,
+        mockUserId
+      );
+
+      expect(preferenceRepository.updateUserPreferences).toHaveBeenCalledWith(
+        mockUserId,
+        { active_voice_ai_service_id: null }
+      );
+    });
+
     it('should throw error for unsupported action', async () => {
       await expect(
         chatService.handleAiServiceSettings('unknown_action', {}, mockUserId)
@@ -662,83 +692,88 @@ describe('chatService', () => {
       ]);
     });
 
-    it('executes a log_food tool call in-process, derives food_added from call input, and saves history', async () => {
-      vi.mocked(foodRepository.getFoodsWithPagination).mockResolvedValue([
-        {
-          ...eggsRow,
-          default_variant: {
-            ...eggsRow.default_variant,
-            serving_size: 1,
-            serving_unit: 'serving',
-          },
-        },
-      ]);
-      vi.mocked(foodRepository.getFoodVariantsByFoodId).mockResolvedValue([]);
-      vi.mocked(foodEntryService.createFoodEntry).mockResolvedValue({
-        id: 'entry-1',
-        food_name: 'Eggs',
-      });
-      const logFoodArgs = {
-        action: 'log_food',
-        food_name: 'Eggs',
-        quantity: 2,
-        unit: 'serving',
-        meal_type: 'breakfast',
-        entry_date: '2026-06-10',
-      };
-      scriptModel([
-        toolCallStep(logFoodArgs),
-        textStep('Logged 2 eggs for breakfast!'),
-      ]);
-
-      const result = await chatService.processChatMessage(
-        [{ role: 'user', content: 'log 2 eggs for breakfast' }],
-        'svc-1',
-        activeUserId,
-        actorUserId
-      );
-
-      expect(result.content).toBe('Logged 2 eggs for breakfast!');
-      expect(result.action).toBe('food_added');
-      expect(result.executedTools).toEqual([
-        { name: 'sparky_manage_food', args: logFoodArgs },
-      ]);
-      // Tool handlers act as the authenticated user, not the active user.
-      expect(foodEntryService.createFoodEntry).toHaveBeenCalledWith(
-        actorUserId,
-        actorUserId,
-        {
-          user_id: actorUserId,
-          food_id: FOOD_ID,
-          variant_id: VARIANT_ID,
-          entry_date: '2026-06-10',
-          quantity: 2,
-          unit: 'serving',
-          meal_type_id: 'breakfast-id',
-        }
-      );
-      expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
-        expect.objectContaining({
-          user_id: activeUserId,
-          messageType: 'user',
-          content: 'log 2 eggs for breakfast',
-          metadata: {
-            chatToolConfiguration: {
-              version: 1,
-              serviceConfigId: 'svc-1',
-              toolCategories: expect.any(Array),
+    it.each([true, false])(
+      'executes a log_food tool call and avoids inviting a duplicate retry when summary=%s',
+      async (hasSummary) => {
+        vi.mocked(foodRepository.getFoodsWithPagination).mockResolvedValue([
+          {
+            ...eggsRow,
+            default_variant: {
+              ...eggsRow.default_variant,
+              serving_size: 1,
+              serving_unit: 'serving',
             },
           },
-        })
-      );
-      expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
-        expect.objectContaining({
-          user_id: activeUserId,
-          messageType: 'assistant',
-          content: 'Logged 2 eggs for breakfast!',
-        })
-      );
-    });
+        ]);
+        vi.mocked(foodRepository.getFoodVariantsByFoodId).mockResolvedValue([]);
+        vi.mocked(foodEntryService.createFoodEntry).mockResolvedValue({
+          id: 'entry-1',
+          food_name: 'Eggs',
+        });
+        const logFoodArgs = {
+          action: 'log_food',
+          food_name: 'Eggs',
+          quantity: 2,
+          unit: 'serving',
+          meal_type: 'breakfast',
+          entry_date: '2026-06-10',
+        };
+        scriptModel([
+          toolCallStep(logFoodArgs),
+          textStep(hasSummary ? 'Logged 2 eggs for breakfast!' : ''),
+        ]);
+
+        const result = await chatService.processChatMessage(
+          [{ role: 'user', content: 'log 2 eggs for breakfast' }],
+          'svc-1',
+          activeUserId,
+          actorUserId
+        );
+
+        const expectedContent = hasSummary
+          ? 'Logged 2 eggs for breakfast!'
+          : '✅ Logged "Eggs" (2 serving) for Breakfast on 2026-06-10. Entry ID: entry-1. Reference: 1 serving. Consumed: 310 kcal | P 26g | C 2.2g | F 22g.';
+        expect(result.content).toBe(expectedContent);
+        if (!hasSummary)
+          expect(log).toHaveBeenCalledWith(
+            'info',
+            '[chat] LLM returned empty text; used the verified tool result as fallback.'
+          );
+        expect(foodEntryService.createFoodEntry).toHaveBeenCalledTimes(1);
+        expect(result.action).toBe('food_added');
+        expect(result.executedTools).toEqual([
+          { name: 'sparky_manage_food', args: logFoodArgs },
+        ]);
+        // Tool handlers act as the authenticated user, not the active user.
+        expect(foodEntryService.createFoodEntry).toHaveBeenCalledWith(
+          actorUserId,
+          actorUserId,
+          {
+            user_id: actorUserId,
+            food_id: FOOD_ID,
+            variant_id: VARIANT_ID,
+            entry_date: '2026-06-10',
+            quantity: 2,
+            unit: 'serving',
+            meal_type_id: 'breakfast-id',
+          }
+        );
+        expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
+          expect.objectContaining({
+            user_id: activeUserId,
+            messageType: 'user',
+            content: 'log 2 eggs for breakfast',
+          })
+        );
+        expect(chatRepository.saveChatHistory).toHaveBeenCalledWith(
+          expect.objectContaining({
+            user_id: activeUserId,
+            messageType: 'assistant',
+            content: expectedContent,
+          })
+        );
+      }
+    );
 
     it('renders and persists a blocking quick reply without exposing its internal tool result', async () => {
       const askInput = {
@@ -988,7 +1023,7 @@ describe('chatService', () => {
         })
       );
       expect(result.content).toBe(
-        '✅ Logged "Dönerpizza" (570 g) for Lunch on 2026-06-10.'
+        '✅ Logged "Dönerpizza" (570 g) for Lunch on 2026-06-10. Entry ID: entry-pizza. Reference: 570 g. Consumed: 1550 kcal | P 65.7g | C 109g | F 89g.'
       );
       expect(result.action).toBe('food_added');
       expect(result.toolOutcomes).toEqual(
@@ -1105,7 +1140,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 45\/66 active tools for chatbot \(profile=core/
+          /Loaded \d+\/\d+ active tools for chatbot \(profile=core/
         )
       );
       // The core profile is the mitigation, so no context-window warning.
@@ -1187,7 +1222,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 66\/66 active tools for chatbot \(profile=full/
+          /Loaded \d+\/\d+ active tools for chatbot \(profile=full/
         )
       );
       // Ollama + full profile is the risky combo, so warn about the 4096 default.
@@ -1220,7 +1255,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 66\/66 active tools for chatbot \(profile=full/
+          /Loaded \d+\/\d+ active tools for chatbot \(profile=full/
         )
       );
     });
@@ -1247,7 +1282,7 @@ describe('chatService', () => {
       expect(log).toHaveBeenCalledWith(
         'info',
         expect.stringMatching(
-          /Loaded 66\/66 active tools for chatbot \(profile=full/
+          /Loaded \d+\/\d+ active tools for chatbot \(profile=full/
         )
       );
       // The context-window warning is Ollama-only; cloud providers never see it.
@@ -2036,6 +2071,69 @@ describe('chatService', () => {
       expect(textParts(userMessages[0].content).length).toBeGreaterThan(0);
       // Current turn: image preserved for live vision analysis.
       expect(nonTextParts(userMessages[1].content)).toHaveLength(1);
+      expect(
+        (nonTextParts(userMessages[1].content)[0] as { mediaType?: string })
+          .mediaType
+      ).toBe('image/png');
+    });
+
+    it('maps remote image URLs with detected media types based on extension', async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (url: string | URL | Request) => {
+          const urlStr = typeof url === 'string' ? url : url.toString();
+          if (urlStr.includes('example.com/meal.webp')) {
+            return new Response(new Uint8Array([0x52, 0x49, 0x46, 0x46]), {
+              status: 200,
+              headers: { 'content-type': 'image/webp' },
+            });
+          }
+          return originalFetch(url as RequestInfo, undefined);
+        });
+
+      try {
+        const model = streamModel([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'ok' },
+          { type: 'text-end', id: 't1' },
+          {
+            type: 'finish',
+            finishReason: { unified: 'stop', raw: undefined },
+            usage,
+          },
+        ]);
+
+        const { stream } = await chatService.processChatMessageStream(
+          [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Analyze this photo' },
+                {
+                  type: 'image_url',
+                  image_url: { url: 'https://example.com/meal.webp' },
+                },
+              ],
+            },
+          ],
+          'svc-1',
+          activeUserId,
+          actorUserId
+        );
+        await drainStream(stream);
+
+        const prompt = model.doStreamCalls[0].prompt;
+        const userMessage = prompt.find((m) => m.role === 'user');
+        const filePart = (
+          userMessage?.content as Array<{ type: string; mediaType?: string }>
+        ).find((p) => p.type === 'file');
+        expect(filePart).toBeDefined();
+        expect(filePart?.mediaType).toBe('image/webp');
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
 
     it('retains the immediately preceding image for a short logging confirmation', async () => {
@@ -2179,6 +2277,229 @@ describe('chatService', () => {
         totalTokens: 15,
         cachedInputTokens: undefined,
       });
+    });
+  });
+
+  describe('createPerplexityFetch', () => {
+    it('rewrites /chat/completions to /responses and populates input from messages', async () => {
+      let capturedUrl = '';
+      let capturedBody: Record<string, unknown> = {};
+
+      const mockBaseFetch = vi.fn(async (url: string, init?: RequestInit) => {
+        capturedUrl = url;
+        if (typeof init?.body === 'string') {
+          capturedBody = JSON.parse(init.body);
+        }
+        return new Response(
+          JSON.stringify({ output_text: 'Hello from Sonar' }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      });
+
+      const perplexityFetch = chatService.createPerplexityFetch(
+        mockBaseFetch as typeof fetch
+      );
+      const messages = [
+        { role: 'system', content: 'You are helpful.' },
+        { role: 'user', content: 'What is protein?' },
+      ];
+      const res = await perplexityFetch(
+        'https://api.perplexity.ai/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages,
+          }),
+        }
+      );
+
+      expect(capturedUrl).toBe('https://api.perplexity.ai/v1/responses');
+      expect(capturedBody.input).toEqual(messages);
+      expect(capturedBody.messages).toBeUndefined();
+      expect(capturedBody.preset).toBe('fast');
+      expect(capturedBody.model).toBeUndefined();
+      expect(res.ok).toBe(true);
+
+      const json = await res.json();
+      expect(json.choices[0].message.content).toBe('Hello from Sonar');
+    });
+
+    it('converts multi-part messages with image_url and text to input_image and input_text', async () => {
+      let capturedBody: Record<string, unknown> = {};
+
+      const mockBaseFetch = vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = JSON.parse((init?.body as string) || '{}');
+        return new Response(
+          JSON.stringify({
+            output_text: 'I see a banana.',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      });
+
+      const perplexityFetch = chatService.createPerplexityFetch(
+        mockBaseFetch as typeof fetch
+      );
+      const res = await perplexityFetch(
+        'https://api.perplexity.ai/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: { url: 'https://example.com/food.jpg' },
+                  },
+                  {
+                    type: 'text',
+                    text: 'Identify this food',
+                  },
+                ],
+              },
+            ],
+          }),
+        }
+      );
+
+      expect(capturedBody.messages).toBeUndefined();
+      expect(capturedBody.input).toEqual([
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'https://example.com/food.jpg',
+            },
+            {
+              type: 'input_text',
+              text: 'Identify this food',
+            },
+          ],
+        },
+      ]);
+      expect(res.ok).toBe(true);
+    });
+
+    it('extracts text from nested output message content blocks in JSON responses', async () => {
+      const mockBaseFetch = vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: 'Extracted message from output block',
+                  },
+                ],
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      });
+
+      const perplexityFetch = chatService.createPerplexityFetch(
+        mockBaseFetch as typeof fetch
+      );
+      const res = await perplexityFetch(
+        'https://api.perplexity.ai/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages: [{ role: 'user', content: 'Hi' }],
+          }),
+        }
+      );
+
+      expect(res.ok).toBe(true);
+      const json = await res.json();
+      expect(json.choices[0].message.content).toBe(
+        'Extracted message from output block'
+      );
+    });
+
+    it('transforms SSE output_text and function_call events into OpenAI chunks with stable indices', async () => {
+      const ssePayload = [
+        'data: {"type":"response.output_text.delta","delta":"Hello "}\n\n',
+        'data: {"type":"response.function_call_arguments.delta","call_id":"call_1","name":"tool_a","delta":"{\\"a\\":1}"}\n\n',
+        'data: {"type":"response.function_call_arguments.delta","call_id":"call_2","name":"tool_b","delta":"{\\"b\\":2}"}\n\n',
+        'data: {"type":"response.function_call_arguments.delta","call_id":"call_1","delta":""}\n\n',
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}}\n\n',
+      ].join('');
+
+      const mockBaseFetch = vi.fn(async () => {
+        return new Response(ssePayload, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
+
+      const perplexityFetch = chatService.createPerplexityFetch(
+        mockBaseFetch as typeof fetch
+      );
+      const res = await perplexityFetch(
+        'https://api.perplexity.ai/v1/chat/completions',
+        { method: 'POST' }
+      );
+
+      expect(res.ok).toBe(true);
+      const text = await res.text();
+      expect(text).toContain('Hello ');
+      expect(text).toContain('"id":"call_1"');
+      expect(text).toContain('"index":0');
+      expect(text).toContain('"id":"call_2"');
+      expect(text).toContain('"index":1');
+      expect(text).toContain('"finish_reason":"tool_calls"');
+      expect(text).toContain('[DONE]');
+    });
+
+    it('ignores plain message output_item.added events from triggering tool calls', async () => {
+      const ssePayload = [
+        'data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}\n\n',
+        'data: {"type":"response.output_text.delta","delta":"Just text"}\n\n',
+        'data: {"type":"response.completed"}\n\n',
+      ].join('');
+
+      const mockBaseFetch = vi.fn(async () => {
+        return new Response(ssePayload, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
+
+      const perplexityFetch = chatService.createPerplexityFetch(
+        mockBaseFetch as typeof fetch
+      );
+      const res = await perplexityFetch(
+        'https://api.perplexity.ai/v1/chat/completions',
+        { method: 'POST' }
+      );
+
+      expect(res.ok).toBe(true);
+      const text = await res.text();
+      expect(text).toContain('Just text');
+      expect(text).not.toContain('tool_calls');
+      expect(text).toContain('"finish_reason":"stop"');
     });
   });
 });

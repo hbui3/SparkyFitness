@@ -9,6 +9,10 @@ import {
   setCachedSession,
 } from '../utils/apiKeySessionCache.js';
 import { bridgeBearerAuthHeader } from '../utils/bearerAuthBridge.js';
+import {
+  isApiKeyReadOnly,
+  isRequestAllowedForReadOnlyKey,
+} from '../utils/apiKeyScope.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const authenticate = async (req: any, res: any, next: any) => {
   //log("debug", `authenticate middleware: req.path = ${req.path}, req.headers.cookie = ${req.headers.cookie}`);
@@ -36,18 +40,45 @@ const authenticate = async (req: any, res: any, next: any) => {
     // 100-req/60s bucket under normal mobile/SPA traffic (issue #1302).
     // Session cookie auth is unaffected and never cached here.
     let session: Awaited<ReturnType<typeof auth.api.getSession>> | null = null;
+    // The key's scope is cached with its session, so a read-only key costs one
+    // permissions lookup per cache window rather than one per request.
+    let apiKeyReadOnly = false;
     if (apiKeyToken) {
-      session = getCachedSession(apiKeyToken) as typeof session;
+      const cached = getCachedSession(apiKeyToken) as {
+        session: typeof session;
+        readOnly: boolean;
+      } | null;
+      if (cached) {
+        session = cached.session;
+        apiKeyReadOnly = cached.readOnly;
+      }
     }
     if (!session) {
       session = await auth.api.getSession({
         headers: req.headers,
       });
       if (session && session.user && apiKeyToken) {
-        setCachedSession(apiKeyToken, session);
+        apiKeyReadOnly = await isApiKeyReadOnly(
+          session.user.id,
+          session.session?.id
+        );
+        setCachedSession(apiKeyToken, { session, readOnly: apiKeyReadOnly });
       }
     }
     if (session && session.user) {
+      // Read-only API keys (issue #2678) may only read. The check sits here so
+      // it covers every route behind `authenticate`, including /mcp.
+      if (
+        apiKeyReadOnly &&
+        !isRequestAllowedForReadOnlyKey(req.method, req.originalUrl ?? req.path)
+      ) {
+        log(
+          'warn',
+          `Authentication: Read-only API key refused for ${req.method} ${req.path}`
+        );
+        return res.status(403).json({ error: 'This API key is read-only.' });
+      }
+      req.apiKeyReadOnly = apiKeyReadOnly;
       req.authenticatedUserId = session.user.id;
       req.originalUserId = req.authenticatedUserId;
       req.user = session.user; // Full user object (includes role)

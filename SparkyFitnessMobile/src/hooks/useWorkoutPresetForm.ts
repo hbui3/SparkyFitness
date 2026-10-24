@@ -1,7 +1,11 @@
 import { useCallback, useReducer, useRef } from 'react';
-import type { PresetSessionResponse } from '@workspace/shared';
-import { distanceFromKm, weightFromKg } from '../utils/unitConversions';
-import type { WorkoutDraftExercise } from '../types/drafts';
+import type { PresetSessionResponse, WorkoutFormat } from '@workspace/shared';
+import { weightFromKg } from '../utils/unitConversions';
+import {
+  resolveSnapshotModality,
+  setDistanceFromKm,
+} from '../utils/workoutSession';
+import type { WorkoutDraftExercise, DraftSetType } from '../types/drafts';
 import type { WorkoutPreset } from '../types/workoutPresets';
 import {
   draftExercisesReducer,
@@ -13,6 +17,8 @@ import {
 export interface PresetDraft {
   name: string;
   description: string;
+  workoutFormat: WorkoutFormat;
+  timeCapSeconds: number | null;
   exercises: WorkoutDraftExercise[];
 }
 
@@ -20,6 +26,8 @@ function createEmptyDraft(): PresetDraft {
   return {
     name: '',
     description: '',
+    workoutFormat: 'standard',
+    timeCapSeconds: null,
     exercises: [],
   };
 }
@@ -33,6 +41,8 @@ type PresetFormAction =
   | DraftExercisesAction
   | { type: 'SET_NAME'; name: string }
   | { type: 'SET_DESCRIPTION'; description: string }
+  | { type: 'SET_WORKOUT_FORMAT'; workoutFormat: WorkoutFormat }
+  | { type: 'SET_TIME_CAP_SECONDS'; timeCapSeconds: number | null }
   | {
       type: 'POPULATE_FROM_PRESET';
       preset: WorkoutPreset;
@@ -59,10 +69,18 @@ export function presetFormReducer(
     case 'SET_DESCRIPTION':
       return { ...state, description: action.description };
 
+    case 'SET_WORKOUT_FORMAT':
+      return { ...state, workoutFormat: action.workoutFormat };
+
+    case 'SET_TIME_CAP_SECONDS':
+      return { ...state, timeCapSeconds: action.timeCapSeconds };
+
     case 'POPULATE_FROM_PRESET':
       return {
         name: action.preset.name,
         description: action.preset.description ?? '',
+        workoutFormat: action.preset.workout_format ?? 'standard',
+        timeCapSeconds: action.preset.time_cap_seconds ?? null,
         exercises: action.preset.exercises.map((exercise, exerciseIdx) => ({
           clientId: action.clientIds[exerciseIdx].exerciseClientId,
           exerciseId: exercise.exercise_id,
@@ -70,7 +88,15 @@ export function presetFormReducer(
           exerciseCategory: exercise.category ?? null,
           exerciseModality: exercise.modality ?? null,
           images: exercise.image_url ? [exercise.image_url] : [],
+          exerciseEquipment: exercise.equipment ?? null,
           supersetGroup: exercise.superset_group ?? null,
+          // Progression & Equipment Fields
+          progressionMode: exercise.progression_mode ?? 'rep_goal',
+          repGoal: exercise.rep_goal ?? null,
+          incrementType: exercise.increment_type ?? 'weight',
+          incrementValue: exercise.increment_value ?? 5,
+          equipmentBrand: exercise.equipment_brand ?? null,
+          rampIncrement: exercise.ramp_increment ?? null,
           sets: exercise.sets.map((set, setIdx) => ({
             clientId: action.clientIds[exerciseIdx].setClientIds[setIdx],
             restTime: set.rest_time,
@@ -87,13 +113,18 @@ export function presetFormReducer(
               set.distance != null
                 ? String(
                     parseFloat(
-                      distanceFromKm(set.distance, action.distanceUnit).toFixed(
-                        2
-                      )
+                      setDistanceFromKm(
+                        set.distance,
+                        action.distanceUnit,
+                        resolveSnapshotModality({
+                          modality: exercise.modality,
+                          category: exercise.category,
+                        })
+                      ).toFixed(2)
                     )
                   )
                 : '',
-            setType: set.set_type ?? undefined,
+            setType: (set.set_type as DraftSetType) ?? undefined,
             duration: set.duration,
             notes: set.notes,
           })),
@@ -108,6 +139,8 @@ export function presetFormReducer(
       return {
         name: action.session.name,
         description: action.session.description ?? '',
+        workoutFormat: 'standard',
+        timeCapSeconds: null,
         exercises: action.session.exercises.map((exercise, exerciseIdx) => ({
           clientId: action.clientIds[exerciseIdx].exerciseClientId,
           exerciseId: exercise.exercise_id,
@@ -115,11 +148,13 @@ export function presetFormReducer(
           exerciseCategory: exercise.exercise_snapshot?.category ?? null,
           exerciseModality: exercise.exercise_snapshot?.modality ?? null,
           images: exercise.exercise_snapshot?.images ?? [],
+          exerciseEquipment: exercise.exercise_snapshot?.equipment ?? null,
+          snapshot: exercise.exercise_snapshot ?? null,
           supersetGroup: exercise.superset_group ?? null,
           sets: exercise.sets.map((set, setIdx) => ({
             clientId: action.clientIds[exerciseIdx].setClientIds[setIdx],
             restTime: set.rest_time,
-            setType: set.set_type ?? undefined,
+            setType: (set.set_type as DraftSetType) ?? undefined,
             duration: set.duration,
             notes: set.notes,
             weight:
@@ -135,9 +170,11 @@ export function presetFormReducer(
               set.distance != null
                 ? String(
                     parseFloat(
-                      distanceFromKm(set.distance, action.distanceUnit).toFixed(
-                        2
-                      )
+                      setDistanceFromKm(
+                        set.distance,
+                        action.distanceUnit,
+                        resolveSnapshotModality(exercise.exercise_snapshot)
+                      ).toFixed(2)
                     )
                   )
                 : '',
@@ -169,10 +206,12 @@ export function useWorkoutPresetForm() {
     replaceExercise,
     duplicateExercise,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,
     setExerciseRest,
+    setExerciseProgression,
     supersetWith,
     ungroupExercise,
     reorderExercises,
@@ -186,6 +225,14 @@ export function useWorkoutPresetForm() {
 
   const setDescription = useCallback((description: string) => {
     dispatch({ type: 'SET_DESCRIPTION', description });
+  }, []);
+
+  const setWorkoutFormat = useCallback((workoutFormat: WorkoutFormat) => {
+    dispatch({ type: 'SET_WORKOUT_FORMAT', workoutFormat });
+  }, []);
+
+  const setTimeCapSeconds = useCallback((timeCapSeconds: number | null) => {
+    dispatch({ type: 'SET_TIME_CAP_SECONDS', timeCapSeconds });
   }, []);
 
   const populateFromPreset = useCallback(
@@ -209,7 +256,7 @@ export function useWorkoutPresetForm() {
       });
       return clientIds.map((c) => c.exerciseClientId);
     },
-    [exercisesModifiedRef]
+    [exercisesModifiedRef, dispatch]
   );
 
   const populateFromSession = useCallback(
@@ -237,22 +284,26 @@ export function useWorkoutPresetForm() {
         clientIds,
       });
     },
-    [exercisesModifiedRef]
+    [exercisesModifiedRef, dispatch]
   );
 
   return {
     state,
     setName,
     setDescription,
+    setWorkoutFormat,
+    setTimeCapSeconds,
     addExercise,
     removeExercise,
     replaceExercise,
     duplicateExercise,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,
     setExerciseRest,
+    setExerciseProgression,
     supersetWith,
     ungroupExercise,
     reorderExercises,

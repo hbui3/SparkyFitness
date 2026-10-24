@@ -108,6 +108,49 @@ describe('checkPermissionMiddleware', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('checks the read-only symptoms permission for GET and the write one otherwise', async () => {
+    mockedCanAccess.mockResolvedValue(true);
+    const mw = checkPermissionMiddleware('symptoms');
+    const base = {
+      query: {},
+      body: {},
+      userId: 'victim',
+      originalUserId: 'delegate',
+      authenticatedUserId: 'delegate',
+    };
+
+    await run(mw, { ...base, method: 'GET' }).promise;
+    expect(mockedCanAccess).toHaveBeenLastCalledWith(
+      'victim',
+      'symptoms_read',
+      'delegate'
+    );
+
+    await run(mw, { ...base, method: 'POST' }).promise;
+    expect(mockedCanAccess).toHaveBeenLastCalledWith(
+      'victim',
+      'symptoms',
+      'delegate'
+    );
+  });
+
+  it('rejects a delegate without symptoms access', async () => {
+    mockedCanAccess.mockResolvedValue(false);
+    const mw = checkPermissionMiddleware('symptoms');
+    const { promise, res, next } = run(mw, {
+      method: 'GET',
+      query: {},
+      body: {},
+      userId: 'victim',
+      originalUserId: 'delegate',
+      authenticatedUserId: 'delegate',
+    });
+    await promise;
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('authorizes a client-supplied body target in addition to the active context', async () => {
     // Non-switched user creating an entry for a family member via body.user_id.
     mockedCanAccess.mockResolvedValue(true);

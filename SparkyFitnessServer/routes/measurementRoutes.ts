@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticate } from '../middleware/authMiddleware.js';
 import checkPermissionMiddleware from '../middleware/checkPermissionMiddleware.js';
 import measurementService from '../services/measurementService.js';
+import { CustomCategoryExistsError } from '../utils/errors.js';
 import { log } from '../config/logging.js';
 import {
   UpsertWaterIntakeBodySchema,
@@ -14,7 +15,6 @@ import {
   DateParamSchema,
   UuidParamSchema,
   DateRangeParamSchema,
-  StrictDateRangeParamSchema,
   CustomMeasurementsRangeParamSchema,
   LatestCustomEntryQuerySchema,
   ImportHealthDataBodySchema,
@@ -1048,6 +1048,8 @@ router.get(
  *         description: Custom category created successfully.
  *       400:
  *         description: Validation error.
+ *       409:
+ *         description: A category with that name already exists.
  */
 router.post(
   '/custom-categories',
@@ -1070,6 +1072,9 @@ router.post(
       );
       res.status(201).json(newCategory);
     } catch (error) {
+      if (error instanceof CustomCategoryExistsError) {
+        return res.status(409).json({ error: error.message });
+      }
       // @ts-expect-error TS(2571): Object is of type 'unknown'.
       if (error.message.startsWith('Forbidden')) {
         // @ts-expect-error TS(2571): Object is of type 'unknown'.
@@ -1624,7 +1629,7 @@ router.get(
   authenticate,
   checkPermissionMiddleware('checkin'),
   async (req, res, next) => {
-    const paramResult = StrictDateRangeParamSchema.safeParse(req.params);
+    const paramResult = DateRangeParamSchema.safeParse(req.params);
     if (!paramResult.success) {
       return res.status(400).json({
         error: paramResult.error.issues.map((i) => i.message).join(', '),

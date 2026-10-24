@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SafeImage from './SafeImage';
 import Icon from './Icon';
 import { useFoodImageSourceContext } from './FoodImageSourceProvider';
+import type { GetImageSource } from '../hooks/useExerciseImageSource';
 
 const AUTOPLAY_INTERVAL_MS = 3000;
 
@@ -23,10 +24,17 @@ export interface ImageLightboxProps {
   initialIndex: number;
   title?: string;
   onClose: () => void;
+  /**
+   * Resolves an image path to a source. Defaults to the food resolver;
+   * exercise viewers pass `useExerciseImageSource().getImageSource`.
+   */
+  getImageSource?: GetImageSource;
+  /** Multi-image slideshow on open. Defaults to true (food/meal photos). */
+  autoPlay?: boolean;
 }
 
 /**
- * Full-screen viewer for a food/meal/entry photo set.
+ * Full-screen viewer for a photo set (food/meal/entry photos, exercise images).
  *
  * Multi-image sets auto-advance, matching web. Autoplay stops for good on the
  * first manual swipe — a slideshow that resumes fights a user who is browsing —
@@ -39,15 +47,18 @@ const ImageLightbox: React.FC<ImageLightboxProps> = ({
   initialIndex,
   title,
   onClose,
+  getImageSource: getImageSourceProp,
+  autoPlay = true,
 }) => {
   const { t } = useTranslation();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const getImageSource = useFoodImageSourceContext();
+  const foodImageSource = useFoodImageSourceContext();
+  const getImageSource = getImageSourceProp ?? foodImageSource;
   const listRef = useRef<FlatList<string>>(null);
 
   const [index, setIndex] = useState(initialIndex);
-  const [autoplay, setAutoplay] = useState(true);
+  const [autoplay, setAutoplay] = useState(autoPlay);
 
   // Re-seed on every open, so it starts on the tapped image with autoplay
   // running rather than wherever the previous session left off. Done during
@@ -61,7 +72,7 @@ const ImageLightbox: React.FC<ImageLightboxProps> = ({
     setWasVisible(visible);
     if (visible) {
       setIndex(initialIndex);
-      setAutoplay(true);
+      setAutoplay(autoPlay);
     }
   }
 

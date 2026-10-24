@@ -1,4 +1,6 @@
 import path from 'path';
+import { emailLoginGuard } from './middleware/emailLoginGuard.js';
+import { passkeyLoginGuard } from './middleware/passkeyLoginGuard.js';
 
 import fs from 'fs';
 import type { ServerResponse } from 'http';
@@ -11,6 +13,7 @@ import { bridgeBearerAuthHeader } from './utils/bearerAuthBridge.js';
 import { endPool } from './db/poolManager.js';
 import { log } from './config/logging.js';
 import { authenticate } from './middleware/authMiddleware.js';
+import { isReadOnlyApiKeyAuthMutation } from './middleware/readOnlyApiKeyGuard.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { applySignOutCookieCleanup } from './middleware/signOutCookieCleanup.js';
 import {
@@ -23,7 +26,6 @@ import {
 import {
   seedDemoUser,
   purgeDemoUserIfExists,
-  scheduleDemoMidnightReset,
 } from './services/demoSeedService.js';
 import { fromNodeHeaders } from 'better-auth/node';
 import foodRoutes from './routes/foodRoutes.js';
@@ -34,6 +36,7 @@ import v2FoodRoutes from './routes/v2/foodRoutes.js';
 import v2ExerciseEntryRoutes from './routes/v2/exerciseEntryRoutes.js';
 // @ts-expect-error TS1192
 import v2ExerciseRoutes from './routes/v2/exerciseRoutes.js';
+import workoutCoachingRoutesV2 from './routes/v2/workoutCoachingRoutes.js';
 import mealRoutes from './routes/mealRoutes.js';
 import foodEntryRoutes from './routes/foodEntryRoutes.js';
 import foodEntryMealRoutes from './routes/foodEntryMealRoutes.js';
@@ -43,6 +46,7 @@ import dashboardLayoutRoutes from './routes/dashboardLayoutRoutes.js';
 import nutrientDisplayPreferenceRoutes from './routes/nutrientDisplayPreferenceRoutes.js';
 import nutrientGoalPreferenceRoutes from './routes/nutrientGoalPreferenceRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import foodAssistantRoutes from './routes/v2/foodAssistantRoutes.js';
 import measurementRoutes from './routes/measurementRoutes.js';
 import checkInPhotoRoutes from './routes/checkInPhotoRoutes.js';
 import goalRoutes from './routes/goalRoutes.js';
@@ -70,10 +74,12 @@ import fitbitRoutes from './routes/fitbitRoutes.js';
 import ouraRoutes from './routes/ouraRoutes.js';
 import googleHealthRoutes from './routes/googleHealthRoutes.js';
 import polarRoutes from './routes/polarRoutes.js';
+import corosRoutes from './routes/corosRoutes.js';
 import stravaRoutes from './routes/stravaRoutes.js';
 import hevyRoutes from './routes/hevyRoutes.js';
 import speedianceRoutes from './routes/speedianceRoutes.js';
 import igpsportRoutes from './routes/igpsportRoutes.js';
+import liftosaurRoutes from './routes/liftosaurRoutes.js';
 import moodRoutes from './routes/moodRoutes.js';
 import fastingRoutes from './routes/fastingRoutes.js';
 import adaptiveTdeeRoutes from './routes/adaptiveTdeeRoutes.js';
@@ -96,30 +102,21 @@ import cycleRoutesV2 from './routes/v2/cycleRoutes.js';
 import pregnancyRoutesV2 from './routes/v2/pregnancyRoutes.js';
 import reportRoutesV2 from './routes/v2/reportRoutes.js';
 import nutritionKineticsRoutesV2 from './routes/v2/nutritionKineticsRoutes.js';
+import mindfulnessRoutesV2 from './routes/v2/mindfulnessRoutes.js';
+import heartRateZoneRoutesV2 from './routes/v2/heartRateZoneRoutes.js';
+import runProgramRoutesV2 from './routes/v2/runProgramRoutes.js';
+import shoeRoutesV2 from './routes/v2/shoeRoutes.js';
+import routeRoutesV2 from './routes/v2/routeRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 import reviewRoutes from './routes/reviewRoutes.js';
-import cron from 'node-cron';
-import { scheduleBackupsOnStartup } from './services/backupScheduler.js';
-import { processDueProactiveCoachMessages } from './services/proactiveCoachService.js';
 import { configureTelegramWebhook } from './services/telegramApiService.js';
 import {
   startTelegramQueueWorker,
   stopTelegramQueueWorker,
 } from './services/telegramQueueService.js';
 import telegramCoachService from './services/telegramCoachService.js';
-import { scheduleOpenFoodFactsAutoSyncOnStartup } from './services/openFoodFactsAutoSyncScheduler.js';
-import externalProviderRepository from './models/externalProviderRepository.js';
-import garminService from './services/garminService.js';
-import { getGarminSyncPhaseErrors } from './services/garminSyncResult.js';
-import fitbitService from './services/fitbitService.js';
-import ouraService from './services/ouraService.js';
-import googleHealthService from './services/googleHealthService.js';
-import polarService from './services/polarService.js';
-import stravaService from './services/stravaService.js';
-import hevyService from './integrations/hevy/hevyService.js';
-import speedianceService from './integrations/speediance/speedianceService.js';
-import igpsportService from './integrations/igpsport/igpsportService.js';
+import { scheduleBackgroundJobs } from './services/backgroundJobScheduler.js';
 // @ts-expect-error TS1192
 import dailySummaryRoutes from './routes/dailySummaryRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
@@ -128,7 +125,10 @@ import mealTypeRoutes from './routes/mealTypeRoutes.js';
 import swaggerUi from 'swagger-ui-express';
 import redoc from 'redoc-express';
 import swaggerSpecs from './config/swagger.js';
-import { createCorsOriginChecker } from './utils/corsHelper.js';
+import {
+  createCorsOriginChecker,
+  CORS_ALLOWED_HEADERS,
+} from './utils/corsHelper.js';
 import authModule from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import freeExerciseDBService from './integrations/freeexercisedb/FreeExerciseDBService.js';
@@ -141,12 +141,12 @@ import adminAuthRoutes from './routes/adminAuthRoutes.js';
 import workoutPresetRoutes from './routes/workoutPresetRoutes.js';
 import workoutPlanTemplateRoutes from './routes/workoutPlanTemplateRoutes.js';
 import adaptiveTrainingRoutes from './routes/adaptiveTrainingRoutes.js';
-import { cleanupSessions } from './auth.js';
-import { deleteExpiredTickets } from './services/passkeyTicketService.js';
-import withingsServiceCentral from './services/withingsService.js';
 import { upsertEnvOidcProvider } from './utils/oidcEnvConfig.js';
 import userRepository from './models/userRepository.js';
 import genericHealthRoutes from './routes/genericHealthRoutes.js';
+
+import { clientIpMiddleware } from './utils/clientIp.js';
+import ipaddr from 'ipaddr.js';
 
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
@@ -158,18 +158,61 @@ const app = express();
 // where only the frontend container's nginx is in front. Add a hop for each
 // extra proxy (reverse proxy, tunnel connector, load balancer) or req.ip will
 // resolve to an internal address shared by every visitor.
+// Alternatively, SPARKY_FITNESS_TRUSTED_PROXIES can specify explicit CIDR blocks / IPs.
+const trustedProxiesEnv = process.env.SPARKY_FITNESS_TRUSTED_PROXIES?.trim();
 const trustedProxyHops = Number.parseInt(
   process.env.SPARKY_FITNESS_TRUSTED_PROXY_HOPS ?? '',
   10
 );
-app.set(
-  'trust proxy',
-  Number.isInteger(trustedProxyHops) && trustedProxyHops >= 0
-    ? trustedProxyHops
-    : 1
-);
+if (trustedProxiesEnv) {
+  const rawProxies = trustedProxiesEnv
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const validProxies = rawProxies.filter((p) => {
+    if (ipaddr.isValid(p)) return true;
+    try {
+      ipaddr.parseCIDR(p);
+      return true;
+    } catch {
+      console.warn(
+        `[WARN] Skipping invalid SPARKY_FITNESS_TRUSTED_PROXIES entry: "${p}"`
+      );
+      return false;
+    }
+  });
+  if (validProxies.length > 0) {
+    app.set('trust proxy', validProxies);
+  } else {
+    console.warn(
+      '[WARN] No valid CIDRs/IPs found in SPARKY_FITNESS_TRUSTED_PROXIES. Falling back to hop count.'
+    );
+    app.set(
+      'trust proxy',
+      Number.isInteger(trustedProxyHops) && trustedProxyHops >= 0
+        ? trustedProxyHops
+        : 1
+    );
+  }
+} else {
+  app.set(
+    'trust proxy',
+    Number.isInteger(trustedProxyHops) && trustedProxyHops >= 0
+      ? trustedProxyHops
+      : 1
+  );
+}
 // 304s from ETag revalidation break the iOS mobile app (#1353).
 app.set('etag', false);
+
+// Inject the canonical client IP into x-client-ip for Better Auth and downstream
+// handlers. Express computes req.ip using the 'trust proxy' configuration above
+// (or getClientIp resolves it from SPARKY_FITNESS_REAL_IP_HEADER).
+// Setting req.headers['x-client-ip'] ensures Better Auth can accurately identify
+// the real client IP behind reverse proxy chains instead of rejecting multi-hop
+// X-Forwarded-For headers and falling back to a shared rate-limit bucket.
+// Any client-supplied x-client-ip header is overwritten to prevent spoofing.
+app.use(clientIpMiddleware);
 const PORT = process.env.SPARKY_FITNESS_SERVER_PORT || 3010;
 console.log(
   `DEBUG: SPARKY_FITNESS_FRONTEND_URL is: ${process.env.SPARKY_FITNESS_FRONTEND_URL}`
@@ -198,19 +241,7 @@ app.use(
         callback(null, {
           origin: allowed,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-          allowedHeaders: [
-            'Content-Type',
-            'Authorization',
-            'x-provider-id',
-            'x-api-key',
-            'x-client-id',
-            'x-requested-with',
-            // MCP StreamableHTTP headers; browser clients fail CORS preflight
-            // without them.
-            'mcp-protocol-version',
-            'mcp-session-id',
-            'last-event-id',
-          ],
+          allowedHeaders: CORS_ALLOWED_HEADERS,
           exposedHeaders: ['mcp-session-id'],
           credentials: true,
           maxAge: 86400,
@@ -249,15 +280,15 @@ app.use((req, res, next) => {
 });
 // External MCP endpoint — a self-contained chain mounted top-level (not /api)
 // to skip the /api/auth interceptor and cache-control middleware. It sits
-// before the global 50mb parser so its route-local 1mb parser wins (the global
+// before the global parser so its route-local parser wins (the global
 // parser would set req._body first and no-op the local one). cookieParser is
-// local because the global one also runs after the 50mb parser, and
+// local because the global one also runs after the global parser, and
 // authenticate reads req.cookies. requestLogger is local because the global
 // one also runs after this mount, so /mcp requests would never reach it.
 app.use(
   '/mcp',
   requestLogger({ logCompletion: true }),
-  express.json({ limit: '1mb' }),
+  express.json({ limit: isDemoMode() ? '1mb' : '50mb' }),
   cookieParser(),
   authenticate,
   // /mcp mounts ahead of the global route table, so it needs the demo guard
@@ -270,7 +301,7 @@ app.use(
 // takes a much lower cap: the routes that need the headroom (image analysis,
 // uploads, FIT import) are blocked for the demo account anyway, and a 50mb
 // parse per request is a cheap way for an anonymous visitor to burn memory.
-app.use(express.json({ limit: isDemoMode() ? '2mb' : '50mb' }));
+app.use(express.json({ limit: isDemoMode() ? '1mb' : '50mb' }));
 app.use(cookieParser());
 // --- Better Auth Mounting Logic (Moved to after migrations) ---
 let syncTrustedProviders: typeof authModule.syncTrustedProviders | undefined;
@@ -287,6 +318,8 @@ const mountBetterAuth = () => {
     throw error; // Propagate to block startup if auth fails
   }
 };
+app.use(emailLoginGuard);
+app.use(passkeyLoginGuard);
 // Catch ALL requests starting with /api/auth early.
 app.use(async (req, res, next) => {
   if (req.originalUrl.startsWith('/api/auth') && betterAuthHandlerInstance) {
@@ -298,22 +331,6 @@ app.use(async (req, res, next) => {
       req.path.startsWith('/api/auth/web-login');
     if (isDiscovery) {
       return next();
-    }
-
-    // In demo mode the credential backend stays loaded so the one-click demo
-    // login (an in-process auth.api.signInEmail call) keeps working, so the
-    // public password routes have to be closed here instead. The body matches
-    // Better Auth's own EMAIL_PASSWORD_DISABLED response byte for byte, so a
-    // client cannot tell which layer refused it.
-    if (
-      process.env.SPARKY_FITNESS_DISABLE_EMAIL_LOGIN === 'true' &&
-      (req.path.startsWith('/api/auth/sign-in/email') ||
-        req.path.startsWith('/api/auth/sign-up/email'))
-    ) {
-      return res.status(400).json({
-        message: 'Email and password is not enabled',
-        code: 'EMAIL_PASSWORD_DISABLED',
-      });
     }
 
     if (isDemoMode()) {
@@ -415,6 +432,17 @@ app.use(async (req, res, next) => {
       );
     }
 
+    // A read-only API key must not reach Better Auth's own mutations either
+    // (creating a new full-access key, changing the password, ...). These
+    // routes never pass through `authenticate`, so check here (issue #2678).
+    if (await isReadOnlyApiKeyAuthMutation(req)) {
+      log(
+        'warn',
+        `[AUTH HANDLER] Read-only API key refused for ${req.method} ${req.path}`
+      );
+      return res.status(403).json({ error: 'This API key is read-only.' });
+    }
+
     // 2. Manual Sign-Out Cleanup: preserve sparky_active_user_id delete
     // cookie across Better Auth's own Set-Cookie writes.
     if (req.method === 'POST' && req.path === '/api/auth/sign-out') {
@@ -479,7 +507,11 @@ const uploadsStaticOptions = {
 // This block MUST stay above the express.static mounts below — moving it after
 // them silently re-exposes every file. tests/uploadsStaticMount.test.ts guards
 // both the behavior and the source ordering.
-const SENSITIVE_UPLOAD_SUBTREES = new Set(['check-in', 'pregnancy']);
+const SENSITIVE_UPLOAD_SUBTREES = new Set([
+  'check-in',
+  'pregnancy',
+  'symptoms',
+]);
 app.use(['/uploads', '/api/uploads'], (req, res, next) => {
   // Match the path the way serve-static resolves it, not the way it was
   // written: a prefix test against the raw URL would not account for percent-
@@ -651,9 +683,8 @@ app.get(
     }
   }
 );
-// Computed once at startup — these are static for the lifetime of the process
-const isPublicApiDocsEnabled =
-  process.env.SPARKY_FITNESS_PUBLIC_API_DOCS === 'true';
+import { isPublicApiDocsAllowed } from './models/globalSettingsRepository.js';
+
 const publicRoutes = [
   '/api/auth/settings',
   '/api/auth/mfa-factors',
@@ -667,12 +698,17 @@ const publicRoutes = [
   '/api/ping',
   '/api/telegram/webhook',
 ];
-if (isPublicApiDocsEnabled) {
-  publicRoutes.push('/api/api-docs');
-}
 
 // Apply authentication middleware to all protected routes
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
+  if (req.path === '/api/api-docs' || req.path.startsWith('/api/api-docs/')) {
+    const isPublicDocs =
+      (await isPublicApiDocsAllowed()) ||
+      process.env.SPARKY_FITNESS_PUBLIC_API_DOCS === 'true';
+    if (isPublicDocs) {
+      return next();
+    }
+  }
   const isPublic = publicRoutes.some((route) => {
     // Exact match or subpath match with trailing slash to prevent partial matches
     // e.g. "/api/health" matches "/api/health" and "/api/health/" but NOT "/api/health-data"
@@ -697,12 +733,14 @@ app.get('/api/ping', (_req, res) =>
 );
 // Mounting all API routes
 app.use('/api/chat', chatRoutes);
+app.use('/api/v2/food-assistant', foodAssistantRoutes);
 app.use('/api/ai', aiUnitConversionRoutes);
 app.use('/api/foods', foodRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/v2/foods', v2FoodRoutes);
 app.use('/api/v2/exercise-entries', v2ExerciseEntryRoutes);
 app.use('/api/v2/exercises', v2ExerciseRoutes);
+app.use('/api/v2/workout-coaching', workoutCoachingRoutesV2);
 app.use('/api/food-entries', foodEntryRoutes);
 app.use('/api/food-entry-meals', foodEntryMealRoutes);
 app.use('/api/meals', mealRoutes);
@@ -750,10 +788,12 @@ app.use('/api/integrations/fitbit', fitbitRoutes);
 app.use('/api/integrations/oura', ouraRoutes);
 app.use('/api/integrations/googlehealth', googleHealthRoutes);
 app.use('/api/integrations/polar', polarRoutes);
+app.use('/api/integrations/coros', corosRoutes);
 app.use('/api/integrations/strava', stravaRoutes);
 app.use('/api/integrations/hevy', hevyRoutes);
 app.use('/api/integrations/speediance', speedianceRoutes);
 app.use('/api/integrations/igpsport', igpsportRoutes);
+app.use('/api/integrations/liftosaur', liftosaurRoutes);
 app.use('/api/mood', moodRoutes);
 app.use('/api/fasting', fastingRoutes);
 app.use('/api/admin/telegram-coach', telegramAdminRoutes);
@@ -767,6 +807,11 @@ app.use('/api/v2/cycle', cycleRoutesV2);
 app.use('/api/v2/pregnancy', pregnancyRoutesV2);
 app.use('/api/v2/reports', reportRoutesV2);
 app.use('/api/v2/nutrition', nutritionKineticsRoutesV2);
+app.use('/api/v2/mindfulness', mindfulnessRoutesV2);
+app.use('/api/v2/heart-rate-zones', heartRateZoneRoutesV2);
+app.use('/api/v2/run-program', runProgramRoutesV2);
+app.use('/api/v2/shoes', shoeRoutesV2);
+app.use('/api/v2/routes', routeRoutesV2);
 app.use('/api/workout-presets', workoutPresetRoutes);
 app.use('/api/workout-plan-templates', workoutPlanTemplateRoutes);
 app.use('/api/adaptive-training', adaptiveTrainingRoutes);
@@ -790,326 +835,6 @@ app.get(
 );
 app.get('/api/api-docs/json', (_req, res) => res.json(swaggerSpecs));
 app.get('/api/api-docs', (_req, res) => res.redirect('/api/api-docs/swagger'));
-// Backup scheduling is handled by services/backupScheduler.ts
-const scheduleProactiveCoachMessages = () => {
-  const run = () =>
-    processDueProactiveCoachMessages().catch((error) =>
-      log('error', '[CRON] Proactive coach task failed:', error)
-    );
-  // The per-user service chooses deterministic 3-8 minute observation slots.
-  // A one-minute heartbeat lets those slots stay naturally staggered without
-  // sending anything unless the relevance engine finds a useful moment.
-  cron.schedule('* * * * *', run);
-  void run();
-};
-// Session cleanup scheduling
-const scheduleSessionCleanup = async () => {
-  // Run every day at 3 AM
-  cron.schedule('0 3 * * *', async () => {
-    try {
-      await cleanupSessions();
-    } catch (error) {
-      console.error('[CRON] Session cleanup failed:', error);
-    }
-    try {
-      const removed = await deleteExpiredTickets();
-      if (removed > 0) {
-        log(
-          'info',
-          `[CRON] Removed ${removed} used/expired passkey ticket(s).`
-        );
-      }
-    } catch (error) {
-      console.error('[CRON] Passkey ticket cleanup failed:', error);
-    }
-  });
-};
-// Withings sync
-const scheduleWithingsSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const withingsProviders =
-        await externalProviderRepository.getProvidersByType('withings');
-      for (const provider of withingsProviders) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await withingsServiceCentral.syncWithingsData(
-              provider.user_id,
-              'scheduled'
-            );
-            await externalProviderRepository.updateProviderLastSync(
-              provider.id,
-              new Date()
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Withings sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleWithingsSyncs task failed:', error);
-    }
-  });
-};
-// Garmin sync
-const scheduleGarminSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const providers =
-        await externalProviderRepository.getProvidersByType('garmin');
-      for (const provider of providers) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            const result = await garminService.syncGarminData(
-              provider.user_id,
-              'scheduled'
-            );
-            const failedPhases = getGarminSyncPhaseErrors(result);
-            if (failedPhases.length === 0) {
-              await externalProviderRepository.updateProviderLastSync(
-                provider.id,
-                new Date()
-              );
-            } else {
-              console.warn(
-                `[CRON] Garmin sync completed with failed phases for user ${provider.user_id}; last_sync_at not updated: ${failedPhases.join(', ')}`
-              );
-            }
-          } catch (error) {
-            console.error(
-              `[CRON] Garmin sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleGarminSyncs task failed:', error);
-    }
-  });
-};
-// Fitbit sync
-const scheduleFitbitSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const fitbitProviders =
-        await externalProviderRepository.getProvidersByType('fitbit');
-      for (const provider of fitbitProviders) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await fitbitService.syncFitbitData(provider.user_id, 'scheduled');
-            await externalProviderRepository.updateProviderLastSync(
-              provider.id,
-              new Date()
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Fitbit sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleFitbitSyncs task failed:', error);
-    }
-  });
-};
-// Oura sync
-const scheduleOuraSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const ouraProviders =
-        await externalProviderRepository.getProvidersByType('oura');
-      for (const provider of ouraProviders) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await ouraService.syncOuraData(provider.user_id, 'scheduled');
-            await externalProviderRepository.updateProviderLastSync(
-              provider.id,
-              new Date()
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Oura sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleOuraSyncs task failed:', error);
-    }
-  });
-};
-// Strava sync
-const scheduleStravaSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const stravaProviders =
-        await externalProviderRepository.getProvidersByType('strava');
-      for (const provider of stravaProviders) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await stravaService.syncStravaData(provider.user_id, 'scheduled');
-            await externalProviderRepository.updateProviderLastSync(
-              provider.id,
-              new Date()
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Strava sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleStravaSyncs task failed:', error);
-    }
-  });
-};
-// Polar sync
-const schedulePolarSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const polarProviders =
-        await externalProviderRepository.getProvidersByType('polar');
-      for (const provider of polarProviders) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await polarService.syncPolarData(
-              provider.user_id,
-              'scheduled',
-              provider.id
-            );
-            await externalProviderRepository.updateProviderLastSync(
-              provider.id,
-              new Date()
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Polar sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] schedulePolarSyncs task failed:', error);
-    }
-  });
-};
-const scheduleGoogleHealthSyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const providers =
-        await externalProviderRepository.getProvidersByType('googlehealth');
-      for (const provider of providers) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await googleHealthService.syncGoogleHealthData(
-              provider.user_id,
-              'scheduled'
-            );
-            await externalProviderRepository.updateProviderLastSync(
-              provider.id,
-              new Date()
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Google Health sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleGoogleHealthSyncs task failed:', error);
-    }
-  });
-};
-const scheduleHevySyncs = async () => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const hevyProviders =
-        await externalProviderRepository.getProvidersByType('hevy');
-      for (const provider of hevyProviders) {
-        if (provider.is_active && provider.sync_frequency !== 'manual') {
-          try {
-            await hevyService.syncHevyData(
-              provider.user_id,
-              provider.user_id,
-              false,
-              provider.id
-            );
-          } catch (error) {
-            console.error(
-              `[CRON] Hevy sync failed for user ${provider.user_id}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[CRON] scheduleHevySyncs task failed:', error);
-    }
-  });
-};
-interface ScheduledCredentialProvider {
-  id: string;
-  user_id: string;
-  is_active: boolean;
-  sync_frequency: string | null;
-  last_sync_at: Date | string | null;
-}
-
-const scheduleCredentialProviderSyncs = (
-  providerType: string,
-  displayName: string,
-  sync: (userId: string, providerId: string) => Promise<unknown>
-) => {
-  cron.schedule('0 * * * *', async () => {
-    try {
-      const providers = (await externalProviderRepository.getProvidersByType(
-        providerType
-      )) as ScheduledCredentialProvider[];
-      for (const provider of providers) {
-        if (
-          !provider.is_active ||
-          !['hourly', 'daily'].includes(provider.sync_frequency ?? '')
-        )
-          continue;
-        const lastSync = provider.last_sync_at
-          ? new Date(provider.last_sync_at)
-          : null;
-        if (
-          provider.sync_frequency === 'daily' &&
-          lastSync &&
-          Date.now() - lastSync.getTime() < 20 * 60 * 60 * 1000
-        ) {
-          continue;
-        }
-        try {
-          await sync(provider.user_id, provider.id);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          log(
-            'error',
-            `[CRON] ${displayName} sync failed for user ${provider.user_id}: ${message}`
-          );
-        }
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log('error', `[CRON] ${displayName} scheduler failed: ${message}`);
-    }
-  });
-};
 // Migrations and RLS policies are applied by index.ts before this module is
 // imported, so that Better Auth's eager schema validation (run at auth.ts
 // module scope) sees the migrated schema. Do not move them back in here.
@@ -1127,37 +852,8 @@ const scheduleCredentialProviderSyncs = (
       console.error('[AUTH] Post-init SSO sync failed:', err)
     );
   }
-  scheduleBackupsOnStartup();
-  scheduleProactiveCoachMessages();
+  await scheduleBackgroundJobs();
   startTelegramQueueWorker(telegramCoachService.handleTelegramUpdate);
-  await scheduleOpenFoodFactsAutoSyncOnStartup();
-  scheduleSessionCleanup();
-  scheduleWithingsSyncs();
-  scheduleGarminSyncs();
-  scheduleFitbitSyncs();
-  scheduleOuraSyncs();
-  schedulePolarSyncs();
-  scheduleStravaSyncs();
-  scheduleGoogleHealthSyncs();
-  scheduleHevySyncs();
-  scheduleCredentialProviderSyncs(
-    'speediance',
-    'Speediance',
-    (userId, providerId) =>
-      speedianceService.syncSpeedianceData(userId, userId, {
-        providerId,
-        fullSync: false,
-      })
-  );
-  scheduleCredentialProviderSyncs(
-    'igpsport',
-    'iGPSPORT',
-    (userId, providerId) =>
-      igpsportService.syncIGPSportData(userId, userId, {
-        providerId,
-        fullSync: false,
-      })
-  );
   if (process.env.SPARKY_FITNESS_ADMIN_EMAIL) {
     // A demo account promoted to admin would hand every anonymous visitor the
     // admin panel. Refuse the promotion rather than start up compromised.
@@ -1175,7 +871,6 @@ const scheduleCredentialProviderSyncs = (
   if (process.env.SPARKY_FITNESS_DEMO_MODE === 'true') {
     try {
       await seedDemoUser();
-      scheduleDemoMidnightReset();
     } catch (err) {
       log('error', '[DEMO] Demo mode initialization failed:', err);
     }

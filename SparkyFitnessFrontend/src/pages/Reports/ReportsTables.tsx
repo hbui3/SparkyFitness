@@ -50,6 +50,10 @@ import {
   CustomMeasurementsResponse,
   CustomCategoriesResponse,
   getPrecision,
+  bodyWeightOnDay,
+  isBodyweightModality,
+  resolveExerciseModality,
+  setVolumeKg,
 } from '@workspace/shared';
 
 /** Timed sets carry no reps, so an entry made only of them has no range. */
@@ -72,17 +76,44 @@ const formatAvgWeight = (
   );
 };
 
-/** Duration-only entries carry no weights, so tonnage shows a dash. */
-const formatTonnage = (
-  sets: DailyExerciseEntry['sets'],
-  weightUnit: string
-) => {
-  if (!sets.some((s) => s.weight != null)) return '-';
-  return formatWeight(
-    sets.reduce(
-      (acc, s) => acc + Number(s.weight ?? 0) * Number(s.reps ?? 0),
-      0
+type BodyWeightReadings = readonly { date: string; weightKg: number }[];
+
+/**
+ * Weight × reps for one set: for a bodyweight exercise, body weight that day
+ * plus the set's added or assisting weight (`setVolumeKg`).
+ */
+const entrySetVolume = (
+  entry: DailyExerciseEntry,
+  set: DailyExerciseEntry['sets'][number],
+  readings: BodyWeightReadings
+) =>
+  setVolumeKg(
+    set,
+    resolveExerciseModality(
+      entry.exercises?.modality,
+      entry.exercises?.category
     ),
+    bodyWeightOnDay(readings, entry.entry_date)
+  );
+
+/**
+ * Duration-only entries carry no weights, so tonnage shows a dash. A
+ * bodyweight entry has tonnage even with no added weight.
+ */
+const formatTonnage = (
+  entry: DailyExerciseEntry,
+  weightUnit: string,
+  readings: BodyWeightReadings
+) => {
+  const bodyweight = isBodyweightModality(
+    resolveExerciseModality(
+      entry.exercises?.modality,
+      entry.exercises?.category
+    )
+  );
+  if (!bodyweight && !entry.sets.some((s) => s.weight != null)) return '-';
+  return formatWeight(
+    entry.sets.reduce((acc, s) => acc + entrySetVolume(entry, s, readings), 0),
     weightUnit
   );
 };
@@ -389,6 +420,17 @@ const ReportsTables = ({
 
   // Sort exercise entries by date descending
   debug(loggingLevel, 'ReportsTables: Sorting exercise entries.');
+  // The check-ins in the report's range, for bodyweight exercises' volume.
+  const bodyWeightReadings = useMemo(
+    () =>
+      measurementData.flatMap((m) =>
+        m.weight != null && m.weight > 0
+          ? [{ date: m.entry_date, weightKg: m.weight }]
+          : []
+      ),
+    [measurementData]
+  );
+
   const sortedExerciseEntries = [...(exerciseEntries || [])].sort(
     (a, b) =>
       new Date(b.entry_date).getTime() - new Date(a.entry_date).getTime()
@@ -738,7 +780,9 @@ const ReportsTables = ({
                       {t('reportsTables.reps', 'Reps')}
                     </TableHead>
                     <TableHead onClick={() => requestSort('weight')}>
-                      {t('reportsTables.weight', 'Weight')} ({weightUnit})
+                      {t('reportsTables.weight2', 'Weight ({{weightUnit}})', {
+                        weightUnit,
+                      })}
                     </TableHead>
                     <TableHead>
                       {t('reportsTables.tonnage', 'Tonnage')}
@@ -804,7 +848,11 @@ const ReportsTables = ({
                             {formatAvgWeight(entry.sets, weightUnit)}
                           </TableCell>
                           <TableCell>
-                            {formatTonnage(entry.sets, weightUnit)}
+                            {formatTonnage(
+                              entry,
+                              weightUnit,
+                              bodyWeightReadings
+                            )}
                           </TableCell>
                           <TableCell>
                             {entry.sets.reduce(
@@ -847,9 +895,19 @@ const ReportsTables = ({
                                   : '-'}
                               </TableCell>
                               <TableCell>
-                                {set.weight != null
+                                {set.weight != null ||
+                                isBodyweightModality(
+                                  resolveExerciseModality(
+                                    entry.exercises?.modality,
+                                    entry.exercises?.category
+                                  )
+                                )
                                   ? formatWeight(
-                                      set.weight * Number(set.reps ?? 0),
+                                      entrySetVolume(
+                                        entry,
+                                        set,
+                                        bodyWeightReadings
+                                      ),
                                       weightUnit
                                     )
                                   : '-'}
@@ -899,37 +957,59 @@ const ReportsTables = ({
                     <TableHead>{t('reportsTables.date', 'Date')}</TableHead>
                     <TableHead>{t('reportsTables.source', 'Source')}</TableHead>
                     <TableHead>
-                      {t('reportsTables.weight', 'Weight')} ({weightUnit})
+                      {t('reportsTables.weight2', 'Weight ({{weightUnit}})', {
+                        weightUnit,
+                      })}
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.neck', 'Neck')} ({measurementUnit})
+                      {t('reportsTables.neck2', 'Neck ({{measurementUnit}})', {
+                        measurementUnit,
+                      })}
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.waist', 'Waist')} ({measurementUnit})
+                      {t(
+                        'reportsTables.waist2',
+                        'Waist ({{measurementUnit}})',
+                        { measurementUnit }
+                      )}
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.hips', 'Hips')} ({measurementUnit})
+                      {t('reportsTables.hips2', 'Hips ({{measurementUnit}})', {
+                        measurementUnit,
+                      })}
                     </TableHead>
                     <TableHead>{t('reportsTables.steps', 'Steps')}</TableHead>
                     <TableHead>
-                      {t('reportsTables.height', 'Height')} ({measurementUnit})
+                      {t(
+                        'reportsTables.height2',
+                        'Height ({{measurementUnit}})',
+                        { measurementUnit }
+                      )}
                     </TableHead>
                     <TableHead>
                       {t('reportsTables.bodyFatPercentage', 'Body Fat %')}
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.muscleMass', 'Muscle Mass')} (
-                      {weightUnit})
+                      {t(
+                        'reportsTables.muscleMass2',
+                        'Muscle Mass ({{weightUnit}})',
+                        { weightUnit }
+                      )}
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.boneMass', 'Bone Mass')} ({weightUnit})
+                      {t(
+                        'reportsTables.boneMass2',
+                        'Bone Mass ({{weightUnit}})',
+                        { weightUnit }
+                      )}
                     </TableHead>
                     <TableHead>
                       {t('reportsTables.bodyWaterPercentage', 'Body Water %')}
                     </TableHead>
                     <TableHead>
-                      {t('reportsTables.bmr', 'BMR')} (
-                      {getEnergyUnitString(energyUnit)})
+                      {t('reportsTables.bmr2', 'BMR ({{energyUnitString}})', {
+                        energyUnitString: getEnergyUnitString(energyUnit),
+                      })}
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1054,24 +1134,20 @@ const ReportsTables = ({
                         )}
                       </TableHead>
                       <TableHead>
-                        {t(
-                          'reports.customMeasurementsExportHeaders.value',
-                          'Value'
-                        )}{' '}
-                        (
-                        {['kg', 'lbs', 'st_lbs'].includes(
-                          category.measurement_type.toLowerCase()
-                        )
-                          ? weightUnit
-                          : ['cm', 'inches', 'ft_in'].includes(
-                                category.measurement_type.toLowerCase()
-                              )
-                            ? measurementUnit
-                            : healthMetricUnitLabel(
-                                category.measurement_type,
-                                t
-                              )}
-                        )
+                        {t('reportsTables.value', 'Value ({{value}})', {
+                          value: ['kg', 'lbs', 'st_lbs'].includes(
+                            category.measurement_type.toLowerCase()
+                          )
+                            ? weightUnit
+                            : ['cm', 'inches', 'ft_in'].includes(
+                                  category.measurement_type.toLowerCase()
+                                )
+                              ? measurementUnit
+                              : healthMetricUnitLabel(
+                                  category.measurement_type,
+                                  t
+                                ),
+                        })}
                       </TableHead>
                       <TableHead>
                         {t('reportsTables.source', 'Source')}

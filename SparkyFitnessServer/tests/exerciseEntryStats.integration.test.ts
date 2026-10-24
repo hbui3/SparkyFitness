@@ -24,6 +24,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { exerciseHistoryResponseSchema } from '@workspace/shared';
 import { getSystemClient, endPool } from '../db/poolManager.js';
 import exerciseEntryDb from '../models/exerciseEntry.js';
+import exercisePresetEntryDb from '../models/exercisePresetEntryRepository.js';
 import { getExerciseEntryHistory } from '../services/exerciseEntryHistoryService.js';
 
 async function statsDbReachable(): Promise<boolean> {
@@ -63,6 +64,7 @@ const E3 = '00000000-0000-4000-b000-0000000000e3'; // null-preset always counted
 const E4 = '00000000-0000-4000-b000-0000000000e4'; // recent sessions: limit + ordering
 const E5 = '00000000-0000-4000-b000-0000000000e5'; // recent sessions: null/set-less filtering
 const E6 = '00000000-0000-4000-b000-0000000000e6'; // recent sessions: workout_preset_id scoping
+const E7 = '00000000-0000-4000-b000-0000000000e7'; // best skips WOD sessions; last does not
 const PE_CURRENT = '00000000-0000-4000-b000-0000000000c1';
 const PE_OTHER = '00000000-0000-4000-b000-0000000000c2';
 const PE_PRESET_A_OLD = '00000000-0000-4000-b000-0000000000c3';
@@ -82,10 +84,15 @@ const EN4_TIE_HI = '00000000-0000-4000-b000-000000000404';
 const EN5_CARDIO = '00000000-0000-4000-b000-000000000501';
 const EN5_NULLSETS = '00000000-0000-4000-b000-000000000502';
 const EN5_MIXED = '00000000-0000-4000-b000-000000000503';
+const EN7_INDIV = '00000000-0000-4000-b000-000000000701';
+const EN7_STANDARD = '00000000-0000-4000-b000-000000000702';
+const EN7_WOD = '00000000-0000-4000-b000-000000000703';
 
-const ALL_EXERCISES = [E1, E2, E3, E4, E5, E6];
+const ALL_EXERCISES = [E1, E2, E3, E4, E5, E6, E7];
 let presetAId: number;
 let presetBId: number;
+let presetWodId: number;
+let wodSessionId: string;
 
 describe.runIf(RUN)('exercise stats SQL (warmup + session exclusion)', () => {
   beforeAll(async () => {
@@ -117,6 +124,7 @@ describe.runIf(RUN)('exercise stats SQL (warmup + session exclusion)', () => {
         [E4, 'Stats Test Exercise 4'],
         [E5, 'Stats Test Exercise 5'],
         [E6, 'Stats Test Exercise 6'],
+        [E7, 'Stats Test Exercise 7'],
       ] as const) {
         await sys.query(
           'INSERT INTO public.exercises (id, name, source, user_id, is_custom) VALUES ($1, $2, $3, $4, true)',
@@ -281,6 +289,32 @@ describe.runIf(RUN)('exercise stats SQL (warmup + session exclusion)', () => {
       await insertSet(EN6_PRESET_NEW, 1, 'Working Set', 120, 6);
       await insertEntry(EN6_INDIVIDUAL, E6, PE_INDIVIDUAL_E6, '2026-07-07');
       await insertSet(EN6_INDIVIDUAL, 1, 'Working Set', 200, 4);
+
+      // E7 — a heavy set inside an AMRAP is newest but must not become Best.
+      // The WOD session goes through the repository so its format snapshot
+      // is taken from the preset exactly as a real session start does.
+      const presetWodResult = await sys.query(
+        `INSERT INTO public.workout_presets (user_id, name, workout_format, time_cap_seconds)
+         VALUES ($1, $2, 'amrap', 720) RETURNING id`,
+        [U, 'Stats Test AMRAP']
+      );
+      presetWodId = presetWodResult.rows[0].id;
+      const wodSession = await exercisePresetEntryDb.createExercisePresetEntry(
+        U,
+        {
+          workout_preset_id: presetWodId,
+          name: 'AMRAP Session',
+          entry_date: '2026-07-09',
+        },
+        U
+      );
+      wodSessionId = wodSession.id;
+      await insertEntry(EN7_INDIV, E7, null, '2026-07-01');
+      await insertSet(EN7_INDIV, 1, 'Working Set', 100, 5);
+      await insertEntry(EN7_STANDARD, E7, PE_PRESET_A_NEW, '2026-07-05');
+      await insertSet(EN7_STANDARD, 1, 'Working Set', 110, 5);
+      await insertEntry(EN7_WOD, E7, wodSessionId, '2026-07-09');
+      await insertSet(EN7_WOD, 1, 'Working Set', 150, 20);
     } finally {
       sys.release();
     }
@@ -340,6 +374,50 @@ describe.runIf(RUN)('exercise stats SQL (warmup + session exclusion)', () => {
     const best = await exerciseEntryDb.getBestSetForExercise(U, E3, PE_CURRENT);
     // 130 (current) dropped; only the individual 100 remains.
     expect(Number(best.weight)).toBe(100);
+  });
+
+  it('snapshots the preset format onto a new session', async () => {
+    const sys = await getSystemClient();
+    try {
+      const res = await sys.query(
+        'SELECT workout_format FROM public.exercise_preset_entries WHERE id = $1',
+        [wodSessionId]
+      );
+      expect(res.rows[0].workout_format).toBe('amrap');
+    } finally {
+      sys.release();
+    }
+  });
+
+  it('keeps WOD sets out of Best but counts standard and ad-hoc sets', async () => {
+    const best = await exerciseEntryDb.getBestSetForExercise(U, E7);
+    // 150 (AMRAP) skipped; 110 (standard preset session) beats 100 (ad-hoc).
+    expect(Number(best.weight)).toBe(110);
+  });
+
+  it('still reports a WOD set as Last', async () => {
+    const last = await exerciseEntryDb.getLastSetForExercise(U, E7);
+    expect(Number(last.weight)).toBe(150);
+  });
+
+  it('keeps WOD sets out of Best after the preset is edited or deleted', async () => {
+    const sys = await getSystemClient();
+    try {
+      await sys.query(
+        'UPDATE public.workout_presets SET workout_format = $2 WHERE id = $1',
+        [presetWodId, 'standard']
+      );
+      const afterEdit = await exerciseEntryDb.getBestSetForExercise(U, E7);
+      expect(Number(afterEdit.weight)).toBe(110);
+
+      await sys.query('DELETE FROM public.workout_presets WHERE id = $1', [
+        presetWodId,
+      ]);
+      const afterDelete = await exerciseEntryDb.getBestSetForExercise(U, E7);
+      expect(Number(afterDelete.weight)).toBe(110);
+    } finally {
+      sys.release();
+    }
   });
 
   it('returns the newest three sessions with the ee.id DESC tiebreak', async () => {

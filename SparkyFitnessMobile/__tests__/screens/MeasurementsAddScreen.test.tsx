@@ -58,6 +58,20 @@ jest.mock('../../src/hooks/useCustomMeasurements', () => ({
   useDeleteCustomMeasurement: jest.fn(),
 }));
 
+jest.mock('../../src/hooks/useMindfulness', () => ({
+  useMindfulnessDay: () => ({
+    sessions: [],
+    totalMindfulMinutes: 0,
+    isLoading: false,
+    refetch: jest.fn(),
+  }),
+  useMindfulnessMutations: () => ({
+    saveSession: jest.fn(),
+    updateSession: jest.fn(),
+    deleteSession: jest.fn(),
+  }),
+}));
+
 jest.mock('../../src/components/Icon', () => {
   const { View } = require('react-native');
   return {

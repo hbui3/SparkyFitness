@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">SparkyFitness</string>
+    <string name="complication_energy_label">Sparky Calories</string>
+    <string name="complication_protein_label">Sparky Protein</string>
+    <string name="complication_carbs_label">Sparky Carbs</string>
+    <string name="complication_fat_label">Sparky Fat</string>
+    <string name="complication_water_label">Sparky Water</string>
+    <string name="complication_fasting_label">Sparky Fasting</string>
+    <string name="complication_steps_label">Sparky Steps</string>
+    <color name="iconBackground">#FFFFFF</color>
+</resources>

@@ -7,6 +7,7 @@ Before presenting an implementation plan for this repo, self-review it against t
 - **Duplication (rule of two)**: If the plan would repeat non-trivial logic a second time, does it extract a shared helper instead of copy-pasting? LLM-authored copies drift — don't wait for a third.
 - **Database**: If it adds or changes a table or migration, does the plan include every step of `agent-docs/new-migration-checklist.md` (RLS, schema backup, shared Zod schema, docs tiers)?
 - **Contracts**: If it changes an API request/response, does the plan cover the shared schema, the server route/schema, and both web and mobile consumers?
+- **Typing**: Does the plan ensure strict TypeScript typing (no `any`) and proactively update legacy `any` declarations in touched files to their proper data types/schemas?
 - **Dates/timezones**: Are `YYYY-MM-DD` values kept as calendar-day strings with shared timezone helpers (no `toISOString().split('T')[0]`)?
 - **Auth**: If auth behavior changes, are both cookie sessions and API-key flows considered?
 - **Validation**: Does the plan end with concrete validation — the specific tests to run plus `pnpm run validate` in each touched package?

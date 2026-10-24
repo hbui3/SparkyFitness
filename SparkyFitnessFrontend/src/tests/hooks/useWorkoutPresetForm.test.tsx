@@ -318,3 +318,61 @@ describe('useWorkoutPresetForm duplicate exercise', () => {
     expect(result.current.exercises[1]?.superset_group).toBeNull();
   });
 });
+
+describe('useWorkoutPresetForm workout_format and time_cap_seconds', () => {
+  it('initializes and saves workout_format and time_cap_seconds from initialPreset', async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    const intervalPreset = {
+      ...presetWithTimedSet,
+      workout_format: 'amrap',
+      time_cap_seconds: 1200,
+    } as unknown as WorkoutPreset;
+
+    const { result } = renderHook(() =>
+      useWorkoutPresetForm({ initialPreset: intervalPreset, onSave })
+    );
+
+    expect(result.current.workoutFormat).toBe('amrap');
+    expect(result.current.timeCapSeconds).toBe(1200);
+
+    await act(async () => {
+      await result.current.handleSubmit();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workout_format: 'amrap',
+        time_cap_seconds: 1200,
+      })
+    );
+  });
+
+  it('allows updating workout_format and time_cap_seconds', async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() =>
+      useWorkoutPresetForm({ initialPreset: presetWithTimedSet, onSave })
+    );
+
+    expect(result.current.workoutFormat).toBe('standard');
+    expect(result.current.timeCapSeconds).toBeNull();
+
+    act(() => {
+      result.current.setWorkoutFormat('for_time');
+      result.current.setTimeCapSeconds(900);
+    });
+
+    expect(result.current.workoutFormat).toBe('for_time');
+    expect(result.current.timeCapSeconds).toBe(900);
+
+    await act(async () => {
+      await result.current.handleSubmit();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workout_format: 'for_time',
+        time_cap_seconds: 900,
+      })
+    );
+  });
+});

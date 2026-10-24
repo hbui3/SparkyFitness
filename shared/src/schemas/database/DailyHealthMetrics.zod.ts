@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const dailyHealthMetricsIdSchema = z.string();
 
@@ -49,6 +49,7 @@ export const dailyHealthMetricsSchema = z.object({
   body_battery_drained: z.number().nullable(),
   body_battery_highest: z.number().nullable(),
   body_battery_lowest: z.number().nullable(),
+  total_mindful_minutes: z.number().nullable().optional(),
   created_at: z.coerce.date().nullable(),
   updated_at: z.coerce.date().nullable(),
 });
@@ -100,6 +101,7 @@ export const dailyHealthMetricsInitializerSchema = z.object({
   body_battery_drained: z.number().optional().nullable(),
   body_battery_highest: z.number().optional().nullable(),
   body_battery_lowest: z.number().optional().nullable(),
+  total_mindful_minutes: z.number().optional().nullable(),
   created_at: z.coerce.date().optional().nullable(),
   updated_at: z.coerce.date().optional().nullable(),
 });

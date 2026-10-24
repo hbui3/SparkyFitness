@@ -602,6 +602,25 @@ async function updateFoodEntry(
     client.release();
   }
 }
+async function updateFoodEntryTime(
+  entryId: string,
+  userId: string,
+  entryTime: string | null,
+  client?: PoolClient
+) {
+  const ownClient = !client;
+  const activeClient = client ?? (await getClient(userId));
+  try {
+    const result = await activeClient.query(
+      'UPDATE food_entries SET entry_time = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      [entryTime, entryId, userId]
+    );
+    return result.rows[0] || null;
+  } finally {
+    if (ownClient) activeClient.release();
+  }
+}
+
 async function getFoodEntriesByDate(userId: string, selectedDate: string) {
   const client = await getClient(userId); // User-specific operation
   try {
@@ -1198,7 +1217,8 @@ async function bulkCreateFoodEntriesWithClient(
 
 async function bulkCreateFoodEntries(
   entriesData: FoodEntryInput[],
-  authenticatedUserId: string
+  authenticatedUserId: string,
+  options?: { client?: PoolClient }
 ) {
   log(
     'info',
@@ -1206,11 +1226,12 @@ async function bulkCreateFoodEntries(
   );
   // For bulk create, assuming all entries belong to the same user,
   // and the first entry's user_id can be used for RLS context.
-  const client = await getClient(authenticatedUserId); // User-specific operation
+  const providedClient = options?.client;
+  const client = providedClient ?? (await getClient(authenticatedUserId)); // User-specific operation
   try {
     return await bulkCreateFoodEntriesWithClient(client, entriesData);
   } finally {
-    client.release();
+    if (!providedClient) client.release();
   }
 }
 async function getFoodEntryComponentsByFoodEntryMealId(
@@ -1273,13 +1294,14 @@ async function getFoodEntryComponentsByFoodEntryMealId(
 }
 async function deleteFoodEntryComponentsByFoodEntryMealId(
   foodEntryMealId: string,
-  userId: string
+  userId: string,
+  providedClient?: PoolClient
 ) {
   log(
     'info',
     `deleteFoodEntryComponentsByFoodEntryMealId in foodEntry.js: foodEntryMealId: ${foodEntryMealId}, userId: ${userId}`
   );
-  const client = await getClient(userId);
+  const client = providedClient ?? (await getClient(userId));
   try {
     const result = await client.query(
       'DELETE FROM food_entries WHERE food_entry_meal_id = $1 RETURNING id',
@@ -1287,7 +1309,7 @@ async function deleteFoodEntryComponentsByFoodEntryMealId(
     );
     return result.rowCount > 0;
   } finally {
-    client.release();
+    if (!providedClient) client.release();
   }
 }
 
@@ -1435,6 +1457,7 @@ async function deleteStaleProviderEntries(
 export { createFoodEntry };
 export { getFoodEntryOwnerId };
 export { updateFoodEntry };
+export { updateFoodEntryTime };
 export { deleteFoodEntry };
 export { deleteStaleProviderEntries };
 export { getFoodEntriesByDate };
@@ -1453,6 +1476,7 @@ export default {
   createFoodEntry,
   getFoodEntryOwnerId,
   updateFoodEntry,
+  updateFoodEntryTime,
   deleteFoodEntry,
   deleteStaleProviderEntries,
   getFoodEntriesByDate,

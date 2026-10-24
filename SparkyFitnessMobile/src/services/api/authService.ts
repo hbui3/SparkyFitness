@@ -541,6 +541,10 @@ export interface AuthSettings {
   email: {
     enabled: boolean;
   };
+  /** Absent on servers that predate SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN, which always allow passkeys. */
+  passkey?: {
+    enabled: boolean;
+  };
   oidc: {
     enabled: boolean;
     providers: OidcProvider[];

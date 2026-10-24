@@ -25,9 +25,14 @@ describe('smart-scale composition routes to check_in_measurements', () => {
     vi.clearAllMocks();
     vi.mocked(loadUserTimezone).mockResolvedValue('UTC');
     measurementRepository.getCustomCategories = vi.fn().mockResolvedValue([]);
+    // A fresh create stores what it was given.
     measurementRepository.createCustomCategory = vi
       .fn()
-      .mockResolvedValue({ id: 'cat-new' });
+      .mockImplementation(async (data) => ({
+        id: 'cat-new',
+        created: true,
+        category: { ...data, id: 'cat-new' },
+      }));
     measurementRepository.bulkUpsertCustomMeasurements = vi
       .fn()
       .mockResolvedValue([{ id: 'entry-1' }]);

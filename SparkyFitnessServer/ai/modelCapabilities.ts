@@ -49,10 +49,10 @@ const DROPPABLE_PARAM_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
 ];
 
 // Claude Opus 4.7 and later reject `temperature` outright with a 400, and
-// Sonnet 5 rejects non-default values. Older models (Sonnet 4.6, Haiku 4.5,
-// and earlier) still honor it.
+// Sonnet 5+ and Haiku 5.5 reject non-default values. Older models (Sonnet 4.6,
+// Haiku 4.5, and earlier) still honor it.
 const ANTHROPIC_MODELS_REJECTING_TEMPERATURE =
-  /^claude-(opus-(4-7|4-8|5)|sonnet-5|fable-5|mythos-5)/;
+  /^claude-(opus-(4-7|4-8|5)|sonnet-5|haiku-5|fable-5|mythos-5)/;
 
 // OpenAI reasoning families support only the default temperature of 1.
 // Matches gpt-5, gpt-5.6-luna, o1-mini, o3, o4-mini, and so on.
@@ -61,7 +61,7 @@ const ANTHROPIC_MODELS_REJECTING_TEMPERATURE =
 // custom / openrouter gateway may serve a same-looking model id through a shim
 // that does accept temperature, so those are left to layer 2 rather than
 // assumed broken.
-const OPENAI_MODELS_REJECTING_TEMPERATURE = /^(gpt-5|o[1-9](-|$))/;
+const OPENAI_MODELS_REJECTING_TEMPERATURE = /^(gpt-[56]|o[1-9](-|$))/;
 
 const STATIC_TEMPERATURE_REJECTIONS: Record<string, RegExp> = {
   anthropic: ANTHROPIC_MODELS_REJECTING_TEMPERATURE,
@@ -157,9 +157,10 @@ const REJECTION_CODES = new Set([
   'invalid_value',
 ]);
 
-// Fallback for providers that return prose without a `param` field.
+// Fallback for providers that return prose without a `param` field. Anthropic
+// words it as a deprecation: "`temperature` is deprecated for this model."
 const REJECTION_PHRASES =
-  /does not support|unsupported value|unsupported parameter|not supported|only the default|extra inputs are not permitted|not permitted/i;
+  /does not support|unsupported value|unsupported parameter|not supported|only the default|extra inputs are not permitted|not permitted|is deprecated/i;
 
 // A body big enough to be a payload rather than an error isn't worth scanning.
 const MAX_SCANNED_BODY_CHARS = 8_000;

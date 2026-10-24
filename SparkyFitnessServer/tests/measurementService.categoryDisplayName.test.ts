@@ -1,6 +1,7 @@
 import { vi, beforeEach, describe, expect, it } from 'vitest';
 import measurementService from '../services/measurementService.js';
 import measurementRepository from '../models/measurementRepository.js';
+import { CustomCategoryExistsError } from '../utils/errors.js';
 
 vi.mock('../models/measurementRepository');
 
@@ -16,6 +17,15 @@ describe('getOrCreateCustomCategory - health display_name', () => {
     vi.mocked(measurementRepository.getCustomCategories).mockResolvedValue([]);
     vi.mocked(measurementRepository.createCustomCategory).mockResolvedValue({
       id: 'cat-1',
+      created: true,
+      category: {
+        id: 'cat-1',
+        name: 'HRV_SDNN',
+        display_name: 'HRV (SDNN)',
+        frequency: 'Daily',
+        measurement_type: 'N/A',
+        data_type: 'numeric',
+      },
     });
 
     const category = await measurementService.getOrCreateCustomCategory(
@@ -30,6 +40,30 @@ describe('getOrCreateCustomCategory - health display_name', () => {
     expect(created.name).toBe('HRV_SDNN');
     expect(created.display_name).toBe('HRV (SDNN)');
     expect(category.id).toBe('cat-1');
+  });
+
+  it('uses the stored settings when another sync created the category first', async () => {
+    vi.mocked(measurementRepository.getCustomCategories).mockResolvedValue([]);
+    vi.mocked(measurementRepository.createCustomCategory).mockResolvedValue({
+      id: 'cat-3',
+      created: false,
+      category: {
+        id: 'cat-3',
+        name: 'HRV_SDNN',
+        display_name: 'HRV (SDNN)',
+        frequency: 'Hourly',
+        measurement_type: 'N/A',
+        data_type: 'numeric',
+      },
+    });
+
+    const category = await measurementService.getOrCreateCustomCategory(
+      userId,
+      actingUserId,
+      'HRV_SDNN'
+    );
+
+    expect(category).toMatchObject({ id: 'cat-3', frequency: 'Hourly' });
   });
 
   it('backfills display_name on an existing HRV category that has none', async () => {
@@ -87,5 +121,53 @@ describe('getOrCreateCustomCategory - health display_name', () => {
 
     expect(measurementRepository.updateCustomCategory).not.toHaveBeenCalled();
     expect(measurementRepository.createCustomCategory).not.toHaveBeenCalled();
+  });
+});
+
+describe('createCustomCategory', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the new category id', async () => {
+    vi.mocked(measurementRepository.createCustomCategory).mockResolvedValue({
+      id: 'cat-1',
+      created: true,
+      category: {
+        id: 'cat-1',
+        name: 'Waist',
+        display_name: null,
+        frequency: 'Daily',
+        measurement_type: 'cm',
+        data_type: 'numeric',
+      },
+    });
+
+    await expect(
+      measurementService.createCustomCategory('user-1', 'user-1', {
+        name: 'Waist',
+      })
+    ).resolves.toEqual({ id: 'cat-1' });
+  });
+
+  it('rejects a name the user already has', async () => {
+    vi.mocked(measurementRepository.createCustomCategory).mockResolvedValue({
+      id: 'cat-1',
+      created: false,
+      category: {
+        id: 'cat-1',
+        name: 'Waist',
+        display_name: null,
+        frequency: 'Daily',
+        measurement_type: 'cm',
+        data_type: 'numeric',
+      },
+    });
+
+    await expect(
+      measurementService.createCustomCategory('user-1', 'user-1', {
+        name: 'Waist',
+      })
+    ).rejects.toBeInstanceOf(CustomCategoryExistsError);
   });
 });

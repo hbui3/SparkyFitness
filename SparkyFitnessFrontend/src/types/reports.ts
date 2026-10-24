@@ -1,5 +1,6 @@
 import { Exercise } from './exercises';
 import { Food, FoodVariant } from './food';
+import type { ExerciseDashboardSummary } from '@workspace/shared';
 
 interface PersonalRecord {
   date: string;
@@ -113,12 +114,7 @@ export interface WorkoutDuplicateSummary {
   hiddenBySource: Record<string, number>;
 }
 
-export interface ExerciseDashboardData {
-  keyStats: {
-    totalWorkouts: number;
-    totalVolume: number;
-    totalReps: number;
-  };
+export interface ExerciseDashboardData extends ExerciseDashboardSummary {
   prData: PersonalRecordsMap;
   bestSetRepRange: {
     [exerciseName: string]: {
@@ -129,19 +125,7 @@ export interface ExerciseDashboardData {
       };
     };
   };
-  muscleGroupVolume: {
-    [muscleGroup: string]: number;
-  };
   exerciseEntries: DailyExerciseEntry[];
-  consistencyData: {
-    currentStreak: number;
-    longestStreak: number;
-    weeklyFrequency: number;
-    monthlyFrequency: number;
-  };
-  recoveryData: {
-    [muscleGroup: string]: string;
-  };
   prProgressionData: {
     [exerciseName: string]: {
       date: string;
@@ -149,9 +133,6 @@ export interface ExerciseDashboardData {
       maxWeight: number;
       maxReps: number;
     }[];
-  };
-  exerciseVarietyData: {
-    [muscleGroup: string]: number;
   };
   setPerformanceData: {
     [exerciseName: string]: {

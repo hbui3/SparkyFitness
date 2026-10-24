@@ -143,6 +143,20 @@ describe('Water Intake Routes (v2)', () => {
       );
       expect(res.statusCode).toBe(500);
     });
+    it('rejects a malformed date with 400 before reaching the service', async () => {
+      const res = await request(app).get(
+        '/api/v2/measurements/water-intake/not-a-date'
+      );
+      expect(res.statusCode).toBe(400);
+      expect(measurementService.getWaterIntake).not.toHaveBeenCalled();
+    });
+    it('rejects a well-formed but impossible date with 400', async () => {
+      const res = await request(app).get(
+        '/api/v2/measurements/water-intake/2026-02-30'
+      );
+      expect(res.statusCode).toBe(400);
+      expect(measurementService.getWaterIntake).not.toHaveBeenCalled();
+    });
   });
   // ---------------------------------------------------------------------------
   // POST /
@@ -343,6 +357,14 @@ describe('Water Intake Routes (v2)', () => {
         '/api/v2/measurements/water-intake/2023-01-01/log'
       );
       expect(res.statusCode).toBe(500);
+    });
+
+    it('rejects a malformed date with 400 before reaching the service', async () => {
+      const res = await request(app).get(
+        '/api/v2/measurements/water-intake/not-a-date/log'
+      );
+      expect(res.statusCode).toBe(400);
+      expect(measurementService.getWaterIntakeLog).not.toHaveBeenCalled();
     });
   });
 

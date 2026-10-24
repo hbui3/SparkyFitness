@@ -89,7 +89,7 @@ const SETS_SUBQUERY = `COALESCE(
   (SELECT json_agg(set_data ORDER BY set_data.set_number)
    FROM (
      SELECT ees.id, ees.set_number, ees.set_type, ees.reps, ees.weight,
-            ees.duration, ees.rest_time, ees.notes, ees.rpe,
+            ees.duration, ees.rest_time, ees.notes, ees.rpe, ees.rir,
             to_char(ees.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS completed_at,
             ees.is_pr, ees.distance
      FROM exercise_entry_sets ees
@@ -124,7 +124,6 @@ function _buildExerciseEntryWithSnapshot(
     _updated_by_user_id,
     _created_at,
     _updated_at,
-    _workout_plan_assignment_id,
     ...entryData
   } = row;
 
@@ -151,6 +150,8 @@ function _buildExerciseEntryWithSnapshot(
     avg_heart_rate: (entryData.avg_heart_rate as number) ?? null,
     steps: (entryData.steps as number) ?? null,
     superset_group: (entryData.superset_group as number) ?? null,
+    workout_plan_assignment_id:
+      (entryData.workout_plan_assignment_id as string | number | null) ?? null,
     source: (source as string) ?? null,
     image_url: (entryData.image_url as string) ?? null,
     sets: ((entryData.sets as unknown[]) ?? []) as ExerciseEntrySetResponse[],
@@ -277,7 +278,7 @@ async function getExerciseEntryHistorySessions(
     batchQueries.push(
       client
         .query(
-          `SELECT id, workout_preset_id, name, description, notes, source
+          `SELECT id, workout_preset_id, name, description, notes, source, location
            FROM exercise_preset_entries WHERE id = ANY($1::uuid[])`,
           [presetIds]
         )
@@ -295,7 +296,7 @@ async function getExerciseEntryHistorySessions(
           `SELECT ee.*, ${SETS_SUBQUERY}
            FROM exercise_entries ee
            WHERE ee.exercise_preset_entry_id = ANY($1::uuid[])
-           ORDER BY ee.entry_time ASC NULLS LAST, ee.sort_order ASC, ee.created_at ASC`,
+           ORDER BY ee.sort_order ASC, ee.created_at ASC`,
           [presetIds]
         )
         .then((r: { rows: Record<string, unknown>[] }) => {
@@ -426,6 +427,7 @@ async function getExerciseEntryHistorySessions(
         name: (meta.name as string) ?? 'Workout',
         description: (meta.description as string) ?? null,
         notes: (meta.notes as string) ?? null,
+        location: (meta.location as string) ?? null,
         source: meta.source as string,
         total_duration_minutes: totalDuration,
         exercises: children,
@@ -529,7 +531,7 @@ async function _getExerciseEntriesByDateWithClient(
   // Fetch preset entries and all exercise entries for the date in parallel
   const [presetResult, entriesResult] = await Promise.all([
     client.query(
-      `SELECT id, workout_preset_id, name, description, notes, source, created_at
+      `SELECT id, workout_preset_id, name, description, notes, source, location, created_at
        FROM exercise_preset_entries
        WHERE user_id = $1 AND entry_date = $2
        ORDER BY created_at ASC`,
@@ -539,7 +541,7 @@ async function _getExerciseEntriesByDateWithClient(
       `SELECT ee.*, ${SETS_SUBQUERY}
        FROM exercise_entries ee
        WHERE ee.user_id = $1 AND ee.entry_date = $2
-       ORDER BY ee.entry_time ASC NULLS LAST, ee.sort_order ASC, ee.created_at ASC`,
+       ORDER BY ee.sort_order ASC, ee.created_at ASC`,
       [userId, selectedDate]
     ),
   ]);
@@ -709,14 +711,23 @@ async function _getExerciseEntriesByDateWithClient(
         0
       );
 
+      const childAssignmentId =
+        children.find(
+          (c) =>
+            c.workout_plan_assignment_id !== null &&
+            c.workout_plan_assignment_id !== undefined
+        )?.workout_plan_assignment_id ?? null;
+
       sessions.push({
         type: 'preset' as const,
         id: stub.id,
         entry_date: selectedDate,
         workout_preset_id: (presetRow.workout_preset_id as number) ?? null,
+        workout_plan_assignment_id: childAssignmentId,
         name: (presetRow.name as string) ?? 'Workout',
         description: (presetRow.description as string) ?? null,
         notes: (presetRow.notes as string) ?? null,
+        location: (presetRow.location as string) ?? null,
         source: presetRow.source as string,
         total_duration_minutes: totalDuration,
         exercises: children,
@@ -758,12 +769,17 @@ export async function getGroupedExerciseSessionByIdWithClient(
   // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   client: { query: Function },
   targetUserId: string,
-  presetEntryId: string
+  presetEntryId: string,
+  lockExerciseEntries = false
 ): Promise<PresetSessionResponse | null> {
+  // The session row is locked before its exercises because every other
+  // writer of the session (a date move, a delete) takes it first; taking the
+  // exercises first deadlocks against them.
   const metaResult = await client.query(
-    `SELECT id, workout_preset_id, name, description, notes, source, entry_date
+    `SELECT id, workout_preset_id, name, description, notes, source, entry_date, location
      FROM exercise_preset_entries
-     WHERE user_id = $1 AND id = $2`,
+     WHERE user_id = $1 AND id = $2
+     ${lockExerciseEntries ? 'FOR NO KEY UPDATE' : ''}`,
     [targetUserId, presetEntryId]
   );
 
@@ -771,12 +787,16 @@ export async function getGroupedExerciseSessionByIdWithClient(
     return null;
   }
 
+  // Children follow the workout's own order (sort_order), never entry_time: a
+  // live session stamps entry_time when an exercise's first set is logged, so
+  // logging out of order would otherwise reorder the workout on every save.
   const [childEntriesResult, presetActivityResult] = await Promise.all([
     client.query(
       `SELECT ee.*, ${SETS_SUBQUERY}
        FROM exercise_entries ee
        WHERE ee.user_id = $1 AND ee.exercise_preset_entry_id = $2
-       ORDER BY ee.entry_time ASC NULLS LAST, ee.sort_order ASC, ee.created_at ASC`,
+       ORDER BY ee.sort_order ASC, ee.created_at ASC
+       ${lockExerciseEntries ? 'FOR UPDATE OF ee' : ''}`,
       [targetUserId, presetEntryId]
     ),
     client.query(
@@ -837,6 +857,7 @@ export async function getGroupedExerciseSessionByIdWithClient(
     name: meta.name as string,
     description: (meta.description as string) ?? null,
     notes: (meta.notes as string) ?? null,
+    location: (meta.location as string) ?? null,
     source: meta.source as string,
     total_duration_minutes: exercises.reduce(
       (sum, exercise) => sum + (exercise.duration_minutes ?? 0),

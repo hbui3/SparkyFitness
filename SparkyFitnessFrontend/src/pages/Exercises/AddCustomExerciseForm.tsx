@@ -17,7 +17,17 @@ import {
   EXERCISE_CATEGORIES,
   EXERCISE_MODALITY_OPTIONS,
 } from '@/constants/exercises';
-import { isExerciseModality } from '@workspace/shared';
+import {
+  isExerciseModality,
+  CANONICAL_MUSCLES,
+  CANONICAL_EQUIPMENT,
+  isCanonicalMuscle,
+  isCanonicalEquipment,
+  resolveCanonicalOrCustomMuscle,
+  resolveCanonicalOrCustomEquipment,
+} from '@workspace/shared';
+import { TagInput } from '@/components/ui/TagInput';
+import { localizeMuscle, localizeEquipment } from '@/utils/exerciseTaxonomy';
 
 interface AddCustomExerciseFormProps {
   form: ReturnType<typeof useAddCustomExerciseForm>;
@@ -149,7 +159,10 @@ export default function AddCustomExerciseForm({
               : newExerciseCalories.toString()
           }
           onChange={(e) => setManualCaloriesPerHour(Number(e.target.value))}
-          placeholder="Calculated: 300"
+          placeholder={t(
+            'exercises.addCustomExerciseForm.calculated300',
+            'Calculated: 300'
+          )}
           className="col-span-3"
         />
         <p className="col-span-4 text-xs text-muted-foreground">
@@ -283,17 +296,19 @@ export default function AddCustomExerciseForm({
       {/* Equipment */}
       <div className="grid grid-cols-4 items-start gap-4">
         <Label htmlFor="equipment" className="text-right mt-1">
-          {t(
-            'exercise.addExerciseDialog.equipmentLabel',
-            'Equipment (comma-separated)'
-          )}
+          {t('exercise.addExerciseDialog.equipmentLabel', 'Equipment')}
         </Label>
-        <Textarea
-          id="equipment"
-          value={newExerciseEquipment}
-          onChange={(e) => setNewExerciseEquipment(e.target.value)}
-          className="col-span-3"
-        />
+        <div className="col-span-3">
+          <TagInput
+            id="equipment"
+            value={newExerciseEquipment}
+            onChange={setNewExerciseEquipment}
+            suggestions={CANONICAL_EQUIPMENT}
+            resolveValue={resolveCanonicalOrCustomEquipment}
+            getLabel={(eq) => localizeEquipment(t, eq)}
+            isCanonical={isCanonicalEquipment}
+          />
+        </div>
       </div>
 
       {/* Primary Muscles */}
@@ -301,15 +316,21 @@ export default function AddCustomExerciseForm({
         <Label htmlFor="primaryMuscles" className="text-right mt-1">
           {t(
             'exercise.addExerciseDialog.primaryMusclesLabel',
-            'Primary Muscles (comma-separated)'
+            'Primary Muscles'
           )}
         </Label>
-        <Textarea
-          id="primaryMuscles"
-          value={newExercisePrimaryMuscles}
-          onChange={(e) => setNewExercisePrimaryMuscles(e.target.value)}
-          className="col-span-3"
-        />
+        <div className="col-span-3">
+          <TagInput
+            id="primaryMuscles"
+            value={newExercisePrimaryMuscles}
+            onChange={setNewExercisePrimaryMuscles}
+            suggestions={CANONICAL_MUSCLES}
+            resolveValue={resolveCanonicalOrCustomMuscle}
+            getLabel={(m) => localizeMuscle(t, m)}
+            isCanonical={isCanonicalMuscle}
+            showBodyMapHint
+          />
+        </div>
       </div>
 
       {/* Secondary Muscles */}
@@ -317,15 +338,21 @@ export default function AddCustomExerciseForm({
         <Label htmlFor="secondaryMuscles" className="text-right mt-1">
           {t(
             'exercise.addExerciseDialog.secondaryMusclesLabel',
-            'Secondary Muscles (comma-separated)'
+            'Secondary Muscles'
           )}
         </Label>
-        <Textarea
-          id="secondaryMuscles"
-          value={newExerciseSecondaryMuscles}
-          onChange={(e) => setNewExerciseSecondaryMuscles(e.target.value)}
-          className="col-span-3"
-        />
+        <div className="col-span-3">
+          <TagInput
+            id="secondaryMuscles"
+            value={newExerciseSecondaryMuscles}
+            onChange={setNewExerciseSecondaryMuscles}
+            suggestions={CANONICAL_MUSCLES}
+            resolveValue={resolveCanonicalOrCustomMuscle}
+            getLabel={(m) => localizeMuscle(t, m)}
+            isCanonical={isCanonicalMuscle}
+            showBodyMapHint
+          />
+        </div>
       </div>
 
       {/* Instructions */}
@@ -369,7 +396,11 @@ export default function AddCustomExerciseForm({
               >
                 <img
                   src={url}
-                  alt={`preview ${index}`}
+                  alt={t(
+                    'exercises.addCustomExerciseForm.preview',
+                    'preview {{index}}',
+                    { index }
+                  )}
                   className="w-full h-full object-cover rounded"
                 />
                 <Button
