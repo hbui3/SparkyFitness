@@ -4,3 +4,6 @@ SparkyFitness allows you to easily track your exercise routines, including detai
 
 For high-intensity conditioning, interval timers, and CrossFit-style WOD scoring, check out the dedicated [Interval, Circuit & WOD Workouts](/features/exercises/interval-wod-workouts) guide.
 
+### Cautious adaptive workouts
+
+Starting an adaptive workout applies its suggested volume reduction to a copy of the workout. Warm-up sets and the saved template are preserved. Missing recovery data is displayed as insufficient data; an unrecorded muscle load does not confirm recovery.

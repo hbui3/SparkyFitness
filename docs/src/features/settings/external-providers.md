@@ -43,7 +43,7 @@ For setup instructions, import options, and licensing information, see the [Cana
 
 ## Swedish Food Agency (Livsmedelsverket)
 
-The Swedish Food Agency (*Livsmedelsverket*) publishes the authoritative Swedish Food Composition Database (*Livsmedelsdatabasen*) containing ~2,600 analyzed and calculated food items with over 50 nutritional components each. It is free open data licensed under Creative Commons Attribution 4.0 (CC BY 4.0), requires no credentials or API keys, and is enabled by default.
+The Swedish Food Agency (_Livsmedelsverket_) publishes the authoritative Swedish Food Composition Database (_Livsmedelsdatabasen_) containing ~2,600 analyzed and calculated food items with over 50 nutritional components each. It is free open data licensed under Creative Commons Attribution 4.0 (CC BY 4.0), requires no credentials or API keys, and is enabled by default.
 
 SparkyFitness supports both **live on-demand search** across the official open data API in Swedish and English, as well as **offline bulk catalog import** to cache the entire catalog locally.
 
@@ -158,3 +158,7 @@ The capture is stored per provider, not per user, and contains raw health data: 
 :::
 
 Join the **CodeWithCJ** community on [Discord](https://discord.gg/vcnMT5cPEA) and reach out if you'd like to share a capture to help us improve the sync logic!
+
+### Checking a workout import
+
+Speediance and iGPSPORT imports show imported, updated, and failed workout counts together with the selected period. A partially failed import keeps that period available for retry and does not advance the last successful sync time.

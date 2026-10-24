@@ -965,7 +965,8 @@ export async function listPantryItems(
 export async function listMealPlanEntries(
   userId: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  includeOverdue = false
 ): Promise<MealPlanEntryRow[]> {
   return withClient(userId, async (client) => {
     const { rows: entries } = await client.query<
@@ -987,14 +988,15 @@ export async function listMealPlanEntries(
                 AS completed_at,
               created_at, updated_at
          FROM coach_meal_plan_entries
-        WHERE user_id = $1 AND plan_date BETWEEN $2::date AND $3::date
+        WHERE user_id = $1 AND (plan_date BETWEEN $2::date AND $3::date
+          OR ($4::boolean AND plan_date < $2::date AND status = 'planned'))
         ORDER BY plan_date,
           CASE slot
             WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2
             WHEN 'dinner' THEN 3 ELSE 4
           END,
           created_at`,
-      [userId, startDate, endDate]
+      [userId, startDate, endDate, includeOverdue]
     );
     if (entries.length === 0) return [];
     const entryIds = entries.map((entry) => entry.id);
@@ -1775,7 +1777,7 @@ export async function generatePlan(
 export async function applyPlanEntryAction(
   userId: string,
   entryId: string,
-  action: 'prepared' | 'eaten_out' | 'skipped',
+  action: 'prepared' | 'eaten_out' | 'skipped' | 'planned',
   operationId: string,
   notes: string | null
 ): Promise<CoachMealPlanEntryStatus | null> {
@@ -1793,7 +1795,56 @@ export async function applyPlanEntryAction(
     const entry = rows[0];
     if (!entry) return null;
     if (entry.status === action) return entry.status;
-    if (entry.status !== 'planned') {
+    if (action === 'planned' && entry.status !== 'replaced') {
+      const { rows: occupied } = await client.query<{ id: string }>(
+        `SELECT other.id FROM coach_meal_plan_entries other
+          JOIN coach_meal_plan_entries original
+            ON original.user_id = other.user_id AND original.plan_date = other.plan_date
+           AND original.slot = other.slot
+         WHERE original.id = $1 AND original.user_id = $2
+           AND other.id <> $1 AND other.status = 'planned'`,
+        [entryId, userId]
+      );
+      if (occupied.length > 0)
+        throw new CoachMealPlanningConflictError(
+          'Für diesen Zeitpunkt ist bereits eine andere Mahlzeit geplant. Entferne sie zuerst, bevor du die frühere Aktion rückgängig machst.'
+        );
+      if (entry.status === 'prepared') {
+        const { rows: consumed } = await client.query<{
+          pantry_item_id: string;
+          quantity: number;
+          unit: CoachPlanningUnit;
+        }>(
+          `SELECT pantry_item_id, (-SUM(delta_quantity))::float8 AS quantity, unit
+             FROM coach_pantry_events
+            WHERE user_id = $1 AND source = 'meal_plan' AND source_id = $2
+            GROUP BY pantry_item_id, unit HAVING SUM(delta_quantity) < 0
+            ORDER BY pantry_item_id`,
+          [userId, entryId]
+        );
+        for (const ingredient of consumed) {
+          await client.query(
+            `UPDATE coach_pantry_items SET quantity = quantity + $3,
+               is_active = TRUE, updated_at = now() WHERE id = $1 AND user_id = $2`,
+            [ingredient.pantry_item_id, userId, ingredient.quantity]
+          );
+          await client.query(
+            `INSERT INTO coach_pantry_events
+              (user_id, pantry_item_id, event_type, delta_quantity, unit, source, source_id, idempotency_key, notes)
+             VALUES ($1, $2, 'adjust', $3, $4, 'meal_plan', $5, $6, $7)`,
+            [
+              userId,
+              ingredient.pantry_item_id,
+              ingredient.quantity,
+              ingredient.unit,
+              entryId,
+              `undo:${operationId}:${entryId}:${ingredient.pantry_item_id}`,
+              'Zubereitung rückgängig gemacht.',
+            ]
+          );
+        }
+      }
+    } else if (entry.status !== 'planned') {
       throw new CoachMealPlanningConflictError(
         `A ${entry.status} meal can no longer be changed.`
       );
@@ -1947,8 +1998,10 @@ export async function replacePlanEntry(
       const { rows: replacements } = await client.query<{
         id: string;
         recipe_key: string;
+        servings: number;
+        plan_date: string;
       }>(
-        `SELECT id, recipe_key FROM coach_meal_plan_entries
+        `SELECT id, recipe_key, servings::float8 AS servings, plan_date FROM coach_meal_plan_entries
           WHERE user_id = $1 AND replacement_for_id = $2
           ORDER BY created_at DESC LIMIT 1`,
         [userId, entryId]
@@ -1962,7 +2015,9 @@ export async function replacePlanEntry(
       if (
         !notesContainLine(oldEntry.notes, operationMarker) ||
         !notesContainLine(oldEntry.notes, recipeMarker) ||
-        existing.recipe_key !== replacement.recipeKey
+        existing.recipe_key !== replacement.recipeKey ||
+        existing.servings !== replacement.servings ||
+        existing.plan_date !== replacement.planDate
       ) {
         throw new CoachMealPlanningConflictError(
           'The replacement operation id was already used with a different operation or recipe.'
@@ -1988,6 +2043,17 @@ export async function replacePlanEntry(
         'The replacement operation id was already used for another meal.'
       );
     }
+    if (replacement.planDate !== oldEntry.plan_date) {
+      const { rows: occupied } = await client.query<{ id: string }>(
+        `SELECT id FROM coach_meal_plan_entries WHERE user_id = $1
+          AND plan_date = $2::date AND slot = $3 AND status = 'planned'`,
+        [userId, replacement.planDate, oldEntry.meal_slot]
+      );
+      if (occupied.length > 0)
+        throw new CoachMealPlanningConflictError(
+          'Für diesen Tag ist bereits eine Mahlzeit in diesem Zeitfenster geplant.'
+        );
+    }
     await client.query(
       `UPDATE coach_meal_plan_entries
           SET status = 'replaced', updated_at = now(),
@@ -1997,7 +2063,7 @@ export async function replacePlanEntry(
     );
     const replacementEntry: PlanEntryInput = {
       ...replacement,
-      planDate: oldEntry.plan_date,
+      planDate: replacement.planDate,
       mealSlot: oldEntry.meal_slot,
       replacementForEntryId: entryId,
     };

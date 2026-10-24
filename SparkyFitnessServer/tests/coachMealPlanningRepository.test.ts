@@ -13,6 +13,7 @@ import {
   getOpenShoppingList,
   getPlanGenerationResult,
   listPantryItems,
+  listMealPlanEntries,
   recalculateShoppingList,
   replacePlanEntry,
   updatePantryItem,
@@ -1589,7 +1590,14 @@ describe('coachMealPlanningRepository', () => {
       }
       if (sql.startsWith('SELECT id, recipe_key')) {
         return oldStatus === 'replaced'
-          ? [{ id: newEntryId, recipe_key: planEntry.recipeKey }]
+          ? [
+              {
+                id: newEntryId,
+                recipe_key: planEntry.recipeKey,
+                servings: planEntry.servings,
+                plan_date: planEntry.planDate,
+              },
+            ]
           : [];
       }
       if (
@@ -1734,5 +1742,145 @@ describe('coachMealPlanningRepository', () => {
     vi.mocked(getClient).mockResolvedValue(client);
 
     await expect(recalculateShoppingList('user-1')).resolves.toBeNull();
+  });
+  it('moves a replacement to the requested date instead of retaining the original date', async () => {
+    const { client, query } = mockClient((sql) => {
+      if (sql.startsWith('SELECT id, meal_plan_id AS plan_id, status'))
+        return [
+          {
+            id: 'old',
+            plan_id: 'plan',
+            status: 'planned',
+            plan_date: '2026-09-02',
+            meal_slot: 'dinner',
+            notes: null,
+          },
+        ];
+      if (sql.startsWith('INSERT INTO coach_meal_plan_entries'))
+        return [{ id: 'new' }];
+      if (sql.startsWith('INSERT INTO coach_pantry_items'))
+        return [{ id: 'pantry' }];
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+    await replacePlanEntry('owner', 'old', 'move', {
+      ...planEntry,
+      planDate: '2026-09-04',
+    });
+    const insert = query.mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO coach_meal_plan_entries')
+    );
+    expect(insert?.[1]?.[2]).toBe('2026-09-04');
+    expect(
+      query.mock.calls.some(([sql]) =>
+        String(sql).includes('quantity = quantity -')
+      )
+    ).toBe(false);
+  });
+  it('includes still-planned meals from earlier dates in the visible backlog', async () => {
+    const { client, query } = mockClient((sql) =>
+      sql.includes('FROM coach_meal_plan_entries')
+        ? [{ id: 'old-entry', plan_date: '2026-08-01', status: 'planned' }]
+        : []
+    );
+    vi.mocked(getClient).mockResolvedValue(client);
+    const entries = await listMealPlanEntries(
+      'owner',
+      '2026-10-24',
+      '2026-10-28',
+      true
+    );
+    expect(entries[0]?.plan_date).toBe('2026-08-01');
+    const lookup = query.mock.calls.find(([sql]) =>
+      String(sql).includes('FROM coach_meal_plan_entries')
+    );
+    expect(compactSql(String(lookup?.[0]))).toContain(
+      "OR ($4::boolean AND plan_date < $2::date AND status = 'planned')"
+    );
+    expect(lookup?.[1]).toEqual(['owner', '2026-10-24', '2026-10-28', true]);
+  });
+
+  it('restores consumed stock once on undo and handles a second preparation/undo cycle', async () => {
+    let status = 'prepared';
+    let stock = 500;
+    let consumed = 200;
+    const { client, query } = mockClient((sql, parameters) => {
+      if (
+        sql.startsWith(
+          'SELECT id, status, plan_date::text AS plan_date FROM coach_meal_plan_entries'
+        )
+      )
+        return [{ id: 'entry', status }];
+      if (sql.startsWith('SELECT pantry_item_id, (-SUM'))
+        return [{ pantry_item_id: 'pantry', quantity: consumed, unit: 'g' }];
+      if (
+        sql.includes('FROM coach_meal_plan_ingredients') &&
+        sql.includes('FOR UPDATE')
+      )
+        return [
+          {
+            id: 'ingredient',
+            pantry_item_id: 'pantry',
+            name: 'Reis',
+            quantity: 200,
+            unit: 'g',
+            shopping_required: true,
+          },
+        ];
+      if (sql.startsWith('SELECT quantity::float8'))
+        return [{ quantity: stock, usable_on_relevant_date: true }];
+      if (sql.startsWith('UPDATE coach_pantry_items'))
+        stock += sql.includes('quantity + $3')
+          ? Number(parameters[2])
+          : -Number(parameters[2]);
+      if (sql.startsWith('INSERT INTO coach_pantry_events'))
+        consumed -= Number(parameters[2]);
+      if (sql.startsWith('UPDATE coach_meal_plan_entries'))
+        status = String(parameters[2]);
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+    await applyPlanEntryAction('owner', 'entry', 'planned', 'undo-1', null);
+    await applyPlanEntryAction('owner', 'entry', 'planned', 'undo-1', null);
+    expect(stock).toBe(700);
+    expect(consumed).toBe(0);
+    await applyPlanEntryAction('owner', 'entry', 'prepared', 'prepare-2', null);
+    expect(stock).toBe(500);
+    await applyPlanEntryAction('owner', 'entry', 'planned', 'undo-2', null);
+    expect(stock).toBe(700);
+    expect(consumed).toBe(0);
+    expect(
+      query.mock.calls.filter(([sql]) =>
+        String(sql).includes('INSERT INTO coach_pantry_events')
+      )
+    ).toHaveLength(3);
+  });
+
+  it('leaves stock untouched when another planned meal occupies the slot being restored', async () => {
+    const { client, query } = mockClient((sql) => {
+      if (
+        sql.startsWith(
+          'SELECT id, status, plan_date::text AS plan_date FROM coach_meal_plan_entries'
+        )
+      )
+        return [{ id: 'entry', status: 'prepared' }];
+      if (sql.startsWith('SELECT other.id')) return [{ id: 'other' }];
+      return [];
+    });
+    vi.mocked(getClient).mockResolvedValue(client);
+    await expect(
+      applyPlanEntryAction('owner', 'entry', 'planned', 'undo', null)
+    ).rejects.toBeInstanceOf(CoachMealPlanningConflictError);
+    expect(
+      query.mock.calls.some(([sql]) =>
+        String(sql).includes('UPDATE coach_pantry_items')
+      )
+    ).toBe(false);
+    expect(query.mock.calls.some(([sql]) => String(sql) === 'ROLLBACK')).toBe(
+      true
+    );
+  });
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 });

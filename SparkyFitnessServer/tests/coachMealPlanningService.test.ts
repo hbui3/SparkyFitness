@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addDays, type RetailProductRef } from '@workspace/shared';
+import {
+  addDays,
+  coachMealPlanningDashboardResponseSchema,
+  type RetailProductRef,
+} from '@workspace/shared';
 import type {
   MealPlanEntryRow,
   PantryProjectionRow,
@@ -1273,6 +1277,8 @@ describe('coach meal-planning service', () => {
   });
 
   it('delegates purchases and terminal meal actions so repository transactions own stock changes', async () => {
+    repositoryMocks.getMealPlanEntry.mockResolvedValue(planEntryRow());
+    mealCatalogMocks.getCoachMealSuggestionById.mockResolvedValue(mainMeal);
     repositoryMocks.applyPlanEntryAction.mockResolvedValue('prepared');
 
     await coachMealPlanningService.confirmShoppingPurchase(USER_ID, {
@@ -1441,6 +1447,73 @@ describe('coach meal-planning service', () => {
       expect.objectContaining({
         id: LIST_ID,
         items: [],
+      })
+    );
+  });
+  it('marks a stored plan unsafe when the current food rules remove its recipe', async () => {
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([planEntryRow()]);
+    mealCatalogMocks.getCoachMealCatalog.mockResolvedValue([]);
+    const dashboard = await coachMealPlanningService.getDashboard(
+      USER_ID,
+      '2026-09-01',
+      3
+    );
+    expect(dashboard.planEntries[0]?.safetyStatus).toBe('needs_user_input');
+    expect(repositoryMocks.applyPlanEntryAction).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the current food rules at preparation and blocks an outdated recipe', async () => {
+    mealCatalogMocks.getCoachMealSuggestionById.mockResolvedValue(null);
+    await expect(
+      coachMealPlanningService.applyMealPlanAction(USER_ID, ENTRY_ID, {
+        action: 'prepared',
+        operationId: OPERATION_ID,
+      })
+    ).rejects.toBeInstanceOf(CoachMealPlanningConflictError);
+    expect(repositoryMocks.applyPlanEntryAction).not.toHaveBeenCalled();
+  });
+  it('keeps overdue open entries outside the selected nutrition totals', async () => {
+    repositoryMocks.listMealPlanEntries.mockResolvedValue([
+      planEntryRow({ id: ITEM_ID, plan_date: '2026-08-20' }),
+      planEntryRow(),
+    ]);
+    const result = await coachMealPlanningService.getDashboard(
+      USER_ID,
+      '2026-09-01',
+      1
+    );
+    expect(result.overdueEntries).toHaveLength(1);
+    expect(result.overdueEntries?.[0]?.date).toBe('2026-08-20');
+    expect(result.planEntries).toHaveLength(1);
+    expect(result.dailyNutrition[0]?.plannedCaloriesKcal).toBe(
+      planEntryRow().estimated_calories
+    );
+    expect(() =>
+      coachMealPlanningDashboardResponseSchema.parse(result)
+    ).not.toThrow();
+  });
+
+  it('scales a rescheduled meal to the explicitly selected portion size', async () => {
+    repositoryMocks.getMealPlanEntry.mockResolvedValue(planEntryRow());
+    mealCatalogMocks.getCoachMealSuggestionById.mockResolvedValue(mainMeal);
+    repositoryMocks.replacePlanEntry.mockResolvedValue({
+      entryId: ITEM_ID,
+      created: true,
+    });
+    await coachMealPlanningService.replaceMealPlanEntry(USER_ID, ENTRY_ID, {
+      operationId: OPERATION_ID,
+      recipeKey: mainMeal.id,
+      servings: 1.5,
+      date: '2026-09-03',
+    });
+    expect(repositoryMocks.replacePlanEntry).toHaveBeenCalledWith(
+      USER_ID,
+      ENTRY_ID,
+      OPERATION_ID,
+      expect.objectContaining({
+        planDate: '2026-09-03',
+        servings: 1.5,
+        estimatedCalories: mainMeal.calories * 1.5,
       })
     );
   });

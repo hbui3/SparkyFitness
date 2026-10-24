@@ -22,6 +22,8 @@ import type {
 } from '@workspace/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   AlertDialog,
@@ -67,7 +69,12 @@ interface MealPlanViewProps {
   onDaysChange: (days: number) => void;
   onGenerate: (replaceExisting: boolean) => void;
   onAction: (entryId: string, action: MealPlanAction) => void;
-  onReplace: (entryId: string, recipeKey: string) => void;
+  onReplace: (
+    entryId: string,
+    recipeKey: string,
+    servings: number,
+    date: string
+  ) => void;
   onDelete?: (entryId: string) => void;
   isGenerating: boolean;
   isUpdating: boolean;
@@ -296,12 +303,26 @@ export default function MealPlanView({
   const [replacementEntry, setReplacementEntry] =
     useState<CoachMealPlanEntryResponse | null>(null);
   const [replacementRecipeKey, setReplacementRecipeKey] = useState('');
+  const [replacementServings, setReplacementServings] = useState('1');
+  const [replacementDate, setReplacementDate] = useState(startDate);
   const [deletingEntry, setDeletingEntry] =
     useState<CoachMealPlanEntryResponse | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en';
   const dates = useMemo(
-    () => Array.from({ length: days }, (_, index) => addDays(startDate, index)),
-    [days, startDate]
+    () =>
+      [
+        ...new Set([
+          ...entries
+            .filter(
+              (entry) => entry.status === 'planned' && entry.date < startDate
+            )
+            .map((entry) => entry.date),
+          ...Array.from({ length: days }, (_, index) =>
+            addDays(startDate, index)
+          ),
+        ]),
+      ].sort(),
+    [days, startDate, entries]
   );
   const dailyNutritionByDate = useMemo(
     () => new Map(dailyNutrition.map((summary) => [summary.date, summary])),
@@ -309,16 +330,17 @@ export default function MealPlanView({
   );
   const replacementOptions = useMemo(() => {
     if (!replacementEntry) return [];
-    return catalog.filter(
-      (item) =>
-        item.slots.includes(replacementEntry.slot) &&
-        item.recipe.recipeKey !== replacementEntry.recipe.recipeKey
-    );
+    return catalog.filter((item) => item.slots.includes(replacementEntry.slot));
   }, [catalog, replacementEntry]);
   const selectedReplacement = replacementOptions.find(
     (item) => item.recipe.recipeKey === replacementRecipeKey
   );
-  const hasExistingPlan = entries.length > 0;
+  const hasExistingPlan = entries.some(
+    (entry) =>
+      entry.status !== 'replaced' &&
+      entry.date >= startDate &&
+      entry.date < addDays(startDate, days)
+  );
 
   const openReplacement = (entry: CoachMealPlanEntryResponse) => {
     const firstOption = catalog.find(
@@ -327,7 +349,14 @@ export default function MealPlanView({
         item.recipe.recipeKey !== entry.recipe.recipeKey
     );
     setReplacementEntry(entry);
-    setReplacementRecipeKey(firstOption?.recipe.recipeKey ?? '');
+    setReplacementServings(String(entry.servings));
+    setReplacementDate(entry.date < startDate ? startDate : entry.date);
+    setReplacementRecipeKey(
+      catalog.find((item) => item.recipe.recipeKey === entry.recipe.recipeKey)
+        ?.recipe.recipeKey ??
+        firstOption?.recipe.recipeKey ??
+        ''
+    );
   };
 
   return (
@@ -428,6 +457,14 @@ export default function MealPlanView({
                 )}
               </CardHeader>
               <CardContent className="space-y-3">
+                {date < startDate && (
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    {t(
+                      'settings.mealPlanning.plan.overdue',
+                      'Still open: reschedule, prepare, or skip this meal.'
+                    )}
+                  </p>
+                )}
                 {dayEntries.length === 0 ? (
                   <p className="rounded-md bg-muted/30 p-3 text-sm text-muted-foreground">
                     {t(
@@ -505,6 +542,16 @@ export default function MealPlanView({
                           </div>
                         )}
 
+                        {entry.safetyStatus === 'needs_user_input' && (
+                          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                            {t(
+                              'settings.mealPlanning.plan.safetyNeedsInput',
+                              'This meal no longer matches your current food rules. Choose a suitable alternative before preparing it.'
+                            )}
+                          </div>
+                        )}
+
                         <details className="text-sm">
                           <summary className="cursor-pointer font-medium">
                             {t(
@@ -543,7 +590,11 @@ export default function MealPlanView({
                               }
                             )}
                             onClick={() => onAction(entry.id, 'prepared')}
-                            disabled={!isPlanned || isUpdating}
+                            disabled={
+                              !isPlanned ||
+                              isUpdating ||
+                              entry.safetyStatus !== 'validated'
+                            }
                           >
                             <Check className="mr-1.5 h-4 w-4" />
                             {t(
@@ -608,6 +659,20 @@ export default function MealPlanView({
                             <RefreshCw className="mr-1.5 h-4 w-4" />
                             {t('settings.mealPlanning.plan.replace', 'Replace')}
                           </Button>
+                          {!isPlanned && entry.status !== 'replaced' && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={isUpdating}
+                              onClick={() => onAction(entry.id, 'planned')}
+                            >
+                              {t(
+                                'settings.mealPlanning.plan.undo',
+                                'Undo last action'
+                              )}
+                            </Button>
+                          )}
                           {onDelete && (
                             <Button
                               type="button"
@@ -752,6 +817,38 @@ export default function MealPlanView({
             </p>
           ) : (
             <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="replacement-servings">
+                    {t(
+                      'settings.mealPlanning.plan.portionSize',
+                      'Portion size'
+                    )}
+                  </Label>
+                  <Input
+                    id="replacement-servings"
+                    type="number"
+                    min={0.1}
+                    max={6}
+                    step={0.01}
+                    value={replacementServings}
+                    onChange={(event) =>
+                      setReplacementServings(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="replacement-date">
+                    {t('settings.mealPlanning.plan.mealDate', 'Meal date')}
+                  </Label>
+                  <Input
+                    id="replacement-date"
+                    type="date"
+                    value={replacementDate}
+                    onChange={(event) => setReplacementDate(event.target.value)}
+                  />
+                </div>
+              </div>
               <Select
                 value={replacementRecipeKey}
                 onValueChange={setReplacementRecipeKey}
@@ -779,9 +876,18 @@ export default function MealPlanView({
                 <div className="rounded-md bg-muted/40 p-3 text-sm">
                   <p>{selectedReplacement.recipe.description}</p>
                   <p className="mt-2 text-muted-foreground">
-                    {Math.round(selectedReplacement.caloriesKcal)} kcal ·{' '}
-                    {formatPlanningQuantity(selectedReplacement.proteinG)} g{' '}
-                    {t('settings.mealPlanning.plan.protein', 'protein')}
+                    {Math.round(
+                      (selectedReplacement.caloriesKcal *
+                        Number(replacementServings)) /
+                        selectedReplacement.servings
+                    )}{' '}
+                    kcal ·{' '}
+                    {formatPlanningQuantity(
+                      (selectedReplacement.proteinG *
+                        Number(replacementServings)) /
+                        selectedReplacement.servings
+                    )}{' '}
+                    g {t('settings.mealPlanning.plan.protein', 'protein')}
                   </p>
                 </div>
               )}
@@ -793,11 +899,22 @@ export default function MealPlanView({
             </Button>
             <Button
               disabled={
-                !replacementEntry || !replacementRecipeKey || isUpdating
+                !replacementEntry ||
+                !replacementRecipeKey ||
+                isUpdating ||
+                !replacementDate ||
+                !Number.isFinite(Number(replacementServings)) ||
+                Number(replacementServings) < 0.1 ||
+                Number(replacementServings) > 6
               }
               onClick={() => {
                 if (!replacementEntry || !replacementRecipeKey) return;
-                onReplace(replacementEntry.id, replacementRecipeKey);
+                onReplace(
+                  replacementEntry.id,
+                  replacementRecipeKey,
+                  Number(replacementServings),
+                  replacementDate
+                );
                 setReplacementEntry(null);
               }}
             >

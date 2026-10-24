@@ -26,6 +26,7 @@ import type { SyncMockOptions } from './SyncRangeDialog';
 import { CnfBulkImportDialog } from './CnfBulkImportDialog';
 import { LivsmedelsverketBulkImportDialog } from './LivsmedelsverketBulkImportDialog';
 import { Trans } from 'react-i18next';
+import WorkoutSyncResult from '@/components/WorkoutSyncResult';
 
 import {
   useConnectFitbitMutation,
@@ -234,10 +235,16 @@ export const ProviderCard = ({
     useManualSyncCorosMutation();
   const { mutate: syncHevyData, isPending: isSyncHevyPending } =
     useSyncHevyMutation();
-  const { mutate: syncSpeedianceData, isPending: isSyncSpeediancePending } =
-    useSyncSpeedianceMutation();
-  const { mutate: syncIGPSportData, isPending: isSyncIGPSportPending } =
-    useSyncIGPSportMutation();
+  const {
+    mutate: syncSpeedianceData,
+    isPending: isSyncSpeediancePending,
+    data: speedianceResult,
+  } = useSyncSpeedianceMutation();
+  const {
+    mutate: syncIGPSportData,
+    isPending: isSyncIGPSportPending,
+    data: igpsportResult,
+  } = useSyncIGPSportMutation();
   const { mutate: syncLiftosaurData, isPending: isSyncLiftosaurPending } =
     useSyncLiftosaurMutation();
   const {
@@ -566,6 +573,12 @@ export const ProviderCard = ({
   };
 
   const config = getProviderConfig();
+  const workoutSyncResult =
+    provider.provider_type === 'speediance'
+      ? speedianceResult
+      : provider.provider_type === 'igpsport'
+        ? igpsportResult
+        : undefined;
 
   return (
     <div className="space-y-3">
@@ -1101,6 +1114,15 @@ export const ProviderCard = ({
         </div>
       )}
 
+      {workoutSyncResult && (
+        <WorkoutSyncResult
+          result={workoutSyncResult}
+          isPending={isSyncSpeediancePending || isSyncIGPSportPending}
+          onRetry={() =>
+            executeSync(workoutSyncResult.startDate, workoutSyncResult.endDate)
+          }
+        />
+      )}
       <SyncRangeDialog
         isOpen={isSyncDialogOpen}
         onClose={() => setIsSyncDialogOpen(false)}

@@ -213,7 +213,7 @@ function buildReadiness(row: {
   return {
     score:
       signals.length === 0
-        ? 70
+        ? null
         : Math.round(
             signals.reduce((sum, signal) => sum + signal, 0) / signals.length
           ),
@@ -425,8 +425,9 @@ export async function getAdaptiveTrainingDashboard(
   ) {
     let kind: 'workout' | 'recovery' = 'workout';
     let workoutPresetId: number | null = null;
-    let score = readiness.score;
-    let volumeFactor = readiness.score < 60 ? 0.75 : 1;
+    const readinessScore = readiness.score ?? 50;
+    let score = readinessScore;
+    let volumeFactor = readinessScore < 60 ? 0.75 : 1;
     let rationale: AdaptiveTrainingReason[];
     let workoutSnapshot: Record<string, unknown> | null = null;
 
@@ -445,7 +446,7 @@ export async function getAdaptiveTrainingDashboard(
     } else if (settings.avoidConsecutiveTrainingDays && trainedYesterday) {
       kind = 'recovery';
       rationale = [{ code: 'trained_yesterday', muscles: [], value: null }];
-    } else if (readiness.score < 40) {
+    } else if (readinessScore < 40) {
       kind = 'recovery';
       rationale = [
         { code: 'low_readiness', muscles: [], value: readiness.score },
@@ -472,7 +473,7 @@ export async function getAdaptiveTrainingDashboard(
         )[0];
       if (!best || best.score < 35) {
         kind = 'recovery';
-        score = best?.score ?? readiness.score;
+        score = best?.score ?? readinessScore;
         rationale = best?.rationale ?? [
           { code: 'no_eligible_presets', muscles: [], value: null },
         ];
@@ -489,6 +490,16 @@ export async function getAdaptiveTrainingDashboard(
     }
     if (kind === 'recovery') {
       volumeFactor = 0.5;
+    }
+    if (muscleLoad.length === 0) {
+      rationale = rationale.filter((reason) => reason.code !== 'muscles_ready');
+    }
+    if (readiness.score === null || muscleLoad.length === 0) {
+      rationale.push({
+        code: 'insufficient_recovery_data',
+        muscles: [],
+        value: null,
+      });
     }
     const recommendationInput = {
       date,

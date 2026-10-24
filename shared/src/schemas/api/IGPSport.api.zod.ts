@@ -35,7 +35,7 @@ export const igpsportSyncRequestSchema = z
   });
 
 export const igpsportSyncResponseSchema = z.object({
-  success: z.literal(true),
+  success: z.boolean(),
   createdActivities: z.number().int().nonnegative(),
   updatedActivities: z.number().int().nonnegative(),
   failedActivities: z.number().int().nonnegative(),

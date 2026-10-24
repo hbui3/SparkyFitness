@@ -1,7 +1,11 @@
 import { tool } from 'ai';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { addDays, todayInZone } from '@workspace/shared';
+import {
+  addDays,
+  todayInZone,
+  replaceCoachMealPlanEntryRequestSchema,
+} from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import coachContextService from '../../services/coachContextService.js';
 import coachMealPlanningService from '../../services/coachMealPlanningService.js';
@@ -61,7 +65,7 @@ const ConfirmPurchaseSchema = z
 const UpdatePlannedMealSchema = z.object({
   entry_id: z.string().uuid(),
   operation_id: z.string().uuid().optional(),
-  action: z.enum(['prepared', 'eaten_out', 'skipped']),
+  action: z.enum(['prepared', 'eaten_out', 'skipped', 'planned']),
   notes: z.string().trim().min(1).max(2_000).optional(),
 });
 
@@ -69,6 +73,8 @@ const ReplacePlannedMealSchema = z.object({
   entry_id: z.string().uuid(),
   operation_id: z.string().uuid().optional(),
   recipe_key: z.string().trim().min(1).max(200),
+  servings: z.number().min(0.1).max(6).multipleOf(0.001).optional(),
+  date: replaceCoachMealPlanEntryRequestSchema.shape.date,
 });
 
 const DeletePlannedMealSchema = z.object({
@@ -334,7 +340,7 @@ export function buildMealPlanningTools(userId: string, tz: string) {
     }),
     sparky_update_planned_meal: tool({
       description:
-        'Mark a persistent planned meal as prepared, eaten outside, or skipped only after the user confirms that outcome. Prepared consumes its ingredient quantities from pantry; eaten_out and skipped only release their reservations.',
+        'Mark a persistent planned meal as prepared, eaten outside, or skipped only after the user confirms that outcome. Prepared consumes its ingredient quantities from pantry; eaten_out and skipped only release their reservations. Use planned only when the user asks to undo the previous action; it restores consumed stock if necessary.',
       inputSchema: UpdatePlannedMealSchema,
       execute: async (rawArgs, options) => {
         const parsed = UpdatePlannedMealSchema.safeParse(rawArgs ?? {});
@@ -366,7 +372,7 @@ export function buildMealPlanningTools(userId: string, tz: string) {
     }),
     sparky_replace_planned_meal: tool({
       description:
-        'Replace one planned meal with a safety-checked recipe from mealCatalog. The original reservation is released and the replacement reservation and shopping needs are calculated atomically. Use for user-requested swaps, not for merely eating outside.',
+        'Replace one planned meal with a safety-checked recipe from mealCatalog. Set servings or date to adjust a portion or reschedule, using the same recipe_key to keep the meal. The original reservation is released and the replacement reservation and shopping needs are calculated atomically. Use for user-requested swaps, not for merely eating outside.',
       inputSchema: ReplacePlannedMealSchema,
       execute: async (rawArgs, options) => {
         const parsed = ReplacePlannedMealSchema.safeParse(rawArgs ?? {});
@@ -383,6 +389,8 @@ export function buildMealPlanningTools(userId: string, tz: string) {
                   options.toolCallId
                 ),
               recipeKey: parsed.data.recipe_key,
+              servings: parsed.data.servings,
+              date: parsed.data.date,
             }
           );
           return formatSuccess(

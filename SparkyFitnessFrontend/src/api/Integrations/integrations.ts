@@ -1,4 +1,8 @@
 import { apiCall } from '@/api/api';
+import type {
+  SpeedianceSyncResponse,
+  IGPSportSyncResponse,
+} from '@workspace/shared';
 
 interface IntegrationPayload {
   code: string;
@@ -83,7 +87,7 @@ export const syncSpeedianceData = async (
   providerId?: string,
   startDate?: string,
   endDate?: string
-): Promise<void> => {
+): Promise<SpeedianceSyncResponse> => {
   return apiCall('/integrations/speediance/sync', {
     method: 'POST',
     body: JSON.stringify({ fullSync, providerId, startDate, endDate }),
@@ -95,7 +99,7 @@ export const syncIGPSportData = async (
   providerId?: string,
   startDate?: string,
   endDate?: string
-): Promise<void> => {
+): Promise<IGPSportSyncResponse> => {
   return apiCall('/integrations/igpsport/sync', {
     method: 'POST',
     body: JSON.stringify({ fullSync, providerId, startDate, endDate }),

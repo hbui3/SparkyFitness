@@ -228,10 +228,12 @@ export async function syncSpeedianceData(
     endDate,
     timezone
   );
-  await updateSpeedianceLastSync(userId, credentials.providerId, new Date());
+  if (result.skippedWorkouts === 0) {
+    await updateSpeedianceLastSync(userId, credentials.providerId, new Date());
+  }
 
   return {
-    success: true,
+    success: result.skippedWorkouts === 0,
     ...result,
     startDate,
     endDate,

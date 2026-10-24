@@ -100,6 +100,23 @@ beforeEach(() => {
 });
 
 describe('syncSpeedianceData', () => {
+  it('reports a partial failure and preserves the retry watermark', async () => {
+    mocks.processWorkouts.mockResolvedValue({
+      importedWorkouts: 1,
+      importedExercises: 2,
+      skippedWorkouts: 1,
+    });
+    const result = await syncSpeedianceData('user-1', 'user-1', {
+      providerId: 'provider-1',
+      fullSync: false,
+    });
+    expect(result).toMatchObject({
+      success: false,
+      importedWorkouts: 1,
+      skippedWorkouts: 1,
+    });
+    expect(mocks.updateLastSync).not.toHaveBeenCalled();
+  });
   it('enriches exercises with cached action-library muscle metadata', async () => {
     await syncSpeedianceData('user-1', 'user-1', {
       providerId: 'provider-1',

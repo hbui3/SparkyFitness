@@ -156,9 +156,11 @@ describe('syncIGPSportData', () => {
 
     expect(mocks.importFitFiles).toHaveBeenCalledTimes(1);
     expect(response).toMatchObject({
+      success: false,
       createdActivities: 1,
       updatedActivities: 0,
       failedActivities: 1,
     });
+    expect(mocks.updateLastSync).not.toHaveBeenCalled();
   });
 });

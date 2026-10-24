@@ -544,11 +544,41 @@ export function createWorkoutPlaybackDraftFromPreset(
 export function createWorkoutPlaybackRouteState(
   preset: WorkoutPreset,
   entryDate: string,
-  returnTo?: string
+  returnTo?: string,
+  volumeFactor = 1
 ): WorkoutPlaybackRouteState {
+  const factor = Math.min(1, Math.max(0.5, volumeFactor));
+  const adjustedPreset: WorkoutPreset = {
+    ...preset,
+    exercises: preset.exercises.map((exercise) => {
+      const isWarmup = (set: WorkoutPresetSet) =>
+        /warm[ -]?up|aufwärm/i.test(set.set_type ?? '');
+      const workingSets = exercise.sets.filter((set) => !isWarmup(set));
+      const count = Math.max(1, Math.floor(workingSets.length * factor));
+      const fewerSets = count < workingSets.length;
+      let keptWorkingSets = 0;
+      const selectedSets = exercise.sets.filter(
+        (set) => isWarmup(set) || ++keptWorkingSets <= count
+      );
+      return {
+        ...exercise,
+        sets: selectedSets.map((set, index) => ({
+          ...set,
+          set_number: index + 1,
+          // Timed sets and single working sets also need an actual reduction.
+          ...(set.duration && !fewerSets && !isWarmup(set)
+            ? { duration: Math.max(1, Math.floor(set.duration * factor)) }
+            : {}),
+          ...(set.reps && !set.duration && !fewerSets && !isWarmup(set)
+            ? { reps: Math.max(1, Math.floor(set.reps * factor)) }
+            : {}),
+        })),
+      };
+    }),
+  };
   return {
     returnTo,
-    draft: createWorkoutPlaybackDraftFromPreset(preset, entryDate),
+    draft: createWorkoutPlaybackDraftFromPreset(adjustedPreset, entryDate),
   };
 }
 

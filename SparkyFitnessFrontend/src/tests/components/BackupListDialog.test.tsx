@@ -91,6 +91,15 @@ const mockUseBackupList = (
 };
 
 describe('BackupListDialog', () => {
+  const originalDateFormat = Date.prototype.toLocaleDateString;
+  beforeAll(() => {
+    jest
+      .spyOn(Date.prototype, 'toLocaleDateString')
+      .mockImplementation(function (this: Date, locale, options) {
+        return originalDateFormat.call(this, locale ?? 'en-US', options);
+      });
+  });
+  afterAll(() => jest.restoreAllMocks());
   beforeEach(() => {
     jest.clearAllMocks();
     mockedUseDownloadBackupFile.mockReturnValue({

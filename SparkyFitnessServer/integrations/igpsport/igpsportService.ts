@@ -126,9 +126,11 @@ export async function syncIGPSportData(
     pageNumber += 1;
   }
 
-  await updateIGPSportLastSync(userId, credentials.providerId, new Date());
+  if (failedActivities === 0) {
+    await updateIGPSportLastSync(userId, credentials.providerId, new Date());
+  }
   return {
-    success: true,
+    success: failedActivities === 0,
     createdActivities,
     updatedActivities,
     failedActivities,

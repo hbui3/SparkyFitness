@@ -1,4 +1,5 @@
 import { allergenPreferenceKeys } from '@/api/keys/meals';
+import { coachMealPlanningKeys } from '@/api/keys/settings';
 import { allergenPreferenceService } from '@/api/allergenPreferences';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -22,6 +23,9 @@ export const useAddAllergenPreferenceMutation = () => {
       allergenPreferenceService.add(allergenName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: allergenPreferenceKeys.all });
+      void queryClient.invalidateQueries({
+        queryKey: coachMealPlanningKeys.all,
+      });
     },
     meta: {
       errorMessage: i18n.t(
@@ -42,6 +46,9 @@ export const useRemoveAllergenPreferenceMutation = () => {
     mutationFn: (id: string) => allergenPreferenceService.remove(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: allergenPreferenceKeys.all });
+      void queryClient.invalidateQueries({
+        queryKey: coachMealPlanningKeys.all,
+      });
     },
     meta: {
       errorMessage: i18n.t(

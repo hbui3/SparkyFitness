@@ -22,6 +22,7 @@ import AnnouncementDialog, {
 } from '@/components/AnnouncementDialog';
 import AppSetup from '@/components/AppSetup';
 import { Toaster } from '@/components/ui/toaster';
+import PwaUpdateNotice from '@/components/PwaUpdateNotice';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   createBrowserRouter,
@@ -491,6 +492,7 @@ const router = createBrowserRouter([
 const App = () => {
   return (
     <>
+      <PwaUpdateNotice />
       <ReactQueryDevtools buttonPosition="top-left" initialIsOpen={false} />
       <ChatbotVisibilityProvider>
         <ChatToolCategoriesProvider>

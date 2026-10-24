@@ -5,7 +5,7 @@ import express, {
 } from 'express';
 // @ts-expect-error TS(7016): supertest has no declaration in this workspace.
 import request from 'supertest';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const serviceMocks = vi.hoisted(() => ({
   getDashboard: vi.fn(),
@@ -68,7 +68,10 @@ app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 describe('coach meal-planning routes', () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-01T12:00:00Z'));
     vi.clearAllMocks();
     vi.mocked(coachMealPlanningService.getDashboard).mockResolvedValue({
       startDate: '2026-09-01',

@@ -3335,7 +3335,12 @@
         "replaceTitle": "Replace meal",
         "replaceDescription": "Choose another meal for this slot. The replaced entry remains visible in its history.",
         "replacementLabel": "Replacement meal",
-        "noReplacement": "No suitable replacement is available."
+        "noReplacement": "No suitable replacement is available.",
+        "mealDate": "Meal date",
+        "overdue": "Still open: reschedule, prepare, or skip this meal.",
+        "portionSize": "Portion size",
+        "startDate": "Plan starting on",
+        "undo": "Undo last action"
       },
       "shopping": {
         "title": "Shopping list",
@@ -7410,7 +7415,12 @@
     "speedianceSyncError": "Speediance sync failed. Check the email, password, and region.",
     "speedianceSyncSuccess": "Speediance workouts synced successfully.",
     "igpsportSyncError": "iGPSPORT sync failed. Check the account, password, and region.",
-    "igpsportSyncSuccess": "iGPSPORT activities synced successfully."
+    "igpsportSyncSuccess": "iGPSPORT activities synced successfully.",
+    "workoutSyncCounts": "{{imported}} imported, {{updated}} updated, {{failed}} failed.",
+    "retryWorkoutSync": "Retry this period",
+    "workoutSyncPartial": "Sync partially completed",
+    "workoutSyncComplete": "Sync completed",
+    "workoutSyncError": "Sync failed. Check the account credentials and region, then retry the period."
   },
   "mealCreation": {
     "convertToMeal": "Create Meal from Diary",
@@ -10063,7 +10073,7 @@
     "sleep": "Sleep",
     "weeklyPlan": "Weekly plan",
     "muscleLoad": "Muscle load",
-    "noMuscleLoad": "No recent strength load found. Your muscles are treated as ready.",
+    "noMuscleLoad": "No recent strength load found. Missing records do not confirm recovery.",
     "duplicatesHidden": "{{count}} mirrored workout entries were excluded from this calculation.",
     "settingsTitle": "Adaptive training settings",
     "settingsDescription": "Choose your weekly frequency, time limit and eligible workout templates.",
@@ -10087,8 +10097,11 @@
       "poorSleep": "Sleep was short at {{value}} hours.",
       "noEligiblePresets": "No eligible workout template is configured.",
       "insufficientMuscleData": "The workout template has no muscle assignments yet.",
-      "disabled": "Adaptive workout planning is disabled."
-    }
+      "disabled": "Adaptive workout planning is disabled.",
+      "insufficientRecoveryData": "Recovery cannot be assessed yet. This is a cautious training estimate."
+    },
+    "notEnoughData": "Not enough data",
+    "noRecordedLoad": "No recorded load"
   },
   "speedianceManager": {
     "title": "Speediance Workout Manager",
@@ -10164,5 +10177,11 @@
     "workouts": "Workouts",
     "exercises": "Exercises",
     "sets": "Sets"
+  },
+  "pwa": {
+    "updateReady": "An update is ready. Save your work before reloading.",
+    "reload": "Reload",
+    "reloadTitle": "Reload the app now?",
+    "reloadDescription": "Unsaved changes will be lost. Cancel to finish and save your current work first."
   }
 }
