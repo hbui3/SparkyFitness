@@ -78,16 +78,21 @@ describe('workoutPlanTemplateService partial updates', () => {
 
     expect(
       workoutPlanTemplateRepository.updateWorkoutPlanTemplate
-    ).toHaveBeenCalledWith(9, 'user-1', {
-      plan_name: storedPlan.plan_name,
-      description: storedPlan.description,
-      start_date: storedPlan.start_date,
-      end_date: storedPlan.end_date,
-      is_active: false,
-      cycle_length_weeks: 1,
-      assignments: storedPlan.assignments,
-      currentClientDate: '2026-08-20',
-    });
+    ).toHaveBeenCalledWith(
+      9,
+      'user-1',
+      {
+        plan_name: storedPlan.plan_name,
+        description: storedPlan.description,
+        start_date: storedPlan.start_date,
+        end_date: storedPlan.end_date,
+        is_active: false,
+        cycle_length_weeks: 1,
+        assignments: storedPlan.assignments,
+        currentClientDate: '2026-08-20',
+      },
+      false
+    );
     expect(
       exerciseRepository.createExerciseEntriesFromTemplate
     ).not.toHaveBeenCalled();

@@ -52,13 +52,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+        with:
+          fetch-depth: 0
+
       - name: Check for changes
         uses: dorny/paths-filter@v3
         id: filter
         with:
-          # Ignored for pull_request events. For an upstream workflow_dispatch,
-          # compare the sync branch with the exact main commit it started from.
-          base: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || '' }}
+          # Use the full Git diff; GitHub's PR files API truncates large syncs.
+          token: ''
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'workflow_dispatch' && inputs.base_sha || '' }}
           filters: |
             frontend:
               - 'SparkyFitnessFrontend/**'

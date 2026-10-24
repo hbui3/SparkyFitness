@@ -1022,7 +1022,9 @@ describe('Android widget localization contract', () => {
         '/** Reads only the API 33+ synchronized rendering cache. */',
         broadcastStart
       );
-      const broadcastBody = locale.slice(broadcastStart, broadcastEnd);
+      const broadcastBody = locale
+        .slice(broadcastStart, broadcastEnd)
+        .replace(/\r\n/g, '\n');
       const appBranchStart = broadcastBody.indexOf(
         'val effective = if (hasAppLocaleExtras) {'
       );

@@ -159,7 +159,9 @@ describe('processWithingsMeasures malformed payloads', () => {
       UID,
       CID,
       expect.any(String),
-      expect.objectContaining({ weight: 80.5 })
+      expect.objectContaining({ weight: 80.5 }),
+      'Withings',
+      null
     );
     expect(vi.mocked(log)).toHaveBeenCalledWith(
       'warn',

@@ -326,3 +326,59 @@ describe('providerSyncScheduler', () => {
     expect(settled).toBe(true);
   });
 });
+
+describe.each(['Speediance', 'iGPSPORT'])('%s scheduled frequency', (name) => {
+  it('syncs hourly and due daily accounts, preserving manual and recent daily accounts', async () => {
+    const config = PROVIDER_SYNC_CONFIGS.find(
+      (provider) => provider.name === name
+    )!;
+    const sync = vi.spyOn(config, 'sync').mockResolvedValue(undefined);
+    vi.mocked(startProviderSync).mockImplementation(
+      async (_target, performSync) => ({ running: performSync() })
+    );
+    const rows = [
+      {
+        id: 'hourly',
+        user_id: 'user',
+        is_active: true,
+        sync_frequency: 'hourly',
+        last_sync_at: null,
+      },
+      {
+        id: 'due',
+        user_id: 'user',
+        is_active: true,
+        sync_frequency: 'daily',
+        last_sync_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      },
+      {
+        id: 'recent',
+        user_id: 'user',
+        is_active: true,
+        sync_frequency: 'daily',
+        last_sync_at: new Date(),
+      },
+      {
+        id: 'manual',
+        user_id: 'user',
+        is_active: true,
+        sync_frequency: 'manual',
+        last_sync_at: null,
+      },
+    ];
+    vi.mocked(externalProviderRepository.getProvidersByType).mockResolvedValue(
+      rows as unknown as Awaited<
+        ReturnType<typeof externalProviderRepository.getProvidersByType>
+      >
+    );
+    try {
+      await runProviderSync(config);
+      expect(sync.mock.calls.map(([provider]) => provider.id)).toEqual([
+        'hourly',
+        'due',
+      ]);
+    } finally {
+      sync.mockRestore();
+    }
+  });
+});
