@@ -134,7 +134,12 @@ async function getMeditationFirstDay(userId: string) {
   return rows[0]?.day ?? null;
 }
 
-async function getCardioMinuteDays(userId: string, from: string, to: string) {
+async function getCardioMinuteDays(
+  userId: string,
+  from: string,
+  to: string,
+  canonicalEntryIds?: readonly string[]
+) {
   const rows = await query<{ day: string; minutes: Numeric }>(
     userId,
     `SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS day,
@@ -143,14 +148,20 @@ async function getCardioMinuteDays(userId: string, from: string, to: string) {
       WHERE user_id = $1 AND entry_date BETWEEN $2 AND $3
         AND exercise_name != 'Active Calories'
         AND ${cardioPredicateSql()}
+        AND ($4::uuid[] IS NULL OR id = ANY($4::uuid[]))
       GROUP BY entry_date
       ORDER BY entry_date ASC`,
-    [userId, from, to]
+    [userId, from, to, canonicalEntryIds ?? null]
   );
   return rows.map((r) => ({ day: r.day, minutes: num(r.minutes) }));
 }
 
-async function getStrengthVolumeDays(userId: string, from: string, to: string) {
+async function getStrengthVolumeDays(
+  userId: string,
+  from: string,
+  to: string,
+  canonicalEntryIds?: readonly string[]
+) {
   const rows = await query<{ day: string; volume_kg: Numeric }>(
     userId,
     `SELECT TO_CHAR(e.entry_date, 'YYYY-MM-DD') AS day,
@@ -160,9 +171,10 @@ async function getStrengthVolumeDays(userId: string, from: string, to: string) {
        ${bodyWeightJoinSql('e')}
       WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
         AND e.exercise_name != 'Active Calories'
+        AND ($4::uuid[] IS NULL OR e.id = ANY($4::uuid[]))
       GROUP BY e.entry_date
       ORDER BY e.entry_date ASC`,
-    [userId, from, to]
+    [userId, from, to, canonicalEntryIds ?? null]
   );
   return rows.map((r) => ({ day: r.day, volumeKg: num(r.volume_kg) }));
 }

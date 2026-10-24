@@ -22,6 +22,7 @@ const USER = '00000000-0000-4000-a000-000000000001';
 describe('reportService.getTrainingLoad', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(reportRepository.getExerciseEntries).mockResolvedValue([]);
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-13T12:00:00Z'));
   });
@@ -43,7 +44,8 @@ describe('reportService.getTrainingLoad', () => {
     expect(reportRepository.getTrainingLoadSessions).toHaveBeenCalledWith(
       USER,
       '2026-09-16',
-      '2026-10-13'
+      '2026-10-13',
+      []
     );
     // Age 40, Nes max 185 (zone 4 starts at 148): 150 bpm is weight 4, so 120; 40 min unknown is 80.
     expect(result.acute).toBe(200);

@@ -202,7 +202,37 @@ export async function getCanonicalWorkoutAggregates(
   return calculateCanonicalWorkoutAggregates(canonical.allEntries);
 }
 
+/** Applies the canonical provider selection before computing heart-rate load. */
+export async function getCanonicalTrainingLoadSessions(
+  userId: string,
+  startDate: string,
+  endDate: string
+) {
+  const ids = await getCanonicalWorkoutEntryIds(userId, startDate, endDate);
+  return reportRepository.getTrainingLoadSessions(
+    userId,
+    startDate,
+    endDate,
+    ids
+  );
+}
+
+export async function getCanonicalWorkoutEntryIds(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<string[]> {
+  const canonical = await getCanonicalWorkoutEntries(
+    userId,
+    startDate,
+    endDate
+  );
+  return canonical.workoutEntries.map((entry) => entry.id);
+}
+
 export default {
+  getCanonicalWorkoutEntryIds,
+  getCanonicalTrainingLoadSessions,
   deduplicateWorkoutRows,
   getCanonicalWorkoutEntries,
   calculateExerciseCaloriesByDate,

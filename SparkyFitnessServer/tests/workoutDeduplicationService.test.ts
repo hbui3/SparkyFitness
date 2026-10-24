@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import reportRepository from '../models/reportRepository.js';
+import * as timezoneLoader from '../utils/timezoneLoader.js';
 import type { ReportExerciseEntryRow } from '../models/reportRepository.js';
 import {
   calculateCanonicalWorkoutAggregates,
   calculateExerciseCalorieSplitsByDate,
   calculateExerciseCaloriesByDate,
   deduplicateWorkoutRows,
+  getCanonicalTrainingLoadSessions,
 } from '../services/workoutDeduplicationService.js';
 
 function workoutRow(
@@ -154,4 +157,43 @@ describe('workoutDeduplicationService', () => {
       'igps-short',
     ]);
   });
+});
+
+it('excludes HealthKit mirrors and calorie summaries from training-load inputs', async () => {
+  const rows = [
+    workoutRow({
+      id: 'direct',
+      exercise_source: 'iGPSPORT',
+      activity_started_at: '2026-08-19T06:45:56Z',
+    }),
+    workoutRow({
+      id: 'mirror',
+      exercise_source: 'HealthKit',
+      activity_started_at: '2026-08-19T06:45:56Z',
+    }),
+    workoutRow({
+      id: 'calories',
+      exercise_source: 'HealthKit',
+      exercise_name: 'Active Calories',
+    }),
+  ];
+  const entries = vi
+    .spyOn(reportRepository, 'getExerciseEntries')
+    .mockResolvedValue(rows);
+  const timezone = vi
+    .spyOn(timezoneLoader, 'loadUserTimezone')
+    .mockResolvedValue('Europe/Berlin');
+  const sessions = vi
+    .spyOn(reportRepository, 'getTrainingLoadSessions')
+    .mockResolvedValue([]);
+  try {
+    await getCanonicalTrainingLoadSessions('owner', '2026-08-01', '2026-08-31');
+    expect(sessions).toHaveBeenCalledWith('owner', '2026-08-01', '2026-08-31', [
+      'direct',
+    ]);
+  } finally {
+    entries.mockRestore();
+    timezone.mockRestore();
+    sessions.mockRestore();
+  }
 });

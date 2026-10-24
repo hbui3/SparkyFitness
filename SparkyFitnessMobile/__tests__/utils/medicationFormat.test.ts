@@ -7,6 +7,12 @@ import {
   describeSchedules,
 } from '@workspace/shared';
 
+const localTime = (hours: number, minutes: number) =>
+  new Date(2000, 0, 1, hours, minutes).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
 describe('formatDose', () => {
   it('prefers the schedule dose override, in the medication dose_unit', () => {
     const med = {
@@ -101,12 +107,12 @@ describe('formatStrengthPerUnit', () => {
 
 describe('formatTimeOfDay', () => {
   it('formats an HH:MM string in a readable form', () => {
-    expect(formatTimeOfDay('08:00')).toBe('8:00 AM');
-    expect(formatTimeOfDay('21:30')).toBe('9:30 PM');
+    expect(formatTimeOfDay('08:00')).toBe(`${localTime(8, 0)}`);
+    expect(formatTimeOfDay('21:30')).toBe(`${localTime(21, 30)}`);
   });
 
   it('tolerates seconds', () => {
-    expect(formatTimeOfDay('08:00:00')).toBe('8:00 AM');
+    expect(formatTimeOfDay('08:00:00')).toBe(`${localTime(8, 0)}`);
   });
 
   it('returns malformed input unchanged', () => {
@@ -133,7 +139,7 @@ describe('describeSchedule', () => {
   it('describes a daily schedule with its time', () => {
     expect(
       describeSchedule({ schedule_type_id: 'daily', time_of_day: '08:00' })
-    ).toBe('Daily at 8:00 AM');
+    ).toBe(`Daily at ${localTime(8, 0)}`);
   });
 
   it('describes a daily schedule without a time', () => {
@@ -147,7 +153,7 @@ describe('describeSchedule', () => {
         days_of_week: [5, 1, 3],
         time_of_day: '21:00',
       })
-    ).toBe('Mon, Wed, Fri at 9:00 PM');
+    ).toBe(`Mon, Wed, Fri at ${localTime(21, 0)}`);
   });
 
   it('falls back to Weekly when day data is missing', () => {
@@ -203,7 +209,7 @@ describe('describeSchedules', () => {
   it('summarizes a single schedule', () => {
     expect(
       describeSchedules([{ schedule_type_id: 'daily', time_of_day: '08:00' }])
-    ).toBe('Daily at 8:00 AM');
+    ).toBe(`Daily at ${localTime(8, 0)}`);
   });
 
   it('merges same-frequency schedules with times sorted chronologically', () => {
@@ -212,7 +218,7 @@ describe('describeSchedules', () => {
         { schedule_type_id: 'daily', time_of_day: '20:00' },
         { schedule_type_id: 'daily', time_of_day: '08:00' },
       ])
-    ).toBe('Daily at 8:00 AM & 8:00 PM');
+    ).toBe(`Daily at ${localTime(8, 0)} & ${localTime(20, 0)}`);
   });
 
   it('separates distinct frequencies', () => {
@@ -225,7 +231,7 @@ describe('describeSchedules', () => {
           time_of_day: '21:00',
         },
       ])
-    ).toBe('Daily at 8:00 AM; Mon, Wed at 9:00 PM');
+    ).toBe(`Daily at ${localTime(8, 0)}; Mon, Wed at ${localTime(21, 0)}`);
   });
 
   it('lists PRN alongside scheduled frequencies', () => {
@@ -234,7 +240,7 @@ describe('describeSchedules', () => {
         { schedule_type_id: 'daily', time_of_day: '08:00' },
         { schedule_type_id: 'prn' },
       ])
-    ).toBe('Daily at 8:00 AM; As needed');
+    ).toBe(`Daily at ${localTime(8, 0)}; As needed`);
   });
 
   it('ignores inactive schedules', () => {
@@ -243,7 +249,7 @@ describe('describeSchedules', () => {
         { schedule_type_id: 'daily', time_of_day: '08:00' },
         { schedule_type_id: 'daily', time_of_day: '20:00', active: false },
       ])
-    ).toBe('Daily at 8:00 AM');
+    ).toBe(`Daily at ${localTime(8, 0)}`);
   });
 
   it('returns an empty summary when every schedule is inactive', () => {

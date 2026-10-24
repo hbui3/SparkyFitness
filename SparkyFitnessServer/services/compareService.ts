@@ -1,5 +1,6 @@
-import compareRepository from '../models/compareRepository.js';
 import reportRepository from '../models/reportRepository.js';
+import compareRepository from '../models/compareRepository.js';
+import workoutDeduplicationService from './workoutDeduplicationService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
 import { loadFirstDayOfWeek } from '../utils/firstDayOfWeek.js';
 import heartRateZoneService from './heartRateZoneService.js';
@@ -264,6 +265,14 @@ async function loadSeries(
   to: string,
   ctx: MetricContext
 ): Promise<DaySeries> {
+  const canonicalEntryIds =
+    key === 'cardioMinutes' || key === 'strengthVolume'
+      ? await workoutDeduplicationService.getCanonicalWorkoutEntryIds(
+          userId,
+          from,
+          to
+        )
+      : undefined;
   switch (key) {
     case 'mood':
     case 'energy':
@@ -309,7 +318,11 @@ async function loadSeries(
     case 'workoutMinutes':
     case 'trainingLoad': {
       const [sessions, firstDay] = await Promise.all([
-        reportRepository.getTrainingLoadSessions(userId, from, to),
+        workoutDeduplicationService.getCanonicalTrainingLoadSessions(
+          userId,
+          from,
+          to
+        ),
         compareRepository.getExerciseFirstDay(userId),
       ]);
       const perDay: DaySeries = {};
@@ -324,7 +337,12 @@ async function loadSeries(
     }
     case 'cardioMinutes': {
       const [rows, firstDay] = await Promise.all([
-        compareRepository.getCardioMinuteDays(userId, from, to),
+        compareRepository.getCardioMinuteDays(
+          userId,
+          from,
+          to,
+          canonicalEntryIds
+        ),
         compareRepository.getExerciseFirstDay(userId),
       ]);
       return withEventZeros(
@@ -336,7 +354,12 @@ async function loadSeries(
     }
     case 'strengthVolume': {
       const [rows, firstDay] = await Promise.all([
-        compareRepository.getStrengthVolumeDays(userId, from, to),
+        compareRepository.getStrengthVolumeDays(
+          userId,
+          from,
+          to,
+          canonicalEntryIds
+        ),
         compareRepository.getExerciseFirstDay(userId),
       ]);
       return withEventZeros(

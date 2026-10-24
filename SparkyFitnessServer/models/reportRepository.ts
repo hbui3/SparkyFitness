@@ -848,7 +848,8 @@ async function getDailyNutritionTotalsRange(
 async function getTrainingLoadSessions(
   userId: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  canonicalEntryIds?: readonly string[]
 ): Promise<
   { day: string; durationMinutes: number; avgHeartRate: number | null }[]
 > {
@@ -876,7 +877,7 @@ async function getTrainingLoadSessions(
        ) sessions
        WHERE duration_minutes > 0
        ORDER BY entry_date ASC`,
-      [userId, startDate, endDate]
+      [userId, startDate, endDate, canonicalEntryIds ?? null]
     );
     return result.rows.map(
       (row: {

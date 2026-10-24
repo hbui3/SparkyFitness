@@ -954,10 +954,8 @@ async function getTrainingConsistency(
     // Synced calorie summaries are logged as exercise entries but are not
     // workouts, the same exclusion the exercise dashboard makes.
     return buildTrainingConsistency(
-      entries.filter(
-        (entry: { exercise_name?: string }) =>
-          entry.exercise_name !== 'Active Calories'
-      ),
+      workoutDeduplicationService.deduplicateWorkoutRows(entries, timezone)
+        .workoutEntries,
       today,
       TRAINING_CONSISTENCY_WEEKS,
       firstDayOfWeek
@@ -988,7 +986,7 @@ async function getTrainingLoad(
     const timezone = await loadUserTimezone(targetUserId);
     const today = todayInZone(timezone);
     const [sessions, zones] = await Promise.all([
-      reportRepository.getTrainingLoadSessions(
+      workoutDeduplicationService.getCanonicalTrainingLoadSessions(
         targetUserId,
         addDays(today, -(LOAD_WEEKS * 7 - 1)),
         today

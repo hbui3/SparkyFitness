@@ -62,6 +62,7 @@ const stepsRow = (day: string, steps: number | null) => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(reportRepository.getExerciseEntries).mockResolvedValue([]);
   vi.mocked(loadUserTimezone).mockResolvedValue('UTC');
   vi.mocked(todayInZone).mockReturnValue(TODAY);
   vi.mocked(preferenceRepository.getUserPreferences).mockResolvedValue(
@@ -299,7 +300,8 @@ describe('loadMetricDays: events', () => {
     );
     expect(reportRepository.getTrainingLoadSessions).toHaveBeenCalledWith(
       USER,
-      ...range
+      ...range,
+      []
     );
   });
 
