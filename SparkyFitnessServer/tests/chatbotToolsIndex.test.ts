@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { createOpenAI } from '@ai-sdk/openai';
 import { vi, describe, expect, it } from 'vitest';
 import {
   buildChatbotTools,
@@ -18,10 +20,12 @@ vi.mock('../config/logging', () => ({
 // (sparky_inspect_schema, sparky_get_user_info, sparky_get_db_stats),
 // which are intentionally not ported.
 const EXPECTED_TOOLS = [
+  'sparky_food_assistant_state',
   'sparky_analyze_food_image',
   'sparky_analyze_trends',
   'sparky_check_engagement',
   'sparky_confirm_grocery_purchase',
+  'sparky_compare_metrics',
   'sparky_daily_checkin_wizard',
   'sparky_delete_planned_meal',
   'sparky_detect_patterns',
@@ -29,6 +33,7 @@ const EXPECTED_TOOLS = [
   'sparky_generate_meal_plan',
   'sparky_get_30_day_trends',
   'sparky_get_barcode',
+  'sparky_get_caffeine_kinetics',
   'sparky_get_contextual_nudge',
   'sparky_get_daily_exercise_totals',
   'sparky_get_daily_report',
@@ -71,6 +76,8 @@ const EXPECTED_TOOLS = [
   'sparky_manage_progress_photos',
   'sparky_manage_speediance_workouts',
   'sparky_manage_training_feedback',
+  'sparky_manage_run_program',
+  'sparky_manage_symptoms',
   'sparky_manage_water_containers',
   'sparky_manage_workout_plans',
   'sparky_replace_planned_meal',
@@ -82,7 +89,7 @@ const EXPECTED_TOOLS = [
   'sparky_suggest_next_meal',
   'sparky_update_planned_meal',
   'sparky_validate_meal_suggestion',
-];
+].sort();
 
 // The 'core' profile (used for Ollama and other small/local models): the
 // food, exercise, and measurement logging the system prompt centers on, plus
@@ -95,7 +102,9 @@ const EXPECTED_CORE_TOOLS = [
   'sparky_confirm_grocery_purchase',
   'sparky_delete_planned_meal',
   'sparky_generate_meal_plan',
+  'sparky_food_assistant_state',
   'sparky_get_barcode',
+  'sparky_get_caffeine_kinetics',
   'sparky_get_daily_exercise_totals',
   'sparky_get_exercise_details',
   'sparky_get_exercise_diary',
@@ -126,6 +135,8 @@ const EXPECTED_CORE_TOOLS = [
   'sparky_manage_progress_photos',
   'sparky_manage_speediance_workouts',
   'sparky_manage_training_feedback',
+  'sparky_manage_run_program',
+  'sparky_manage_symptoms',
   'sparky_manage_water_containers',
   'sparky_manage_workout_plans',
   'sparky_replace_planned_meal',
@@ -136,7 +147,7 @@ const EXPECTED_CORE_TOOLS = [
   'sparky_suggest_next_meal',
   'sparky_update_planned_meal',
   'sparky_validate_meal_suggestion',
-];
+].sort();
 
 describe('buildChatbotTools', () => {
   it('exposes exactly the MCP chat-visible tool surface', () => {
@@ -425,4 +436,24 @@ describe('buildChatToolSurface', () => {
       first
     );
   });
+});
+
+it('preserves lazy provider schemas while normalizing application Zod schemas', () => {
+  const research = createOpenAI({ apiKey: 'test-placeholder' }).tools.webSearch(
+    {}
+  );
+  const tools = buildChatbotTools(
+    'lazy-schema-review',
+    'UTC',
+    'full',
+    true,
+    ['food'],
+    false,
+    { foodResearchTool: research }
+  );
+  expect(tools.web_search.inputSchema).toBe(research.inputSchema);
+  expect(tools.sparky_manage_food.inputSchema).toBeInstanceOf(z.ZodType);
+  expect(() =>
+    z.toJSONSchema(tools.sparky_manage_food.inputSchema as z.ZodType)
+  ).not.toThrow();
 });

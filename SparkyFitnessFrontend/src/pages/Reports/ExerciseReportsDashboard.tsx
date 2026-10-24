@@ -1,10 +1,16 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { LayoutDashboard, Dumbbell, Activity } from 'lucide-react';
+import { LayoutDashboard, Dumbbell, Activity, ChevronDown } from 'lucide-react';
 import WorkoutHeatmap from './WorkoutHeatmap';
 import AdaptiveTrainingDashboard from './AdaptiveTrainingDashboard';
+import { workoutHeatmapWindow } from '@/utils/workoutHeatmap';
+import {
+  useTrainingConsistency,
+  useWorkoutDays,
+} from '@/hooks/Reports/useReports';
+import TrainingConsistencyCard from './TrainingConsistencyCard';
+import MuscleGroupRecoveryTracker from './MuscleGroupRecoveryTracker';
 import { PrProgressionChart } from './PrProgressionChart';
 import ExerciseVarietyScore from './ExerciseVarietyScore';
 import SetPerformanceAnalysisChart from './SetPerformanceAnalysisChart';
@@ -17,7 +23,6 @@ import {
   useAvailableExercises,
   useAvailableMuscleGroups,
 } from '@/hooks/Exercises/useExerciseSearch';
-import { calculateTotalTonnage } from '@/utils/reportUtil';
 import { ExerciseDashboardData } from '@/types/reports';
 import {
   calculateEstimated1RMTrendData,
@@ -36,9 +41,11 @@ import { RepsVsWeightChart } from '@/components/ExerciseCharts/RepsVsWeightChart
 import { TimeUnderTensionChart } from '@/components/ExerciseCharts/TimeUnderTensionChart';
 import { BestSetRepRangeChart } from '@/components/ExerciseCharts/BestSetRepRangeChart';
 import { TrainingVolumeByMuscleGroupChart } from '@/components/ExerciseCharts/TrainingVolumeByMuscleGroupChart';
+import { MuscleHeatmap } from '@/components/ExerciseCharts/MuscleHeatmap';
 import { PrVisualizationWidget } from '@/components/ExerciseCharts/PrVisualizationWidget';
 import { ActivityTelemetryList } from '@/components/ExerciseCharts/ActivityTelemetryList';
 import { CardioVolumeIntervalChart } from '@/components/ExerciseCharts/CardioVolumeIntervalChart';
+import { CardioSessionList } from '@/components/ExerciseCharts/CardioSessionList';
 import { ActivityInterrogationFinder } from '@/components/ExerciseCharts/ActivityInterrogationFinder';
 import { CardioPRBadgesWidget } from '@/components/ExerciseCharts/CardioPRBadgesWidget';
 import { MatchedCoursesList } from '@/components/ExerciseCharts/MatchedCoursesList';
@@ -48,7 +55,15 @@ import {
   useMatchedCourses,
   queryExerciseActivities,
 } from '@/hooks/Reports/useExerciseStats';
-import type { ExerciseProgressResponse } from '@workspace/shared';
+import {
+  predictRaceTimes,
+  runningEfforts,
+  todayInZone,
+  toWeekStart,
+  type ExerciseProgressResponse,
+} from '@workspace/shared';
+import { useRunningTrends } from '@/hooks/Reports/useRunningTrends';
+import { RunningTrendsCard } from '@/components/ExerciseCharts/RunningTrendsCard';
 
 interface ExerciseReportsDashboardProps {
   exerciseDashboardData: ExerciseDashboardData | undefined;
@@ -56,39 +71,35 @@ interface ExerciseReportsDashboardProps {
   endDate: string | null;
 }
 
-// Default layout for widgets
-const DEFAULT_LAYOUT = [
-  'keyStats',
-  'heatmap',
-  'filtersAggregation',
-  'prProgression',
+const SNAPSHOT_WIDGETS = [
+  'muscleHeatmap',
+  'muscleGroupRecovery',
   'exerciseVariety',
+  'trainingVolumeByMuscleGroup',
+];
+
+const ANALYSIS_WIDGETS = [
+  'filtersAggregation',
   'volumeTrend',
   'maxWeightTrend',
   'estimated1RMTrend',
   'bestSetRepRange',
-  'trainingVolumeByMuscleGroup',
   'repsVsWeightScatter',
   'setPerformance',
   'timeUnderTension',
+  'prProgression',
   'prVisualization',
 ];
 
-const STRENGTH_LAYOUT = [
-  'filtersAggregation',
-  'volumeTrend',
-  'maxWeightTrend',
-  'estimated1RMTrend',
-  'heatmap',
-  'prProgression',
-  'exerciseVariety',
-  'bestSetRepRange',
-  'trainingVolumeByMuscleGroup',
-  'repsVsWeightScatter',
-  'setPerformance',
-  'timeUnderTension',
-  'prVisualization',
-];
+const ANALYSIS_CHARTS = ANALYSIS_WIDGETS.filter(
+  (widgetId) => widgetId !== 'filtersAggregation'
+);
+
+function chartHasContent(node: unknown): boolean {
+  if (node == null || node === false) return false;
+  if (Array.isArray(node)) return node.some(chartHasContent);
+  return true;
+}
 
 const STRENGTH_CATEGORIES = [
   'Strength',
@@ -105,8 +116,14 @@ const ExerciseReportsDashboard = ({
   endDate,
 }: ExerciseReportsDashboardProps) => {
   const { t } = useTranslation();
-  const { formatDateInUserTimezone, weightUnit, distanceUnit } =
-    usePreferences();
+  const {
+    formatDateInUserTimezone,
+    weightUnit,
+    distanceUnit,
+    timezone,
+    firstDayOfWeek,
+    convertDistance,
+  } = usePreferences();
   const unitSystem: 'metric' | 'imperial' =
     distanceUnit === 'miles' ? 'imperial' : 'metric';
 
@@ -126,8 +143,35 @@ const ExerciseReportsDashboard = ({
   const [statsInterval, setStatsInterval] = useState<
     'day' | 'week' | 'month' | 'year'
   >('day');
+  const [showMoreAnalysis, setShowMoreAnalysis] = useState(false);
+  const [openChart, setOpenChart] = useState<string | null>(null);
+  const [isDesktop, setIsDesktop] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(min-width: 1024px)').matches
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const update = () => setIsDesktop(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   const { activeUserId } = useActiveUser();
+
+  // The heatmap always covers the last 12 months on its own lightweight
+  // query; the report's date filter only outlines days inside it (#2461).
+  const heatmapToday = todayInZone(timezone);
+  const heatmapWindow = workoutHeatmapWindow(heatmapToday);
+  const { data: workoutDaysData } = useWorkoutDays(
+    heatmapWindow.start,
+    heatmapWindow.end,
+    activeUserId
+  );
+  const workoutDays = workoutDaysData?.days ?? [];
+  const { data: trainingConsistency } = useTrainingConsistency(activeUserId);
 
   const { data: statsSummary } = useExerciseStatsSummary(
     statsInterval,
@@ -139,6 +183,16 @@ const ExerciseReportsDashboard = ({
   const { data: prMatrix } = useExercisePRs(
     activeUserId ?? undefined,
     unitSystem
+  );
+  const { trends: runningTrends } = useRunningTrends(
+    heatmapToday,
+    toWeekStart(firstDayOfWeek),
+    activeUserId ?? undefined
+  );
+  const raceTimes = useMemo(
+    () =>
+      prMatrix ? predictRaceTimes(runningEfforts(prMatrix.cardioPRs)) : [],
+    [prMatrix]
   );
   const { data: matchedCourses } = useMatchedCourses(
     activeUserId ?? undefined,
@@ -164,6 +218,12 @@ const ExerciseReportsDashboard = ({
   );
 
   const selectedExercisesForChart = useMemo(() => {
+    // All and Strength feed the activity list from these progress queries,
+    // so they stay selected with the extra charts closed. Cardio has its
+    // own session list and must not query, even if that flag is still set
+    // from the view the user just left.
+    if (viewMode === 'cardio') return [];
+
     if (selectedExercise && selectedExercise !== 'All') {
       return [selectedExercise];
     }
@@ -188,7 +248,7 @@ const ExerciseReportsDashboard = ({
       );
     }
     return [];
-  }, [selectedExercise, availableExercises]);
+  }, [selectedExercise, availableExercises, viewMode]);
 
   const { mainQueries, comparisonQueries } = useExerciseProgressQueries({
     selectedExercisesForChart,
@@ -248,7 +308,7 @@ const ExerciseReportsDashboard = ({
     mainQueries.some((q) => q.isFetching) ||
     comparisonQueries.some((q) => q.isFetching);
 
-  if (!exerciseDashboardData || loading || isFetchingCharts) {
+  if (!exerciseDashboardData || loading) {
     return (
       <div>
         {t(
@@ -259,10 +319,6 @@ const ExerciseReportsDashboard = ({
     );
   }
 
-  const totalTonnage = calculateTotalTonnage(
-    exerciseDashboardData.exerciseEntries
-  );
-
   const renderWidget = (widgetId: string) => {
     switch (widgetId) {
       case 'keyStats':
@@ -270,43 +326,8 @@ const ExerciseReportsDashboard = ({
           <KeyStatsWidget
             key="keyStats"
             data={exerciseDashboardData}
-            totalTonnage={totalTonnage}
             weightUnit={weightUnit}
           />
-        );
-      case 'heatmap':
-        return (
-          <Card key="heatmap">
-            <CardHeader>
-              <CardTitle>
-                {t(
-                  'exerciseReportsDashboard.workoutHeatmap',
-                  'Workout Heatmap'
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {exerciseDashboardData?.exerciseEntries &&
-              exerciseDashboardData.exerciseEntries.length > 0 ? (
-                <WorkoutHeatmap
-                  workoutDates={Array.from(
-                    new Set(
-                      exerciseDashboardData.exerciseEntries.map(
-                        (entry) => entry.entry_date
-                      )
-                    )
-                  )}
-                />
-              ) : (
-                <p className="text-center text-muted-foreground">
-                  {t(
-                    'exerciseReportsDashboard.noWorkoutDataAvailableForHeatmap',
-                    'No workout data available for heatmap.'
-                  )}
-                </p>
-              )}
-            </CardContent>
-          </Card>
         );
       case 'filtersAggregation':
         return (
@@ -325,6 +346,21 @@ const ExerciseReportsDashboard = ({
             availableExercises={availableExercises}
           />
         );
+      case 'muscleHeatmap': {
+        const setsByMuscle = exerciseDashboardData.muscleGroupSets || {};
+        return Object.values(setsByMuscle).some((count) => count > 0) ? (
+          <MuscleHeatmap key="muscleHeatmap" setsByMuscle={setsByMuscle} />
+        ) : null;
+      }
+      case 'muscleGroupRecovery': {
+        const recoveryData = exerciseDashboardData?.recoveryData;
+        return recoveryData && Object.keys(recoveryData).length > 0 ? (
+          <MuscleGroupRecoveryTracker
+            key="muscleGroupRecovery"
+            recoveryData={recoveryData}
+          />
+        ) : null;
+      }
       case 'prProgression':
         return selectedExercisesForChart.map((exerciseId) => {
           const prProgressionData =
@@ -462,7 +498,7 @@ const ExerciseReportsDashboard = ({
           exerciseDashboardData.muscleGroupVolume &&
           Object.keys(exerciseDashboardData.muscleGroupVolume).length > 0
             ? Object.entries(exerciseDashboardData.muscleGroupVolume).map(
-                ([muscle, volume]) => ({ muscle, volume })
+                ([muscle, volume]) => ({ muscle, volume: Math.round(volume) })
               )
             : [];
         return trainingVolumeByMuscleGroupData.length > 0 &&
@@ -607,45 +643,187 @@ const ExerciseReportsDashboard = ({
     return allTelemetryActivityEntries;
   })();
 
+  const chartTitle = (widgetId: string) => {
+    switch (widgetId) {
+      case 'volumeTrend':
+        return t('exerciseReportsDashboard.volumeTrend', 'Volume Trend');
+      case 'maxWeightTrend':
+        return t('exerciseReportsDashboard.maxWeightTrend', 'Max Weight Trend');
+      case 'estimated1RMTrend':
+        return t(
+          'exerciseReportsDashboard.estimated1RMTrend',
+          'Estimated 1RM Trend'
+        );
+      case 'bestSetRepRange':
+        return t(
+          'exerciseReportsDashboard.bestSetByRepRangeTitle',
+          'Best Set by Rep Range'
+        );
+      case 'repsVsWeightScatter':
+        return t(
+          'exerciseReportsDashboard.repsVsWeightTitle',
+          'Reps vs Weight'
+        );
+      case 'setPerformance':
+        return t(
+          'exerciseReportsDashboard.setPerformanceAnalysis.title',
+          'Set Performance Analysis'
+        );
+      case 'timeUnderTension':
+        return t(
+          'exerciseReportsDashboard.timeUnderTensionTrendTitle',
+          'Time Under Tension Trend'
+        );
+      case 'prProgression':
+        return t(
+          'exerciseReportsDashboard.prProgressionTitle',
+          'PR Progression'
+        );
+      case 'prVisualization':
+        return t(
+          'exerciseReportsDashboard.personalRecordsTitle',
+          'Personal Records'
+        );
+      default:
+        return widgetId;
+    }
+  };
+
+  const analysisSection = (
+    <>
+      <button
+        type="button"
+        className="w-full inline-flex items-center justify-center gap-1.5 rounded-md border bg-card px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+        onClick={() => setShowMoreAnalysis((open) => !open)}
+      >
+        {showMoreAnalysis
+          ? t('exerciseAnalytics.hideAnalysis', 'Hide extra charts')
+          : t('exerciseAnalytics.moreAnalysis', 'More analysis')}
+        <ChevronDown
+          className={`w-3.5 h-3.5 transition-transform ${
+            showMoreAnalysis ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+
+      {showMoreAnalysis && (
+        <div className="space-y-3">
+          {isFetchingCharts ? (
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'exerciseReportsDashboard.loadingExerciseData',
+                'Loading exercise data...'
+              )}
+            </p>
+          ) : null}
+          {renderWidget('filtersAggregation')}
+          <div className="space-y-2 lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0">
+            {ANALYSIS_CHARTS.map((widgetId) => {
+              const node = renderWidget(widgetId);
+              if (!chartHasContent(node)) return null;
+              const open = openChart === widgetId;
+              return (
+                <div key={widgetId} className="min-w-0">
+                  <button
+                    type="button"
+                    className="lg:hidden flex w-full items-center justify-between rounded-lg border bg-card px-4 py-3 text-left text-sm font-medium"
+                    aria-expanded={open}
+                    onClick={() => setOpenChart(open ? null : widgetId)}
+                  >
+                    {chartTitle(widgetId)}
+                    <ChevronDown
+                      className={`w-4 h-4 shrink-0 text-muted-foreground transition-transform ${
+                        open ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  <div
+                    className={
+                      open
+                        ? 'mt-2 lg:mt-0 max-lg:[&_h3]:sr-only'
+                        : 'hidden lg:block'
+                    }
+                  >
+                    {(open || isDesktop) && node}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-6">
       {/* Tier 1: View Mode Tabs & Global Interval Selector */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 p-3 rounded-xl border bg-card shadow-sm">
+      <div className="sticky top-0 z-20 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 p-3 rounded-xl border bg-card shadow-sm">
         {/* Domain View Selector */}
-        <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
-          <Button
-            variant={viewMode === 'all' ? 'default' : 'ghost'}
-            size="sm"
-            className="text-xs font-semibold h-8"
+        <div className="self-start inline-flex items-center gap-1 bg-muted p-1 rounded-md">
+          <button
+            type="button"
+            title={t('exerciseAnalytics.views.all', 'All Workouts')}
+            className={`inline-flex items-center px-2.5 py-1 rounded font-medium text-xs whitespace-nowrap transition-all ${
+              viewMode === 'all'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
             onClick={() => setViewMode('all')}
           >
             <LayoutDashboard className="w-3.5 h-3.5 mr-1.5" />
-            {t('exerciseAnalytics.views.all', 'All Workouts')}
-          </Button>
-          <Button
-            variant={viewMode === 'strength' ? 'default' : 'ghost'}
-            size="sm"
-            className="text-xs font-semibold h-8"
+            <span className="md:hidden">
+              {t('exerciseAnalytics.views.allShort', 'All')}
+            </span>
+            <span className="hidden md:inline">
+              {t('exerciseAnalytics.views.all', 'All Workouts')}
+            </span>
+          </button>
+          <button
+            type="button"
+            title={t(
+              'exerciseAnalytics.views.strength',
+              'Strength & Resistance'
+            )}
+            className={`inline-flex items-center px-2.5 py-1 rounded font-medium text-xs whitespace-nowrap transition-all ${
+              viewMode === 'strength'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
             onClick={() => setViewMode('strength')}
           >
             <Dumbbell className="w-3.5 h-3.5 mr-1.5" />
-            {t('exerciseAnalytics.views.strength', 'Strength & Resistance')}
-          </Button>
-          <Button
-            variant={viewMode === 'cardio' ? 'default' : 'ghost'}
-            size="sm"
-            className="text-xs font-semibold h-8"
+            <span className="md:hidden">
+              {t('exerciseAnalytics.views.strengthShort', 'Strength')}
+            </span>
+            <span className="hidden md:inline">
+              {t('exerciseAnalytics.views.strength', 'Strength & Resistance')}
+            </span>
+          </button>
+          <button
+            type="button"
+            title={t('exerciseAnalytics.views.cardio', 'Cardio & GPS')}
+            className={`inline-flex items-center px-2.5 py-1 rounded font-medium text-xs whitespace-nowrap transition-all ${
+              viewMode === 'cardio'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
             onClick={() => setViewMode('cardio')}
           >
             <Activity className="w-3.5 h-3.5 mr-1.5" />
-            {t('exerciseAnalytics.views.cardio', 'Cardio & GPS')}
-          </Button>
+            <span className="md:hidden">
+              {t('exerciseAnalytics.views.cardioShort', 'Cardio')}
+            </span>
+            <span className="hidden md:inline">
+              {t('exerciseAnalytics.views.cardio', 'Cardio & GPS')}
+            </span>
+          </button>
         </div>
 
         {/* Global Interval Selector */}
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">
-            {t('exerciseAnalytics.interval', 'Interval:')}
+            {t('exerciseAnalytics.interval', 'Group by:')}
           </span>
           <div className="flex items-center bg-muted p-1 rounded-md text-xs">
             {(['day', 'week', 'month', 'year'] as const).map((int) => (
@@ -665,7 +843,7 @@ const ExerciseReportsDashboard = ({
                 }}
                 className={`px-2.5 py-1 rounded font-medium capitalize text-xs transition-all ${
                   statsInterval === int
-                    ? 'bg-background text-foreground shadow-sm'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -682,24 +860,20 @@ const ExerciseReportsDashboard = ({
         <div className="lg:col-span-7 space-y-6">
           <KeyStatsWidget
             data={exerciseDashboardData}
-            totalTonnage={totalTonnage}
             weightUnit={weightUnit}
           />
           <CardioPRBadgesWidget prData={prMatrix} viewMode={viewMode} />
+          <TrainingConsistencyCard data={trainingConsistency} />
         </div>
 
         {/* Right Side: Workout Heatmap Calendar */}
         <div className="lg:col-span-5">
-          {exerciseDashboardData?.exerciseEntries &&
-          exerciseDashboardData.exerciseEntries.length > 0 ? (
+          {workoutDays.length > 0 ? (
             <WorkoutHeatmap
-              workoutDates={Array.from(
-                new Set(
-                  exerciseDashboardData.exerciseEntries.map(
-                    (entry) => entry.entry_date
-                  )
-                )
-              )}
+              workoutDays={workoutDays}
+              today={heatmapToday}
+              rangeStart={startDate ?? undefined}
+              rangeEnd={endDate ?? undefined}
             />
           ) : (
             <Card className="h-full border shadow-sm flex items-center justify-center p-6">
@@ -725,16 +899,11 @@ const ExerciseReportsDashboard = ({
         <div className="space-y-6">
           <CardioVolumeIntervalChart summaryData={statsSummary} />
 
-          <MatchedCoursesList matchedData={matchedCourses} />
-
-          <ActivityInterrogationFinder onQueryFetch={handleQueryFetch} />
-
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {!loading &&
-              DEFAULT_LAYOUT.filter(
-                (id) => id !== 'keyStats' && id !== 'heatmap'
-              ).map((widgetId) => renderWidget(widgetId))}
+            {SNAPSHOT_WIDGETS.map((widgetId) => renderWidget(widgetId))}
           </div>
+
+          {analysisSection}
         </div>
       )}
 
@@ -742,17 +911,35 @@ const ExerciseReportsDashboard = ({
       {viewMode === 'strength' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {!loading &&
-              STRENGTH_LAYOUT.filter((id) => id !== 'heatmap').map((widgetId) =>
-                renderWidget(widgetId)
-              )}
+            {SNAPSHOT_WIDGETS.map((widgetId) => renderWidget(widgetId))}
           </div>
+          {analysisSection}
         </div>
       )}
 
       {/* 3C: CARDIO & GPS VIEW */}
       {viewMode === 'cardio' && (
         <div className="space-y-6">
+          {runningTrends && runningTrends.totalRuns > 0 && (
+            <RunningTrendsCard
+              trends={runningTrends}
+              raceTimes={raceTimes}
+              distanceUnit={distanceUnit === 'miles' ? 'miles' : 'km'}
+              convertDistance={convertDistance}
+              formatWeekLabel={(weekStart) =>
+                formatDateInUserTimezone(weekStart, 'MMM d')
+              }
+            />
+          )}
+          <CardioSessionList
+            key={`${startDate ?? ''}-${endDate ?? ''}-${unitSystem}-${activeUserId ?? ''}`}
+            startDate={startDate}
+            endDate={endDate}
+            unitSystem={unitSystem}
+            formatDate={formatDateInUserTimezone}
+            parseISO={parseISO}
+          />
+
           <CardioVolumeIntervalChart summaryData={statsSummary} />
 
           <MatchedCoursesList matchedData={matchedCourses} />
@@ -762,27 +949,24 @@ const ExerciseReportsDashboard = ({
       )}
 
       {/* Tier 4: Synced Activity Logs (Filtered by domain) */}
-      <ActivityTelemetryList
-        entries={filteredGarminActivityEntries}
-        formatDate={formatDateInUserTimezone}
-        parseISO={parseISO}
-        title={
-          viewMode === 'strength'
-            ? t(
-                'exerciseAnalytics.activityLogs.strength',
-                'Strength Workout Activity Logs'
-              )
-            : viewMode === 'cardio'
+      {viewMode !== 'cardio' && (
+        <ActivityTelemetryList
+          entries={filteredGarminActivityEntries}
+          formatDate={formatDateInUserTimezone}
+          parseISO={parseISO}
+          title={
+            viewMode === 'strength'
               ? t(
-                  'exerciseAnalytics.activityLogs.cardio',
-                  'Cardio & GPS Activity Maps'
+                  'exerciseAnalytics.activityLogs.strength',
+                  'Strength Workout Activity Logs'
                 )
               : t(
                   'exerciseAnalytics.activityLogs.all',
                   'Workout Activity History & Maps'
                 )
-        }
-      />
+          }
+        />
+      )}
     </div>
   );
 };

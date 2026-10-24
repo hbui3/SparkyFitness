@@ -19,6 +19,8 @@ describe('healthTrends registry', () => {
       weight: 'Weight',
       sleep: 'Sleep',
       hydration: 'Hydration',
+      calories: 'Calories',
+      vo2max: 'VO2 max',
     };
 
     for (const key of HEALTH_TREND_KEYS) {
@@ -30,5 +32,10 @@ describe('healthTrends registry', () => {
     // A user who never opens the settings screen must see exactly what they saw before
     // hydration was registered, so the first three keys are frozen in place.
     expect(HEALTH_TREND_KEYS.slice(0, 3)).toEqual(['steps', 'weight', 'sleep']);
+  });
+
+  test('registers calories as the newest trend', () => {
+    expect(HEALTH_TREND_KEYS).toContain('calories');
+    expect(HEALTH_TREND_LABELS.calories(i18n.t)).toBe('Calories');
   });
 });

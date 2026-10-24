@@ -54,7 +54,7 @@ export const AutoCalculateToolbar = ({
         {t(
           'nutrition.autoCalculateApplySelected',
           'Auto-calculate Selected ({{count}})',
-          { count: selectedCount }
+          { count: selectedCount, selectedCount }
         )}
       </Button>
     </div>

@@ -579,7 +579,8 @@ export function parseGarminHealthMeasurements(
               value === 0 &&
               mapping.targetType === 'check_in' &&
               (mapping.field === 'weight' ||
-                mapping.field === 'body_fat_percentage')
+                mapping.field === 'body_fat_percentage' ||
+                mapping.field === 'water')
             ) {
               continue;
             }

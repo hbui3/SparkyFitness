@@ -10,6 +10,7 @@ import type {
   AggregatedSleepSession,
   TransformedExerciseSession,
 } from '../../../src/types/healthRecords';
+import { atLocalTime } from '../../helpers/localTime';
 
 jest.mock('../../../src/services/LogService', () => ({
   addLog: jest.fn(),
@@ -56,7 +57,7 @@ describe('transformHealthRecords', () => {
     test('transforms raw HeartRate records via value transformer', () => {
       const records = [
         {
-          startTime: '2024-01-15T08:00:00Z',
+          startTime: atLocalTime('2024-01-15', '08:00'),
           samples: [{ beatsPerMinute: 72 }],
         },
       ];
@@ -72,11 +73,133 @@ describe('transformHealthRecords', () => {
         value: 72,
         type: 'heart_rate',
       });
+      expect(result[0]).not.toHaveProperty('timestamp');
+    });
+
+    test('carries each HeartRate sample time as timestamp', () => {
+      const t1 = atLocalTime('2024-01-15', '08:00');
+      const t2 = atLocalTime('2024-01-15', '08:01');
+      const records = [
+        {
+          startTime: t1,
+          samples: [
+            { time: t1, beatsPerMinute: 72 },
+            { time: t2, beatsPerMinute: 75 },
+          ],
+        },
+      ];
+      const result = transformHealthRecords(records, {
+        recordType: 'HeartRate',
+        unit: 'bpm',
+        type: 'heart_rate',
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toMatchObject({ value: 72, timestamp: t1 });
+      expect(result[1]).toMatchObject({ value: 75, timestamp: t2 });
+    });
+
+    describe('MindfulnessSession', () => {
+      const config = {
+        recordType: 'MindfulnessSession',
+        unit: 'min',
+        type: 'mindfulness',
+      };
+      const session = (overrides: Record<string, unknown> = {}) => ({
+        startTime: '2024-01-15T07:00:00.000Z',
+        endTime: '2024-01-15T07:12:30.000Z',
+        startZoneOffset: { totalSeconds: 3600 },
+        mindfulnessSessionType: 1,
+        title: 'Morning calm',
+        notes: 'Body scan',
+        metadata: { id: 'hc-mindful-1', dataOrigin: 'com.calm.android' },
+        ...overrides,
+      });
+
+      test('sends a MindfulnessSession with duration, type, notes and source id', () => {
+        const result = transformHealthRecords([session()], config);
+
+        expect(result).toEqual([
+          {
+            type: 'MindfulnessSession',
+            source: 'Health Connect',
+            source_id: 'hc-mindful-1',
+            timestamp: '2024-01-15T07:00:00.000Z',
+            startTime: '2024-01-15T07:00:00.000Z',
+            endTime: '2024-01-15T07:12:30.000Z',
+            duration_seconds: 750,
+            value: 12.5,
+            session_type: 'meditation',
+            notes: 'Morning calm\nBody scan',
+            record_utc_offset_minutes: 60,
+          },
+        ]);
+      });
+
+      test.each([
+        [0, 'other'],
+        [1, 'meditation'],
+        [2, 'breathwork'],
+        [3, 'other'],
+        [4, 'other'],
+        [5, 'unguided'],
+        [undefined, 'other'],
+      ])('maps Health Connect type %p to %p', (hcType, expected) => {
+        const [result] = transformHealthRecords(
+          [session({ mindfulnessSessionType: hcType })],
+          config
+        ) as { session_type: string }[];
+        expect(result.session_type).toBe(expected);
+      });
+
+      test('omits notes when the record has neither title nor notes', () => {
+        const [result] = transformHealthRecords(
+          [session({ title: undefined, notes: '  ' })],
+          config
+        ) as Record<string, unknown>[];
+        expect(result).not.toHaveProperty('notes');
+      });
+
+      test('skips records without a stable id or with no duration', () => {
+        expect(
+          transformHealthRecords([session({ metadata: {} })], config)
+        ).toEqual([]);
+        expect(
+          transformHealthRecords(
+            [session({ endTime: '2024-01-15T07:00:00.000Z' })],
+            config
+          )
+        ).toEqual([]);
+      });
+
+      test('skips sessions this app wrote itself', () => {
+        setOwnPackageName('org.SparkyApps.SparkyFitnessMobile');
+        try {
+          expect(
+            transformHealthRecords(
+              [
+                session({
+                  metadata: {
+                    id: 'own',
+                    dataOrigin: 'org.SparkyApps.SparkyFitnessMobile',
+                  },
+                }),
+              ],
+              config
+            )
+          ).toEqual([]);
+        } finally {
+          setOwnPackageName(null);
+        }
+      });
     });
 
     test('transforms raw HeartRateVariabilityRmssd records via value transformer', () => {
       const records = [
-        { time: '2024-01-15T08:00:00Z', heartRateVariabilityMillis: 48 },
+        {
+          time: atLocalTime('2024-01-15', '08:00'),
+          heartRateVariabilityMillis: 48,
+        },
       ];
       const result = transformHealthRecords(records, {
         recordType: 'HeartRateVariabilityRmssd',
@@ -142,7 +265,10 @@ describe('transformHealthRecords', () => {
   describe('Weight records', () => {
     test('extracts value from record.weight.inKilograms', () => {
       const records = [
-        { time: '2024-01-15T08:00:00Z', weight: { inKilograms: 75.5 } },
+        {
+          time: atLocalTime('2024-01-15', '08:00'),
+          weight: { inKilograms: 75.5 },
+        },
       ];
       const result = transformHealthRecords(records, {
         recordType: 'Weight',
@@ -187,7 +313,10 @@ describe('transformHealthRecords', () => {
   describe('Height records', () => {
     test('extracts value from record.height.inMeters', () => {
       const records = [
-        { time: '2024-01-15T08:00:00Z', height: { inMeters: 1.75 } },
+        {
+          time: atLocalTime('2024-01-15', '08:00'),
+          height: { inMeters: 1.75 },
+        },
       ];
       const result = transformHealthRecords(records, {
         recordType: 'Height',
@@ -215,7 +344,10 @@ describe('transformHealthRecords', () => {
   describe('Distance records', () => {
     test('extracts value from record.distance.inMeters', () => {
       const records = [
-        { startTime: '2024-01-15T08:00:00Z', distance: { inMeters: 5000 } },
+        {
+          startTime: atLocalTime('2024-01-15', '08:00'),
+          distance: { inMeters: 5000 },
+        },
       ];
       const result = transformHealthRecords(records, {
         recordType: 'Distance',
@@ -242,7 +374,9 @@ describe('transformHealthRecords', () => {
 
   describe('FloorsClimbed records', () => {
     test('extracts value from record.floors', () => {
-      const records = [{ startTime: '2024-01-15T08:00:00Z', floors: 10 }];
+      const records = [
+        { startTime: atLocalTime('2024-01-15', '08:00'), floors: 10 },
+      ];
       const result = transformHealthRecords(records, {
         recordType: 'FloorsClimbed',
         unit: 'floors',
@@ -272,7 +406,7 @@ describe('transformHealthRecords', () => {
     test('splits into separate systolic and diastolic records', () => {
       const records = [
         {
-          time: '2024-01-15T08:00:00Z',
+          time: atLocalTime('2024-01-15', '08:00'),
           systolic: { inMillimetersOfMercury: 120.5 },
           diastolic: { inMillimetersOfMercury: 80.3 },
         },
@@ -348,11 +482,49 @@ describe('transformHealthRecords', () => {
   });
 
   describe('SleepSession records', () => {
+    test('carries overnight HRV and resting heart rate onto the session', () => {
+      const records = [
+        {
+          startTime: atLocalTime('2024-01-15', '22:00'),
+          endTime: atLocalTime('2024-01-16', '06:00'),
+          avg_overnight_hrv: 42,
+          resting_heart_rate: 57,
+        },
+      ];
+      const result = transformHealthRecords(records, {
+        recordType: 'SleepSession',
+        unit: '',
+        type: 'sleep',
+      }) as AggregatedSleepSession[];
+
+      expect(result[0]).toMatchObject({
+        avg_overnight_hrv: 42,
+        resting_heart_rate: 57,
+      });
+    });
+
+    test('omits overnight HRV and resting heart rate keys when absent', () => {
+      const records = [
+        {
+          startTime: atLocalTime('2024-01-15', '22:00'),
+          endTime: atLocalTime('2024-01-16', '06:00'),
+        },
+      ];
+      const result = transformHealthRecords(records, {
+        recordType: 'SleepSession',
+        unit: '',
+        type: 'sleep',
+      }) as AggregatedSleepSession[];
+
+      expect(result[0]).not.toHaveProperty('avg_overnight_hrv');
+      expect(result[0]).not.toHaveProperty('resting_heart_rate');
+    });
+
     test('creates rich sleep object with all required fields', () => {
       const records = [
         {
-          startTime: '2024-01-15T22:00:00Z',
-          endTime: '2024-01-16T06:00:00Z',
+          startTime: atLocalTime('2024-01-15', '22:00'),
+          endTime: atLocalTime('2024-01-16', '06:00'),
         },
       ];
       const result = transformHealthRecords(records, {
@@ -366,8 +538,8 @@ describe('transformHealthRecords', () => {
         type: 'SleepSession',
         source: 'Health Connect',
         entry_date: '2024-01-16',
-        bedtime: '2024-01-15T22:00:00Z',
-        wake_time: '2024-01-16T06:00:00Z',
+        bedtime: atLocalTime('2024-01-15', '22:00'),
+        wake_time: atLocalTime('2024-01-16', '06:00'),
         duration_in_seconds: 28800, // 8 hours
         time_asleep_in_seconds: 28800,
       });
@@ -833,7 +1005,9 @@ describe('transformHealthRecords', () => {
       }) as TransformedExerciseSession[];
 
       expect(result[0].activityType).toBe('Running');
+      expect(result[0].exercise_source_id).toBe('56');
       expect(result[1].activityType).toBe('Biking (Stationary)');
+      expect(result[1].exercise_source_id).toBe('9');
     });
 
     test('ignores a blank title', () => {
@@ -1315,14 +1489,19 @@ describe('transformHealthRecords', () => {
     });
 
     test('tries multiple date fields (time, startTime, timestamp, date)', () => {
-      // Use noon timestamps to avoid timezone boundary issues (toLocalDateString uses local time)
-      // For the date-only field, use a timestamp format since toLocalDateString converts
-      // date-only strings as UTC midnight which shifts in negative UTC offset timezones
+      // The date field uses a full timestamp: toLocalDateString reads a
+      // date-only string as UTC midnight, which shifts in zones behind UTC.
       const testCases = [
-        { time: '2024-01-15T12:00:00Z', basalMetabolicRate: 1500 },
-        { startTime: '2024-01-16T12:00:00Z', basalMetabolicRate: 1500 },
-        { timestamp: '2024-01-17T12:00:00Z', basalMetabolicRate: 1500 },
-        { date: '2024-01-18T12:00:00Z', basalMetabolicRate: 1500 },
+        { time: atLocalTime('2024-01-15', '12:00'), basalMetabolicRate: 1500 },
+        {
+          startTime: atLocalTime('2024-01-16', '12:00'),
+          basalMetabolicRate: 1500,
+        },
+        {
+          timestamp: atLocalTime('2024-01-17', '12:00'),
+          basalMetabolicRate: 1500,
+        },
+        { date: atLocalTime('2024-01-18', '12:00'), basalMetabolicRate: 1500 },
       ];
 
       testCases.forEach((record, index) => {
@@ -1779,7 +1958,7 @@ describe('transformHealthRecords', () => {
     test('CyclingPedalingCadence creates record for each sample', () => {
       const records = [
         {
-          startTime: '2024-01-15T08:00:00Z',
+          startTime: atLocalTime('2024-01-15', '08:00'),
           samples: [
             { revolutionsPerMinute: 80 },
             { revolutionsPerMinute: 85 },
@@ -1996,7 +2175,7 @@ describe('transformHealthRecords', () => {
     });
 
     test('IntermenstrualBleeding returns value 1', () => {
-      const records = [{ time: '2024-01-15T08:00:00Z' }];
+      const records = [{ time: atLocalTime('2024-01-15', '08:00') }];
       const result = transformHealthRecords(records, {
         recordType: 'IntermenstrualBleeding',
         unit: '',
@@ -2066,7 +2245,7 @@ describe('transformHealthRecords', () => {
   describe('error resilience', () => {
     test('continues processing when one record throws', () => {
       const badRecord = {
-        time: '2024-01-15T08:00:00Z',
+        time: atLocalTime('2024-01-15', '08:00'),
         weight: {
           inKilograms: {
             toFixed: () => {
@@ -2076,7 +2255,7 @@ describe('transformHealthRecords', () => {
         },
       };
       const goodRecord = {
-        time: '2024-01-16T08:00:00Z',
+        time: atLocalTime('2024-01-16', '08:00'),
         weight: { inKilograms: 75 },
       };
 

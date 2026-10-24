@@ -258,6 +258,7 @@ const FoodPhotoLogEntryScreen: React.FC<Props> = ({ navigation, route }) => {
           meal_type_id: selectedMealTypeId,
           name: params.mealName,
           description: params.description ?? null,
+          notes: params.notes ?? null,
           items: params.ingredients,
           serving_size: params.servingSize,
           serving_unit: params.servingUnit,

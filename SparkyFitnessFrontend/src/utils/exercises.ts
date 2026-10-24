@@ -106,8 +106,21 @@ export function resolveExerciseImageSrc(image: string | undefined): string {
  * filtered list so they never disagree and render a broken thumbnail.
  */
 export function filterValidExerciseImages(
-  images: string[] | undefined | null
+  images: string[] | string | undefined | null
 ): string[] {
+  if (!images) return [];
+  if (typeof images === 'string') {
+    try {
+      const parsed = JSON.parse(images);
+      if (Array.isArray(parsed)) {
+        return filterValidExerciseImages(parsed);
+      }
+    } catch {
+      // not JSON array
+    }
+    const trimmed = images.trim();
+    return trimmed !== '' && trimmed !== '[]' ? [trimmed] : [];
+  }
   if (!Array.isArray(images)) return [];
   return images.filter((img) => {
     if (typeof img !== 'string') return false;

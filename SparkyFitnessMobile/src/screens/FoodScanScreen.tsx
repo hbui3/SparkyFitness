@@ -29,7 +29,6 @@ import {
   type BarcodeScanningResult,
 } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
 import {
   lookupBarcodeV2,
   scanNutritionLabel,
@@ -38,14 +37,25 @@ import { selectDisplayVariant } from '../utils/foodDetails';
 import { getApiErrorMessage } from '../services/api/errors';
 import { TimeoutError } from '../utils/concurrency';
 import { fireSuccessHaptic } from '../services/haptics';
+import {
+  isOnDeviceLabelScanAvailable,
+  scanLabelOnDevice,
+} from '../services/onDeviceLabelScan';
+import { prepareLabelPhoto } from '../utils/labelPhoto';
+import { downscaleFoodPhoto } from '../utils/pickImage';
+import {
+  rememberLabelScan,
+  type LabelScanSource,
+} from '../services/labelScanSession';
+import { labelScanToInitialFood } from '../utils/labelScanFood';
 import { useAppPreferencesStore } from '../stores/appPreferencesStore';
-import { toFormString } from '../types/foodInfo';
 import { useActiveAiServiceSetting } from '../hooks/useActiveAiServiceSetting';
 import { isFoodPhotoAvailable } from '../services/api/aiSettingsApi';
 import {
   hasSeenFoodPhotoIntro,
   markFoodPhotoIntroSeen,
 } from '../services/foodPhotoIntro';
+import { addLog } from '../services/LogService';
 
 type FoodScanScreenProps = RootStackScreenProps<'FoodScan'>;
 
@@ -57,9 +67,6 @@ const GUIDE_WIDTH = 280;
 const GUIDE_HEIGHT = 160;
 
 const GUIDE_BOTTOM_MARGIN = 120;
-// Longest edge sent for analysis. A label-filling crop reads correctly well
-// below this; capping bounds upload size without costing accuracy.
-const LABEL_MAX_DIMENSION = 1600;
 
 const CORNER_SIZE = 24;
 const CORNER_BORDER = 3;
@@ -84,13 +91,28 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
   const [flashlight, setFlashlight] = useState(false);
   const scanLock = useRef(false);
   const pickerLock = useRef(false);
+  const labelRequestLock = useRef(false);
+  const labelScanActive = useRef(true);
+  useEffect(() => {
+    labelScanActive.current = true;
+    return () => {
+      labelScanActive.current = false;
+    };
+  }, []);
   const params = route.params;
   const captureParams = params?.mode === 'capture-barcode' ? params : undefined;
-  const lookupParams = params?.mode === 'capture-barcode' ? undefined : params;
+  const labelCaptureParams =
+    params?.mode === 'capture-label' ? params : undefined;
+  const lookupParams =
+    params?.mode === 'capture-barcode' || params?.mode === 'capture-label'
+      ? undefined
+      : params;
   const isCaptureBarcodeMode = !!captureParams;
+  const isCaptureLabelMode = !!labelCaptureParams;
   const captureReturnKey = captureParams?.returnKey;
   const mealTypeId = lookupParams?.mealTypeId;
   const [scanMode, setScanMode] = useState<ScanMode>(() => {
+    if (isCaptureLabelMode) return 'label';
     if (isCaptureBarcodeMode) {
       // Capture-only mode: lock to barcode regardless of any other params.
       return 'barcode';
@@ -134,8 +156,19 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
 
   // Photo estimation always logs to the diary; hide it for meal-builder
   // scans so we don't drop the user into a flow that ignores pickerMode.
-  // capture-barcode mode is barcode-only.
+  // Same for basket-origin scans: the photo flow's success pop goes to the
+  // diary root, which would unmount FoodSearchScreen and silently drop the
+  // in-progress multi-select basket. capture-barcode mode is barcode-only.
+  const isBasketOriginScan = pickerMode === 'log-entry' && returnDepth != null;
   const scanSegments = useMemo(() => {
+    if (isCaptureLabelMode) {
+      return [
+        {
+          key: 'label' as const,
+          label: t('foodScan.segment.label', { defaultValue: 'Label' }),
+        },
+      ];
+    }
     if (isCaptureBarcodeMode) {
       return SCAN_SEGMENTS.filter((key) => key === 'barcode').map((key) => ({
         key,
@@ -143,7 +176,7 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
       }));
     }
     return (
-      isSelectionMode
+      isSelectionMode || isBasketOriginScan
         ? SCAN_SEGMENTS.filter((key) => key !== 'photo')
         : SCAN_SEGMENTS
     ).map((key) => ({
@@ -155,7 +188,13 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
             ? t('foodScan.segment.label', { defaultValue: 'Label' })
             : t('foodScan.segment.photo', { defaultValue: 'Photo' }),
     }));
-  }, [isCaptureBarcodeMode, isSelectionMode, t]);
+  }, [
+    isCaptureBarcodeMode,
+    isCaptureLabelMode,
+    isSelectionMode,
+    isBasketOriginScan,
+    t,
+  ]);
 
   const aiSettingQuery = useActiveAiServiceSetting({
     // Skip the AI gating fetch in capture-barcode mode — Photo segment is
@@ -234,6 +273,8 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
           cholesterol: defaultVariant.cholesterol,
           vitaminA: defaultVariant.vitamin_a,
           vitaminC: defaultVariant.vitamin_c,
+          allergens: defaultVariant.allergens ?? null,
+          traces: defaultVariant.traces ?? null,
           variantId: defaultVariant.id,
           source: 'local',
           provider_verified: result.food.provider_verified,
@@ -293,6 +334,8 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
           cholesterol: displayVariant.cholesterol,
           vitaminA: displayVariant.vitamin_a,
           vitaminC: displayVariant.vitamin_c,
+          allergens: displayVariant.allergens ?? null,
+          traces: displayVariant.traces ?? null,
           variantId: displayVariant.id,
           source: 'external',
           provider_verified: result.food.provider_verified,
@@ -393,45 +436,22 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
     await performBarcodeLookup(barcode);
   };
 
-  // Both label paths share one shape: get an image (system camera or library),
-  // let the user crop it to the label with the system editor's adjustable
-  // handles, downscale, scan. Vision models misread labels that occupy a small
-  // share of the frame, so the crop step is what makes results reliable.
-  const prepareLabelPhoto = async (asset: {
-    uri: string;
-    base64?: string | null;
-    width?: number;
-    height?: number;
-  }) => {
-    const longEdge = Math.max(asset.width ?? 0, asset.height ?? 0);
-    if (longEdge > LABEL_MAX_DIMENSION && asset.width && asset.height) {
-      const scaleTo =
-        asset.width >= asset.height
-          ? { width: LABEL_MAX_DIMENSION }
-          : { height: LABEL_MAX_DIMENSION };
-      const processed = await ImageManipulator.manipulateAsync(
-        asset.uri,
-        [{ resize: scaleTo }],
-        {
-          compress: 0.85,
-          format: ImageManipulator.SaveFormat.JPEG,
-          base64: true,
-        }
-      );
-      if (processed.base64)
-        return { base64: processed.base64, uri: processed.uri };
-    }
-    if (asset.base64) return { base64: asset.base64, uri: asset.uri };
-    const reencoded = await ImageManipulator.manipulateAsync(asset.uri, [], {
-      compress: 0.85,
-      format: ImageManipulator.SaveFormat.JPEG,
-      base64: true,
-    });
-    return reencoded.base64
-      ? { base64: reencoded.base64, uri: reencoded.uri }
-      : null;
+  const returnToLabelEditor = () => {
+    if (
+      !isCaptureLabelMode ||
+      !labelScanActive.current ||
+      !navigation.isFocused()
+    )
+      return;
+    labelScanActive.current = false;
+    navigation.goBack();
   };
 
+  // Both label paths share one shape: get an image (system camera or library),
+  // let the user crop it to the label with the system editor's adjustable
+  // handles, downscale (`prepareLabelPhoto`), scan. Vision models misread labels
+  // that occupy a small share of the frame, so the crop step is what makes
+  // results reliable.
   const handleLabelCapture = async () => {
     if (pickerLock.current) return;
     pickerLock.current = true;
@@ -442,7 +462,10 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         quality: 1,
         base64: true,
       });
-      if (result.canceled) return;
+      if (result.canceled) {
+        returnToLabelEditor();
+        return;
+      }
       const asset = result.assets?.[0];
       if (!asset?.uri) {
         Toast.show({
@@ -452,6 +475,7 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
             defaultValue: 'Failed to capture photo.',
           }),
         });
+        returnToLabelEditor();
         return;
       }
       const prepared = await prepareLabelPhoto(asset);
@@ -463,10 +487,15 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
             defaultValue: 'Failed to process photo.',
           }),
         });
+        returnToLabelEditor();
         return;
       }
       setCapturedPhoto(prepared);
-    } catch {
+    } catch (error) {
+      addLog(
+        `[Food Scan] Label camera capture failed: ${error instanceof Error ? error.message : String(error)}`,
+        'ERROR'
+      );
       Toast.show({
         type: 'error',
         text1: t('common.error', { defaultValue: 'Error' }),
@@ -474,6 +503,7 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
           defaultValue: 'Failed to capture photo.',
         }),
       });
+      returnToLabelEditor();
     } finally {
       pickerLock.current = false;
     }
@@ -492,7 +522,10 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         base64: true,
         allowsMultipleSelection: false,
       });
-      if (result.canceled) return;
+      if (result.canceled) {
+        returnToLabelEditor();
+        return;
+      }
       const asset = result.assets?.[0];
       if (!asset?.uri) {
         Toast.show({
@@ -502,6 +535,7 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
             defaultValue: 'No photo returned by picker.',
           }),
         });
+        returnToLabelEditor();
         return;
       }
       const prepared = await prepareLabelPhoto(asset);
@@ -513,63 +547,91 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
             defaultValue: 'Failed to process photo.',
           }),
         });
+        returnToLabelEditor();
         return;
       }
       setCapturedPhoto(prepared);
-    } catch {
-      const msg = t('foodScan.errors.loadPhoto', {
-        defaultValue: 'Failed to load photo.',
-      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addLog(`[Food Scan] Label pick from library failed: ${message}`, 'ERROR');
+      const isLauncherError = message.includes(
+        'unregistered ActivityResultLauncher'
+      );
       Toast.show({
         type: 'error',
         text1: t('common.error', { defaultValue: 'Error' }),
-        text2: msg,
+        text2: isLauncherError
+          ? t('foodScan.errors.restartApp', {
+              defaultValue: 'Unable to open gallery. Please restart the app.',
+            })
+          : t('foodScan.errors.loadPhoto', {
+              defaultValue: 'Failed to load photo.',
+            }),
       });
+      returnToLabelEditor();
     } finally {
       pickerLock.current = false;
     }
   };
 
   const handleUsePhoto = async () => {
-    if (!capturedPhoto) return;
+    if (!capturedPhoto || labelRequestLock.current) return;
+    labelRequestLock.current = true;
     setLabelProcessing(true);
     try {
-      const result = await scanNutritionLabel(
-        capturedPhoto.base64,
-        'image/jpeg'
-      );
+      const onDeviceResult = await scanLabelOnDevice(capturedPhoto.base64);
+      const result =
+        onDeviceResult ??
+        (await scanNutritionLabel(capturedPhoto.base64, 'image/jpeg'));
+      if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        throw new Error('Invalid nutrition label result');
+      }
+      if (labelCaptureParams) {
+        if (!labelScanActive.current || !navigation.isFocused()) return;
+        navigation.dispatch({
+          ...CommonActions.setParams({
+            pendingNutritionLabelScan: { result, nonce: Date.now() },
+          }),
+          source: labelCaptureParams.returnKey,
+        });
+        navigation.goBack();
+        return;
+      }
+      const source: LabelScanSource = onDeviceResult ? 'device' : 'server';
+      rememberLabelScan(capturedPhoto.base64, source);
+      // The toast survives the navigation below, so it shows on the form. The
+      // server reading is only news when the on-device scan was tried first;
+      // otherwise it is the normal path and the form's banner says enough.
+      const triedOnDevice =
+        useAppPreferencesStore.getState().onDeviceLabelScanEnabled &&
+        isOnDeviceLabelScanAvailable();
+      if (onDeviceResult || triedOnDevice) {
+        Toast.show({
+          type: 'info',
+          text1: onDeviceResult
+            ? t('foodScan.labelReadOnDevice', {
+                defaultValue: 'Label read on this iPhone',
+              })
+            : t('foodScan.labelReadByServer', {
+                defaultValue: 'Label read by the server AI',
+              }),
+        });
+      }
       navigation.replace(
         'FoodForm',
         buildFoodFormParams({
-          initialFood: {
-            name: result.name || '',
-            brand: result.brand || '',
-            servingSize: String(result.serving_size ?? ''),
-            servingUnit: result.serving_unit || 'g',
-            calories: String(result.calories ?? ''),
-            protein: String(result.protein ?? ''),
-            carbs: String(result.carbs ?? ''),
-            fat: String(result.fat ?? ''),
-            fiber: toFormString(result.fiber),
-            saturatedFat: toFormString(result.saturated_fat),
-            transFat: toFormString(result.trans_fat),
-            sodium: toFormString(result.sodium),
-            sugars: toFormString(result.sugars),
-            cholesterol: toFormString(result.cholesterol),
-            potassium: toFormString(result.potassium),
-            calcium: toFormString(result.calcium),
-            iron: toFormString(result.iron),
-            caffeineMg: toFormString(result.caffeine_mg),
-            waterMl: toFormString(result.water_ml),
-            alcoholG: toFormString(result.alcohol_g),
-            vitaminA: toFormString(result.vitamin_a),
-            vitaminC: toFormString(result.vitamin_c),
-          },
+          initialFood: labelScanToInitialFood(result),
           barcode: lookupError?.barcode ?? notFoundBarcode ?? undefined,
           providerType: 'label_scan',
+          labelScanSource: source,
         })
       );
     } catch {
+      if (
+        isCaptureLabelMode &&
+        (!labelScanActive.current || !navigation.isFocused())
+      )
+        return;
       Toast.show({
         type: 'error',
         text1: t('common.error', { defaultValue: 'Error' }),
@@ -577,7 +639,9 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
           defaultValue: 'Failed to analyze nutrition label. Please try again.',
         }),
       });
+      returnToLabelEditor();
     } finally {
+      labelRequestLock.current = false;
       setLabelProcessing(false);
     }
   };
@@ -613,6 +677,15 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
   // with `initialMode: 'photo'` still hit the gate.
   useEffect(() => {
     if (isCaptureBarcodeMode) return;
+    if (isBasketOriginScan) {
+      // Basket-origin scans cannot use photo mode at all (its flow pops to
+      // the diary root and would drop the basket): hide the gate, snap the
+      // segment back to barcode, and never reach the availability fetch —
+      // including deep-link photo entries the filtered segments can't stop.
+      setPhotoGateVisible(false);
+      setScanMode('barcode');
+      return;
+    }
     if (scanMode !== 'photo') return;
     if (aiSettingQuery.isLoading) return;
 
@@ -638,6 +711,7 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
     scanMode,
     aiSettingQuery.isLoading,
     photoModeAvailable,
+    isBasketOriginScan,
     navigation,
     date,
     mealTypeId,
@@ -661,13 +735,14 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         });
         return;
       }
+      const prepared = await downscaleFoodPhoto(photo).catch(() => photo);
       // Mark seen even if user retakes — the intro shouldn't reappear later.
       await markFoodPhotoIntroSeen();
       navigation.replace('FoodPhotoFlow', {
         screen: 'Improve',
         params: {
           date,
-          photo: { uri: photo.uri },
+          photo: { uri: prepared.uri },
           mealTypeId: mealTypeId ?? undefined,
         },
       });
@@ -704,23 +779,32 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         });
         return;
       }
+      const prepared = await downscaleFoodPhoto(asset).catch(() => asset);
       await markFoodPhotoIntroSeen();
       navigation.replace('FoodPhotoFlow', {
         screen: 'Improve',
         params: {
           date,
-          photo: { uri: asset.uri },
+          photo: { uri: prepared.uri },
           mealTypeId: mealTypeId ?? undefined,
         },
       });
-    } catch {
-      const msg = t('foodScan.errors.loadPhoto', {
-        defaultValue: 'Failed to load photo.',
-      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addLog(`[Food Scan] Photo pick from library failed: ${message}`, 'ERROR');
+      const isLauncherError = message.includes(
+        'unregistered ActivityResultLauncher'
+      );
       Toast.show({
         type: 'error',
         text1: t('common.error', { defaultValue: 'Error' }),
-        text2: msg,
+        text2: isLauncherError
+          ? t('foodScan.errors.restartApp', {
+              defaultValue: 'Unable to open gallery. Please restart the app.',
+            })
+          : t('foodScan.errors.loadPhoto', {
+              defaultValue: 'Failed to load photo.',
+            }),
       });
     } finally {
       pickerLock.current = false;
@@ -760,48 +844,55 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
     return <View />;
   }
 
-  if (!permission.granted) {
-    return (
-      <View
-        className="flex-1 justify-center items-center px-6"
-        style={
-          Platform.OS === 'android' ? { paddingTop: insets.top } : undefined
-        }
-      >
-        <Text className="text-text-primary text-base text-center mb-4">
-          {t('foodScan.permission.camera', {
-            defaultValue: 'We need your permission to show the camera',
-          })}
-        </Text>
-        <Button
-          onPress={requestPermission}
-          title={t('foodScan.permission.grant', {
-            defaultValue: 'Grant Permission',
-          })}
-        />
-      </View>
-    );
-  }
-
   return (
     <View className="flex-1 flex-col justify-center">
-      <CameraView
-        ref={cameraRef}
-        onBarcodeScanned={
-          scanMode === 'barcode' && !scanned ? handleBarcodeScanned : undefined
-        }
-        barcodeScannerSettings={
-          scanMode === 'barcode'
-            ? {
-                barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e'],
-              }
-            : undefined
-        }
-        style={StyleSheet.absoluteFill}
-        enableTorch={flashlight}
-      />
+      {permission.granted ? (
+        <CameraView
+          ref={cameraRef}
+          onBarcodeScanned={
+            scanMode === 'barcode' && !scanned
+              ? handleBarcodeScanned
+              : undefined
+          }
+          barcodeScannerSettings={
+            scanMode === 'barcode'
+              ? {
+                  barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e'],
+                }
+              : undefined
+          }
+          style={StyleSheet.absoluteFill}
+          enableTorch={flashlight}
+        />
+      ) : null}
 
-      {scanMode === 'barcode' &&
+      {!permission.granted &&
+      !capturedPhoto &&
+      !labelProcessing &&
+      !loading &&
+      !manualEntryVisible ? (
+        <View
+          className="items-center px-6"
+          style={
+            Platform.OS === 'android' ? { paddingTop: insets.top } : undefined
+          }
+        >
+          <Text className="text-text-primary text-base text-center mb-4">
+            {t('foodScan.permission.camera', {
+              defaultValue: 'We need your permission to show the camera',
+            })}
+          </Text>
+          <Button
+            onPress={requestPermission}
+            title={t('foodScan.permission.grant', {
+              defaultValue: 'Grant Permission',
+            })}
+          />
+        </View>
+      ) : null}
+
+      {permission.granted &&
+      scanMode === 'barcode' &&
       !notFoundBarcode &&
       !lookupError &&
       !loading &&
@@ -867,7 +958,10 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         style={{ top: Platform.OS === 'android' ? insets.top + 8 : 16 }}
       >
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={() => {
+            labelScanActive.current = false;
+            navigation.goBack();
+          }}
           accessibilityRole="button"
           accessibilityLabel={t('foodScan.accessibility.back', {
             defaultValue: 'Go back',
@@ -877,27 +971,29 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         >
           <Icon name="chevron-back" size={22} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setFlashlight(!flashlight)}
-          accessibilityRole="button"
-          accessibilityLabel={
-            flashlight
-              ? t('foodScan.accessibility.flashlightOff', {
-                  defaultValue: 'Turn flashlight off',
-                })
-              : t('foodScan.accessibility.flashlightOn', {
-                  defaultValue: 'Turn flashlight on',
-                })
-          }
-          className="bg-black/50 rounded-full p-2"
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Icon
-            name={flashlight ? 'flashlight-on' : 'flashlight-off'}
-            size={22}
-            color={flashlight ? accentPrimary : '#fff'}
-          />
-        </TouchableOpacity>
+        {permission.granted ? (
+          <TouchableOpacity
+            onPress={() => setFlashlight(!flashlight)}
+            accessibilityRole="button"
+            accessibilityLabel={
+              flashlight
+                ? t('foodScan.accessibility.flashlightOff', {
+                    defaultValue: 'Turn flashlight off',
+                  })
+                : t('foodScan.accessibility.flashlightOn', {
+                    defaultValue: 'Turn flashlight on',
+                  })
+            }
+            className="bg-black/50 rounded-full p-2"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Icon
+              name={flashlight ? 'flashlight-on' : 'flashlight-off'}
+              size={22}
+              color={flashlight ? accentPrimary : '#fff'}
+            />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {loading || labelProcessing ? (
@@ -1017,7 +1113,8 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
         </View>
       ) : null}
 
-      {scanMode === 'photo' &&
+      {permission.granted &&
+      scanMode === 'photo' &&
       !capturedPhoto &&
       !loading &&
       !manualEntryVisible &&
@@ -1134,7 +1231,8 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
                       'foodScan.accessibility.takeLabelPhoto',
                       { defaultValue: 'Take nutrition label photo' }
                     )}
-                    className="w-20 h-20 rounded-full border-4 border-white items-center justify-center"
+                    disabled={!permission.granted}
+                    className={`w-20 h-20 rounded-full border-4 border-white items-center justify-center ${permission.granted ? '' : 'opacity-40'}`}
                     activeOpacity={0.7}
                   >
                     <View className="w-16 h-16 rounded-full bg-white" />
@@ -1179,8 +1277,8 @@ const FoodScanScreen: React.FC<FoodScanScreenProps> = ({
                         'foodScan.accessibility.takeMealPhoto',
                         { defaultValue: 'Take meal photo' }
                       )}
-                      disabled={!photoModeAvailable}
-                      className={`w-20 h-20 rounded-full border-4 border-white items-center justify-center ${photoModeAvailable ? '' : 'opacity-40'}`}
+                      disabled={!permission.granted || !photoModeAvailable}
+                      className={`w-20 h-20 rounded-full border-4 border-white items-center justify-center ${permission.granted && photoModeAvailable ? '' : 'opacity-40'}`}
                       activeOpacity={0.7}
                     >
                       <View className="w-16 h-16 rounded-full bg-white" />

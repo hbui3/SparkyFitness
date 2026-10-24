@@ -28,8 +28,19 @@ import {
   EXERCISE_CATEGORIES,
   EXERCISE_MODALITY_OPTIONS,
 } from '@/constants/exercises';
-import { isExerciseModality, resolveExerciseModality } from '@workspace/shared';
+import {
+  isExerciseModality,
+  resolveExerciseModality,
+  CANONICAL_MUSCLES,
+  CANONICAL_EQUIPMENT,
+  isCanonicalMuscle,
+  isCanonicalEquipment,
+  resolveCanonicalOrCustomMuscle,
+  resolveCanonicalOrCustomEquipment,
+} from '@workspace/shared';
 import { resolveExerciseImageSrc } from '@/utils/exercises';
+import { TagInput } from '@/components/ui/TagInput';
+import { localizeMuscle, localizeEquipment } from '@/utils/exerciseTaxonomy';
 
 interface EditExerciseDatabaseDialogProps {
   open: boolean;
@@ -113,18 +124,6 @@ const EditExerciseDatabaseDialog: React.FC<EditExerciseDatabaseDialogProps> = ({
 
   const handleFieldChange = (field: keyof Exercise, value: unknown) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleArrayStringChange = (field: keyof Exercise, value: string) => {
-    handleFieldChange(
-      field,
-      value
-        ? value
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : []
-    );
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -312,44 +311,61 @@ const EditExerciseDatabaseDialog: React.FC<EditExerciseDatabaseDialogProps> = ({
           </div>
 
           {/* Primary Muscles */}
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right">
+          <div className="grid grid-cols-4 items-start gap-4">
+            <Label htmlFor="db-primary-muscles" className="text-right mt-1">
               {t('exerciseCard.primaryMuscles', 'Primary Muscles')}
             </Label>
-            <Input
-              value={(formData.primary_muscles || []).join(', ')}
-              onChange={(e) =>
-                handleArrayStringChange('primary_muscles', e.target.value)
-              }
-              className="col-span-3"
-            />
+            <div className="col-span-3">
+              <TagInput
+                id="db-primary-muscles"
+                value={formData.primary_muscles || []}
+                onChange={(tags) => handleFieldChange('primary_muscles', tags)}
+                suggestions={CANONICAL_MUSCLES}
+                resolveValue={resolveCanonicalOrCustomMuscle}
+                getLabel={(m) => localizeMuscle(t, m)}
+                isCanonical={isCanonicalMuscle}
+                showBodyMapHint
+              />
+            </div>
           </div>
 
           {/* Secondary Muscles */}
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right">
+          <div className="grid grid-cols-4 items-start gap-4">
+            <Label htmlFor="db-secondary-muscles" className="text-right mt-1">
               {t('exerciseCard.secondaryMuscles', 'Secondary Muscles')}
             </Label>
-            <Input
-              value={(formData.secondary_muscles || []).join(', ')}
-              onChange={(e) =>
-                handleArrayStringChange('secondary_muscles', e.target.value)
-              }
-              className="col-span-3"
-            />
+            <div className="col-span-3">
+              <TagInput
+                id="db-secondary-muscles"
+                value={formData.secondary_muscles || []}
+                onChange={(tags) =>
+                  handleFieldChange('secondary_muscles', tags)
+                }
+                suggestions={CANONICAL_MUSCLES}
+                resolveValue={resolveCanonicalOrCustomMuscle}
+                getLabel={(m) => localizeMuscle(t, m)}
+                isCanonical={isCanonicalMuscle}
+                showBodyMapHint
+              />
+            </div>
           </div>
+
           {/* Equipment */}
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right">
+          <div className="grid grid-cols-4 items-start gap-4">
+            <Label htmlFor="db-equipment" className="text-right mt-1">
               {t('exerciseCard.equipment', 'Equipment')}
             </Label>
-            <Input
-              value={(formData.equipment || []).join(', ')}
-              onChange={(e) =>
-                handleArrayStringChange('equipment', e.target.value)
-              }
-              className="col-span-3"
-            />
+            <div className="col-span-3">
+              <TagInput
+                id="db-equipment"
+                value={formData.equipment || []}
+                onChange={(tags) => handleFieldChange('equipment', tags)}
+                suggestions={CANONICAL_EQUIPMENT}
+                resolveValue={resolveCanonicalOrCustomEquipment}
+                getLabel={(eq) => localizeEquipment(t, eq)}
+                isCanonical={isCanonicalEquipment}
+              />
+            </div>
           </div>
 
           {/* Instructions */}

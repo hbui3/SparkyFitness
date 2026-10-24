@@ -18,6 +18,23 @@ export const exerciseKeys = {
   details: () => [...exerciseKeys.all, 'detail'] as const,
   detail: (id: string) => [...exerciseKeys.details(), id] as const,
   impact: (id: string) => [...exerciseKeys.detail(id), 'impact'] as const,
+  alternatives: (id: string, mode: string, excludeIds: readonly string[]) =>
+    [
+      ...exerciseKeys.all,
+      'alternatives',
+      id,
+      mode,
+      [...excludeIds].sort().join(','),
+    ] as const,
+};
+
+export const workoutCoachingKeys = {
+  all: ['workoutCoaching'] as const,
+  settings: () => [...workoutCoachingKeys.all, 'settings'] as const,
+  feedback: (presetEntryId: string) =>
+    [...workoutCoachingKeys.all, 'feedback', presetEntryId] as const,
+  /** Adaptive suggestions; feedback saves invalidate this prefix. */
+  suggestions: () => [...workoutCoachingKeys.all, 'suggestions'] as const,
 };
 
 export const presetKeys = {
@@ -101,6 +118,8 @@ export const exerciseEntryKeys = {
       date,
       ...(userId ? [{ userId }] : []),
     ] as const,
+  /** Autocomplete source for the workout gym / location field. */
+  locations: () => [...exerciseEntryKeys.all, 'locations'] as const,
   history: (exerciseId: string, limit?: number) =>
     [
       ...exerciseEntryKeys.all,

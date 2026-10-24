@@ -1,12 +1,61 @@
+import { renderHook } from '@testing-library/react-native';
+
 import {
+  ACTIVE_WORKOUT_BAR_HEIGHT,
   isClosingToTabsTransition,
   shouldSuppressActiveWorkoutBar,
+  useActiveWorkoutBarPadding,
 } from '../../src/components/ActiveWorkoutBar';
+import { useHasGpsRecording } from '../../src/services/gpsRecordingService';
+import { useActiveWorkoutStore } from '../../src/stores/activeWorkoutStore';
+
+jest.mock('../../src/services/gpsRecordingService', () => ({
+  useGpsRecording: jest.fn(() => ({ session: null, points: [] })),
+  useHasGpsRecording: jest.fn(() => false),
+}));
+
+describe('useActiveWorkoutBarPadding', () => {
+  beforeEach(() => {
+    jest.mocked(useHasGpsRecording).mockReturnValue(false);
+    useActiveWorkoutStore.setState({ sessionId: null });
+  });
+
+  it('reserves nothing when there is no workout and no recording', () => {
+    expect(renderHook(() => useActiveWorkoutBarPadding()).result.current).toBe(
+      0
+    );
+  });
+
+  it('reserves room for a GPS recording the bar is showing', () => {
+    jest.mocked(useHasGpsRecording).mockReturnValue(true);
+
+    expect(renderHook(() => useActiveWorkoutBarPadding()).result.current).toBe(
+      ACTIVE_WORKOUT_BAR_HEIGHT
+    );
+  });
+
+  it('reserves room for a strength workout', () => {
+    useActiveWorkoutStore.setState({ sessionId: 42 });
+
+    expect(renderHook(() => useActiveWorkoutBarPadding()).result.current).toBe(
+      ACTIVE_WORKOUT_BAR_HEIGHT
+    );
+  });
+});
 
 describe('shouldSuppressActiveWorkoutBar', () => {
   it('keeps the HUD off meal-plan routes with sticky bottom actions', () => {
     expect(shouldSuppressActiveWorkoutBar('MealPlans')).toBe(true);
     expect(shouldSuppressActiveWorkoutBar('MealPlanForm')).toBe(true);
+  });
+
+  // Regression: the floating HUD collided with these screens' sticky
+  // FooterSaveBar/FooterActionBar, covering the Save/Add button (#2245).
+  it('keeps the HUD off other routes with sticky bottom actions', () => {
+    expect(shouldSuppressActiveWorkoutBar('MealAdd')).toBe(true);
+    expect(shouldSuppressActiveWorkoutBar('CycleLogModal')).toBe(true);
+    expect(shouldSuppressActiveWorkoutBar('WaterContainerEdit')).toBe(true);
+    expect(shouldSuppressActiveWorkoutBar('WaterContainers')).toBe(true);
   });
 });
 

@@ -219,7 +219,15 @@ async function createPhotoLoggedMeal(
           entry_date: payload.entry_date,
           entry_time: payload.entry_time,
           name: payload.name,
-          description: payload.description,
+          description:
+            payload.description && payload.description.length <= 60
+              ? payload.description
+              : null,
+          notes:
+            payload.notes ??
+            (payload.description && payload.description.length > 60
+              ? payload.description
+              : null),
           // Ad-hoc logged meals do not scale their components by the parent
           // quantity (only template-backed ones do), so the real amounts live
           // on each component. The parent quantity is what was eaten purely so

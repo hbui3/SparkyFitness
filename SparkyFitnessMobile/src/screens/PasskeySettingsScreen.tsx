@@ -26,12 +26,16 @@ import { useServerConfigs } from '../hooks';
 import {
   getPasskeys,
   addPasskey,
+  fetchAuthSettings,
   deletePasskey,
   LoginError,
   type MobilePasskeyRecord,
 } from '../services/api/authService';
 import ReauthModal from '../components/ReauthModal';
-import { getActiveServerConfig } from '../services/storage';
+import {
+  getActiveServerConfig,
+  proxyHeadersToRecord,
+} from '../services/storage';
 import { getAppLocale } from '../localization';
 
 import type { RootStackScreenProps } from '../types/navigation';
@@ -66,6 +70,7 @@ const PasskeySettingsScreen: React.FC<PasskeySettingsScreenProps> = () => {
   const { activeConfig } = useServerConfigs();
 
   const [passkeys, setPasskeys] = useState<MobilePasskeyRecord[]>([]);
+  const [passkeyLoginEnabled, setPasskeyLoginEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -85,6 +90,15 @@ const PasskeySettingsScreen: React.FC<PasskeySettingsScreenProps> = () => {
       return;
     }
     setLoading(true);
+    // Unknown settings leave adding available; the server still has the final say.
+    fetchAuthSettings(
+      activeConfig.url,
+      proxyHeadersToRecord(activeConfig.proxyHeaders)
+    )
+      .then((settings) =>
+        setPasskeyLoginEnabled(settings.passkey?.enabled !== false)
+      )
+      .catch(() => setPasskeyLoginEnabled(true));
     try {
       const list = await getPasskeys(
         activeConfig.url,
@@ -352,10 +366,15 @@ const PasskeySettingsScreen: React.FC<PasskeySettingsScreenProps> = () => {
                   })}
                 </Text>
                 <Text className="text-sm text-text-muted text-center mt-2">
-                  {t('passkeySettings.noneHint', {
-                    defaultValue:
-                      'Add this device or biometric credentials to sign in quickly next time.',
-                  })}
+                  {passkeyLoginEnabled
+                    ? t('passkeySettings.noneHint', {
+                        defaultValue:
+                          'Add this device or biometric credentials to sign in quickly next time.',
+                      })
+                    : t('passkeySettings.disabledHint', {
+                        defaultValue:
+                          'Passkey sign-in is turned off on this server.',
+                      })}
                 </Text>
               </View>
             ) : (
@@ -397,30 +416,32 @@ const PasskeySettingsScreen: React.FC<PasskeySettingsScreenProps> = () => {
               </SettingsRowGroup>
             )}
 
-            <Button
-              variant="primary"
-              disabled={loading || actionLoading}
-              onPress={() => {
-                setNewPasskeyName('');
-                setModalVisible(true);
-              }}
-              className="w-full flex-row items-center justify-center"
-            >
-              {actionLoading ? (
-                <ActivityIndicator
-                  size="small"
-                  color="#fff"
-                  style={{ marginRight: 8 }}
-                />
-              ) : (
-                <View style={{ marginRight: 8 }}>
-                  <Icon name="fingerprint" size={20} color="#fff" />
-                </View>
-              )}
-              <Text className="text-base font-semibold text-white">
-                {t('passkeySettings.add', { defaultValue: 'Add Passkey' })}
-              </Text>
-            </Button>
+            {passkeyLoginEnabled && (
+              <Button
+                variant="primary"
+                disabled={loading || actionLoading}
+                onPress={() => {
+                  setNewPasskeyName('');
+                  setModalVisible(true);
+                }}
+                className="w-full flex-row items-center justify-center"
+              >
+                {actionLoading ? (
+                  <ActivityIndicator
+                    size="small"
+                    color="#fff"
+                    style={{ marginRight: 8 }}
+                  />
+                ) : (
+                  <View style={{ marginRight: 8 }}>
+                    <Icon name="fingerprint" size={20} color="#fff" />
+                  </View>
+                )}
+                <Text className="text-base font-semibold text-white">
+                  {t('passkeySettings.add', { defaultValue: 'Add Passkey' })}
+                </Text>
+              </Button>
+            )}
 
             <Text className="text-xs text-text-muted mt-4">
               {t('passkeySettings.securityHint', {

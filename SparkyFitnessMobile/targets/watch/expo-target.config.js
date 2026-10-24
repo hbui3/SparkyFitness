@@ -50,6 +50,22 @@ const syncInfoPlist = (appGroup, bundleIdentifier) => {
         </array>
       </dict>
     </array>
+    <!-- Without this an HKWorkoutSession gets no background runtime, so
+         heart-rate sampling stops the moment the screen turns off - which on
+         a watch is most of a workout. This is what makes the Workout tab's
+         live HR actually survive a set. -->
+    <key>WKBackgroundModes</key>
+    <array>
+      <string>workout-processing</string>
+    </array>
+    <key>NSHealthShareUsageDescription</key>
+    <string>Used to track heart rate during a workout started from SparkyFitness.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>Used to record workout sessions started from SparkyFitness.</string>
+    <key>NSMotionUsageDescription</key>
+    <string>Used to count your steps so an indoor walk or run pauses when you stop.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Used to record the route and distance of an outdoor walk or run you start from your watch.</string>
   </dict>
 </plist>
 `
@@ -87,6 +103,12 @@ module.exports = (config) => {
     // apply.
     entitlements: {
       'com.apple.security.application-groups': [appGroup],
+      // Needed to start an HKWorkoutSession and read live heart rate for the
+      // Workout tab. Standard (non-clinical) HealthKit access, hence the
+      // empty access array — see NSHealthShareUsageDescription /
+      // NSHealthUpdateUsageDescription above for the prompts this unlocks.
+      'com.apple.developer.healthkit': true,
+      'com.apple.developer.healthkit.access': [],
     },
   };
 };

@@ -12,12 +12,15 @@ const KeepAwakeLock: React.FC = () => {
 
 /**
  * Keeps the screen on anywhere in the app while a workout is active, when the
- * Workout Settings "Keep screen awake" toggle is on.
+ * Workout Settings "Keep screen awake" toggle is on — or guided mode is: its
+ * narration runs on JS timers, which stop when a locked screen suspends the
+ * app (there is no background-audio mode).
  */
 const ActiveWorkoutKeepAwake: React.FC = () => {
-  const enabled = useAppPreferencesStore((s) => s.workoutKeepAwakeEnabled);
+  const keepAwake = useAppPreferencesStore((s) => s.workoutKeepAwakeEnabled);
+  const guided = useAppPreferencesStore((s) => s.guidedWorkoutEnabled);
   const workoutActive = useActiveWorkoutStore((s) => s.sessionId !== null);
-  return enabled && workoutActive ? <KeepAwakeLock /> : null;
+  return (keepAwake || guided) && workoutActive ? <KeepAwakeLock /> : null;
 };
 
 export default ActiveWorkoutKeepAwake;

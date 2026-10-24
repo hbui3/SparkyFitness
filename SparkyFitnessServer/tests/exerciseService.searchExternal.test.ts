@@ -213,7 +213,9 @@ describe('exerciseService.searchExternalExercises', () => {
           id: 'Air_Bike',
           name: 'Air Bike',
           category: 'strength',
-          modality: 'weight_reps',
+          // Recorded as bodyweight-only equipment, so it imports as a
+          // bodyweight exercise.
+          modality: 'bodyweight_reps',
           calories_per_hour: 0,
           source: 'free-exercise-db',
           description: 'Lie on the floor.',

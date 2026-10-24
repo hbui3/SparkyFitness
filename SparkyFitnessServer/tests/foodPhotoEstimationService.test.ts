@@ -1,8 +1,15 @@
 import { vi, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import chatRepository from '../models/chatRepository.js';
+import preferenceRepository from '../models/preferenceRepository.js';
 import { estimateFoodPhotoNutrition } from '../services/foodPhotoEstimationService.js';
 
 vi.mock('../models/chatRepository');
+vi.mock('../models/preferenceRepository');
+// Read by utils/outboundUrlPolicy's resolveAiNetworkPolicy. Default false
+// keeps these cases off the real database.
+vi.mock('../models/globalSettingsRepository.js', () => ({
+  isPrivateNetworkAiAllowed: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('../config/logging', () => ({ log: vi.fn() }));
 // Matching is a separate service with its own tests and its own DB access;
 // this file covers prompt building and provider dispatch.
@@ -32,6 +39,9 @@ const mockGetVisionSetting = vi.mocked(
 );
 const mockGetBackendSetting = vi.mocked(
   chatRepository.getAiServiceSettingForBackend
+);
+const mockGetUserPreferences = vi.mocked(
+  preferenceRepository.getUserPreferences
 );
 
 const TEST_USER_ID = 'user-123';
@@ -95,8 +105,8 @@ const sampleEstimate = {
 };
 
 // Per-family upstream response-body factories matching each provider's wire
-// shape. google/openai/ollama deliver the payload as a JSON *string* the helper
-// parses; anthropic returns the object directly in a tool_use block.
+// shape. Every family delivers the payload as a JSON *string* the helper
+// parses; anthropic's arrives in a text block after any thinking blocks.
 function googleBody(payload: unknown) {
   return {
     candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }],
@@ -109,14 +119,14 @@ function openAiBody(payload: unknown) {
     ],
   };
 }
-// The helper's extractor finds the tool block by the service's schemaName
-// ('food_photo_estimate'), so the body must emit exactly that name — any
-// other name mis-extracts → UPSTREAM_ERROR.
-function anthropicToolBody(payload: unknown) {
+// The request asks for JSON outputs (`output_config.format`), and the models
+// that think by default put a thinking block ahead of the answer.
+function anthropicJsonBody(payload: unknown) {
   return {
-    stop_reason: 'tool_use',
+    stop_reason: 'end_turn',
     content: [
-      { type: 'tool_use', name: 'food_photo_estimate', input: payload },
+      { type: 'thinking', thinking: '', signature: 'sig' },
+      { type: 'text', text: JSON.stringify(payload) },
     ],
   };
 }
@@ -144,7 +154,7 @@ function bodyFor(serviceType: string, payload: unknown) {
     case 'google':
       return googleBody(payload);
     case 'anthropic':
-      return anthropicToolBody(payload);
+      return anthropicJsonBody(payload);
     case 'ollama':
       return ollamaBody(payload);
     default:
@@ -365,6 +375,81 @@ describe('estimateFoodPhotoNutrition', () => {
       expect(prompt).toContain('2 provided photos');
       expect(prompt).toContain('ONE meal');
     });
+
+    it('defaults prompt output language to English and enforces food-name-only rule when user language is unset', async () => {
+      mockGetUserPreferences.mockResolvedValue(undefined);
+      const m = mockFetch(googleBody(sampleEstimate));
+      await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      const prompt = googlePromptText(capturedBody(m));
+      expect(mockGetUserPreferences).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(prompt).toContain(
+        'The "name" field must be ONLY the food name, as it would appear on a label'
+      );
+      expect(prompt).toContain('in English,');
+    });
+
+    it('instructs the model to use the user configured language (e.g. German)', async () => {
+      mockGetUserPreferences.mockResolvedValue({ language: 'de' });
+      const m = mockFetch(googleBody(sampleEstimate));
+      await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      const prompt = googlePromptText(capturedBody(m));
+      expect(prompt).toContain('in German (de),');
+      expect(prompt).toContain(
+        'including foods whose common name you know in English'
+      );
+      expect(prompt).toContain(
+        'Keep enum fields ("overall_confidence" and "item_confidence") in English ("high", "medium", "low").'
+      );
+    });
+
+    it('resolves regional language tags like pt-BR for the prompt', async () => {
+      mockGetUserPreferences.mockResolvedValue({ language: 'pt-BR' });
+      const m = mockFetch(googleBody(sampleEstimate));
+      await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      const prompt = googlePromptText(capturedBody(m));
+      expect(prompt).toContain('in Brazilian Portuguese (pt-BR),');
+    });
+
+    it('falls back to English when loading user preferences rejects', async () => {
+      mockGetUserPreferences.mockRejectedValue(new Error('db unavailable'));
+      const m = mockFetch(googleBody(sampleEstimate));
+      const result = await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      expect(result.success).toBe(true);
+      const prompt = googlePromptText(capturedBody(m));
+      expect(prompt).toContain('in English,');
+    });
+
+    it.each([['zz'], ['invalid_tag_12345']])(
+      'falls back to English when user language tag %s is unknown or invalid',
+      async (language) => {
+        mockGetUserPreferences.mockResolvedValue({ language });
+        const m = mockFetch(googleBody(sampleEstimate));
+        await estimateFoodPhotoNutrition({
+          base64Image: TEST_BASE64,
+          mimeType: TEST_MIME,
+          userId: TEST_USER_ID,
+        });
+        const prompt = googlePromptText(capturedBody(m));
+        expect(prompt).toContain('in English,');
+        expect(prompt).not.toContain(language);
+      }
+    );
   });
 
   describe('dispatch category → food-photo code mapping', () => {
@@ -407,6 +492,30 @@ describe('estimateFoodPhotoNutrition', () => {
       const result = await estimate();
       expect(result.success).toBe(false);
       if (!result.success) expect(result.code).toBe('UPSTREAM_ERROR');
+    });
+
+    it('maps an openai patch limit 400 → IMAGE_TOO_LARGE', async () => {
+      mockOpenAi();
+      mockFetch(
+        JSON.stringify({
+          error: {
+            message:
+              'The image you provided requires 48960 patches after processing, exceeding the limit of 30000. Please resize the image and try again.',
+            type: 'invalid_request_error',
+            param: 'messages',
+            code: 'invalid_value',
+          },
+        }),
+        { ok: false, status: 400 }
+      );
+      const result = await estimate();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.code).toBe('IMAGE_TOO_LARGE');
+        expect(result.error).toBe(
+          'The image is too large for AI analysis. Please try another photo.'
+        );
+      }
     });
 
     it('maps an openai refusal → CONTENT_BLOCKED', async () => {
@@ -544,6 +653,39 @@ describe('estimateFoodPhotoNutrition', () => {
       }
     });
 
+    it('normalizes string assumptions from local models into an array', async () => {
+      mockGetVisionSetting.mockResolvedValue(
+        makeSetting({ service_type: 'openai_compatible' })
+      );
+      mockGetBackendSetting.mockResolvedValue(
+        makeServiceDetail({
+          service_type: 'openai_compatible',
+          custom_url: 'https://example.local/v1',
+        })
+      );
+      const stringAssumptionsShape: Record<string, unknown> = {
+        ...sampleEstimate,
+        items: [
+          {
+            ...sampleEstimate.items[0],
+            assumptions: 'Assumed grilled with 1 tsp of oil',
+          },
+        ],
+      };
+      mockFetch(openAiBody(stringAssumptionsShape));
+      const result = await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.estimate.items[0].assumptions).toEqual([
+          'Assumed grilled with 1 tsp of oil',
+        ]);
+      }
+    });
+
     it('returns PARSE_ERROR when the payload cannot be repaired', async () => {
       mockGetVisionSetting.mockResolvedValue(makeSetting());
       mockGetBackendSetting.mockResolvedValue(makeServiceDetail());
@@ -556,6 +698,51 @@ describe('estimateFoodPhotoNutrition', () => {
       });
       expect(result.success).toBe(false);
       if (!result.success) expect(result.code).toBe('PARSE_ERROR');
+    });
+
+    it('cleans up verbose narrative meal summaries into concise dish names', async () => {
+      mockGetVisionSetting.mockResolvedValue(makeSetting());
+      mockGetBackendSetting.mockResolvedValue(makeServiceDetail());
+      const verboseShape: Record<string, unknown> = {
+        ...sampleEstimate,
+        meal_summary:
+          'A creamy chicken and pasta dish, featuring penne pasta mixed with chunks of cooked chicken in a thick, creamy white sauce, garnished with fresh herbs. The dish appears seasoned and rich',
+      };
+      mockFetch(googleBody(verboseShape));
+      const result = await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.estimate.meal_summary).toBe('Creamy chicken and pasta');
+      }
+    });
+
+    it('title-cases food names starting with non-ASCII lowercase letters', async () => {
+      mockGetVisionSetting.mockResolvedValue(makeSetting());
+      mockGetBackendSetting.mockResolvedValue(makeServiceDetail());
+      mockFetch(
+        googleBody({
+          ...sampleEstimate,
+          items: [
+            {
+              ...sampleEstimate.items[0],
+              name: 'überbackener käse',
+            },
+          ],
+        })
+      );
+      const result = await estimateFoodPhotoNutrition({
+        base64Image: TEST_BASE64,
+        mimeType: TEST_MIME,
+        userId: TEST_USER_ID,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.estimate.items[0].name).toBe('Überbackener Käse');
+      }
     });
   });
 });

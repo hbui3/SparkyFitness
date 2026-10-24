@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
 import type { HealthTrendKey } from '../constants/healthTrends';
 import type {
+  CaloriesDataPoint,
   HealthTrendDateRange,
   HealthTrendSeries,
   HydrationDataPoint,
+  Vo2MaxDataPoint,
 } from '../types/healthTrends';
 import type { SleepTimelineDay, SleepTimelineSummary } from '../types/sleep';
 import {
@@ -11,8 +13,10 @@ import {
   type StepsDataPoint,
   type WeightDataPoint,
 } from './useMeasurementsRange';
+import { useCaloriesRange } from './useCaloriesRange';
 import { useHydrationRange } from './useHydrationRange';
 import { useSleepRange } from './useSleepRange';
+import { useVo2MaxRange } from './useVo2MaxRange';
 
 interface UseHealthTrendsOptions {
   range: HealthTrendDateRange;
@@ -28,11 +32,30 @@ interface UseHealthTrendsOptions {
 export type SleepTrendSeries = HealthTrendSeries<SleepTimelineDay> &
   Omit<SleepTimelineSummary, 'days'>;
 
+/** The calories page's headline tile shows the window's average, same reasoning as sleep's. */
+export type CaloriesTrendSeries = HealthTrendSeries<CaloriesDataPoint> & {
+  averageCalories: number | null;
+  /** The resolved calorie goal for each day in the window, same order as `data`. */
+  calorieGoals: (number | null)[];
+};
+
+/** The resolved hydration goal for each day in the window, same order as `data`. */
+export type HydrationTrendSeries = HealthTrendSeries<HydrationDataPoint> & {
+  hydrationGoals: (number | null)[];
+};
+
+/** The resolved steps goal for each day in the window, same order as `data`. */
+export type StepsTrendSeries = HealthTrendSeries<StepsDataPoint> & {
+  stepsGoals: (number | null)[];
+};
+
 interface HealthTrends {
-  steps: HealthTrendSeries<StepsDataPoint>;
+  steps: StepsTrendSeries;
   weight: HealthTrendSeries<WeightDataPoint>;
   sleep: SleepTrendSeries;
-  hydration: HealthTrendSeries<HydrationDataPoint>;
+  hydration: HydrationTrendSeries;
+  calories: CaloriesTrendSeries;
+  vo2max: HealthTrendSeries<Vo2MaxDataPoint>;
   refetch: () => Promise<void>;
 }
 
@@ -49,12 +72,16 @@ export function useHealthTrends({
     (activeTrends.includes('steps') || activeTrends.includes('weight'));
   const isSleepEnabled = enabled && activeTrends.includes('sleep');
   const isHydrationEnabled = enabled && activeTrends.includes('hydration');
+  const isCaloriesEnabled = enabled && activeTrends.includes('calories');
+  const isVo2MaxEnabled = enabled && activeTrends.includes('vo2max');
 
   const {
     stepsData,
+    stepsGoals,
     weightData,
     isLoading: isMeasurementsLoading,
     isError: isMeasurementsError,
+    isStepsGoalsError,
     refetch: refetchMeasurements,
   } = useMeasurementsRange({ range, enabled: isMeasurementsEnabled });
 
@@ -67,32 +94,57 @@ export function useHealthTrends({
 
   const {
     hydrationData,
+    hydrationGoals,
     isLoading: isHydrationLoading,
     isError: isHydrationError,
     refetch: refetchHydration,
   } = useHydrationRange({ range, enabled: isHydrationEnabled });
+
+  const {
+    caloriesData,
+    averageCalories,
+    calorieGoals,
+    isLoading: isCaloriesLoading,
+    isError: isCaloriesError,
+    refetch: refetchCalories,
+  } = useCaloriesRange({ range, enabled: isCaloriesEnabled });
+
+  const {
+    vo2MaxData,
+    isLoading: isVo2MaxLoading,
+    isError: isVo2MaxError,
+    refetch: refetchVo2Max,
+  } = useVo2MaxRange({ range, enabled: isVo2MaxEnabled });
 
   const refetch = useCallback(async () => {
     await Promise.all([
       isMeasurementsEnabled ? refetchMeasurements() : Promise.resolve(),
       isSleepEnabled ? refetchSleep() : Promise.resolve(),
       isHydrationEnabled ? refetchHydration() : Promise.resolve(),
+      isCaloriesEnabled ? refetchCalories() : Promise.resolve(),
+      isVo2MaxEnabled ? refetchVo2Max() : Promise.resolve(),
     ]);
   }, [
     isMeasurementsEnabled,
     isSleepEnabled,
     isHydrationEnabled,
+    isCaloriesEnabled,
+    isVo2MaxEnabled,
     refetchMeasurements,
     refetchSleep,
     refetchHydration,
+    refetchCalories,
+    refetchVo2Max,
   ]);
 
   return {
     // Steps and weight share one request, so they necessarily share its fetch state.
     steps: {
       data: stepsData,
+      stepsGoals,
       isLoading: isMeasurementsLoading,
-      isError: isMeasurementsError,
+      // A failed goals request must not read as "no goal set"; weight is unaffected.
+      isError: isMeasurementsError || isStepsGoalsError,
     },
     weight: {
       data: weightData,
@@ -109,8 +161,21 @@ export function useHealthTrends({
     },
     hydration: {
       data: hydrationData,
+      hydrationGoals,
       isLoading: isHydrationLoading,
       isError: isHydrationError,
+    },
+    calories: {
+      data: caloriesData,
+      averageCalories,
+      calorieGoals,
+      isLoading: isCaloriesLoading,
+      isError: isCaloriesError,
+    },
+    vo2max: {
+      data: vo2MaxData,
+      isLoading: isVo2MaxLoading,
+      isError: isVo2MaxError,
     },
     refetch,
   };

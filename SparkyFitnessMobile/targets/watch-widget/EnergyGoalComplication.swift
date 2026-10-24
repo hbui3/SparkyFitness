@@ -266,10 +266,11 @@ struct EnergyGoalComplicationEntryView: View {
             .widgetURL(ComplicationLink.goals.url)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
-                "Calories \(percentText(entry.snapshot.calorieGoalProgress)) of goal. "
-                    + "Fat \(percentText(entry.snapshot.fatGoalProgress)), "
-                    + "carbs \(percentText(entry.snapshot.carbsGoalProgress)), "
-                    + "protein \(percentText(entry.snapshot.proteinGoalProgress)) of their goals."
+                String(
+                    localized: "watch.energy.accessibility",
+                    defaultValue:
+                        "Calories \(percentText(entry.snapshot.calorieGoalProgress)) of goal. Fat \(percentText(entry.snapshot.fatGoalProgress)), carbs \(percentText(entry.snapshot.carbsGoalProgress)), protein \(percentText(entry.snapshot.proteinGoalProgress)) of their goals."
+                )
             )
     }
 }

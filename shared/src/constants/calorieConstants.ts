@@ -66,9 +66,9 @@ export const ADAPTIVE_TDEE_CLAMP_KCAL = 500;
 export const ADAPTIVE_TDEE_GOAL_MIN_DAYS = 14;
 
 export const CALORIE_SAFETY_FLOOR_MODES = [
-  "standard",
-  "custom",
-  "disabled",
+  'standard',
+  'custom',
+  'disabled',
 ] as const;
 
 export type CalorieSafetyFloorMode =

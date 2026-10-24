@@ -1,10 +1,10 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const telegramUpdateInboxStatusSchema = z.enum([
-  "pending",
-  "processing",
-  "processed",
-  "dead_letter",
+  'pending',
+  'processing',
+  'processed',
+  'dead_letter',
 ]);
 
 export const telegramUpdateInboxSchema = z.object({

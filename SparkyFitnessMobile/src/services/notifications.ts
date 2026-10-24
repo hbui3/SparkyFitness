@@ -1,11 +1,16 @@
-import { Alert, Linking, Platform } from 'react-native';
+import { Alert, AppState, Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import Toast from 'react-native-toast-message';
 import { addLog } from './LogService';
+import { MOOD_CHECKIN_KIND } from '../utils/checkinReminderTimes';
 import i18n from '../localization/i18n';
 import { fireSuccessHaptic } from './haptics';
-import { isRestTimerSoundEnabled, playRestCompleteSound } from './sounds';
+import {
+  willBackgroundRestChimeSound,
+  playRestCompleteSound,
+  willPlayRestCompleteSound,
+} from './sounds';
 import { ExactAlarmBridge } from './ExactAlarmBridge';
 import {
   useAppPreferencesStore,
@@ -14,12 +19,25 @@ import {
 
 const CHANNEL_ID = 'workout-timer';
 const FASTING_CHANNEL_ID = 'fasting';
+const HYDRATION_CHANNEL_ID = 'hydration';
+export const MOOD_CHECKIN_CHANNEL_ID = 'mood-checkin';
 export const MEDICATION_REMINDER_CHANNEL_ID = 'medication-reminders';
 const EXACT_ALARM_PROMPT_KEY = '@SparkyFitness/exactAlarmPromptShown';
 
-function notificationCopy(key: string, defaultValue: string): string {
+export function notificationCopy(
+  key: string,
+  defaultValue: string,
+  options?: Record<string, unknown>
+): string {
   // i18n-audit-ignore-next-line dynamic-i18n-key -- all call sites use literal notification catalog keys.
-  return i18n.t(key, { defaultValue });
+  const translated = i18n.t(key, { defaultValue, ...options });
+  if (typeof translated === 'string' && translated.length > 0) {
+    return translated;
+  }
+  if (!options) return defaultValue;
+  return defaultValue.replace(/\{\{(\w+)\}\}/g, (_, token: string) =>
+    options[token] !== undefined ? String(options[token]) : `{{${token}}}`
+  );
 }
 
 const REST_COMPLETE_CATEGORY = 'rest-complete';
@@ -31,8 +49,10 @@ const REST_COMPLETE_CATEGORY = 'rest-complete';
 export const COMPLETE_SET_ACTION = 'complete-set';
 
 export const MEDICATION_REMINDER_CATEGORY = 'medication-reminder';
+export const MEDICATION_REMINDER_GROUP_CATEGORY = 'medication-reminder-group';
 export const MEDICATION_TAKEN_ACTION = 'medication-taken';
 export const MEDICATION_SKIP_ACTION = 'medication-skip';
+export const MEDICATION_SNOOZE_ACTION = 'medication-snooze';
 
 export type AppNotificationPermission = 'granted' | 'denied' | 'undetermined';
 
@@ -59,6 +79,15 @@ export async function registerLocalizedNotificationPresentation(): Promise<void>
       importance: Notifications.AndroidImportance.HIGH,
       enableVibrate: true,
     });
+    await Notifications.setNotificationChannelAsync(HYDRATION_CHANNEL_ID, {
+      name: notificationCopy(
+        'notifications.channels.hydration',
+        'Hydration reminders'
+      ),
+      importance: Notifications.AndroidImportance.HIGH,
+      enableVibrate: true,
+    });
+    await ensureMoodCheckinChannel();
     await Notifications.setNotificationChannelAsync(
       MEDICATION_REMINDER_CHANNEL_ID,
       {
@@ -72,6 +101,14 @@ export async function registerLocalizedNotificationPresentation(): Promise<void>
     );
   }
 
+  const snoozeMinutes =
+    useAppPreferencesStore.getState()?.medicationReminderSnoozeMinutes ?? 30;
+  const remindInTitle = notificationCopy(
+    'notifications.actions.remindInMinutes',
+    'Remind in {{minutes}}m',
+    { minutes: snoozeMinutes }
+  );
+
   await Notifications.setNotificationCategoryAsync(REST_COMPLETE_CATEGORY, [
     {
       identifier: COMPLETE_SET_ACTION,
@@ -82,6 +119,32 @@ export async function registerLocalizedNotificationPresentation(): Promise<void>
       options: { opensAppToForeground: false },
     },
   ]);
+  await Notifications.setNotificationCategoryAsync(
+    MEDICATION_REMINDER_GROUP_CATEGORY,
+    [
+      {
+        identifier: MEDICATION_TAKEN_ACTION,
+        buttonTitle: notificationCopy(
+          'notifications.actions.logAllAsTaken',
+          'Log all as taken'
+        ),
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: MEDICATION_SKIP_ACTION,
+        buttonTitle: notificationCopy(
+          'notifications.actions.skipAll',
+          'Skip all'
+        ),
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: MEDICATION_SNOOZE_ACTION,
+        buttonTitle: remindInTitle,
+        options: { opensAppToForeground: false },
+      },
+    ]
+  );
   await Notifications.setNotificationCategoryAsync(
     MEDICATION_REMINDER_CATEGORY,
     [
@@ -98,8 +161,25 @@ export async function registerLocalizedNotificationPresentation(): Promise<void>
         buttonTitle: notificationCopy('notifications.actions.skip', 'Skip'),
         options: { opensAppToForeground: false },
       },
+      {
+        identifier: MEDICATION_SNOOZE_ACTION,
+        buttonTitle: remindInTitle,
+        options: { opensAppToForeground: false },
+      },
     ]
   );
+}
+
+export async function ensureMoodCheckinChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(MOOD_CHECKIN_CHANNEL_ID, {
+    name: notificationCopy(
+      'notifications.channels.moodCheckin',
+      'Mood check-ins'
+    ),
+    importance: Notifications.AndroidImportance.HIGH,
+    enableVibrate: true,
+  });
 }
 
 export async function ensureMedicationReminderChannel(): Promise<void> {
@@ -115,6 +195,18 @@ export async function ensureMedicationReminderChannel(): Promise<void> {
       enableVibrate: true,
     }
   );
+}
+
+export async function ensureSymptomReminderChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync('symptom-reminders', {
+    name: notificationCopy(
+      'notifications.channels.symptomReminders',
+      'Symptom reminders'
+    ),
+    importance: Notifications.AndroidImportance.HIGH,
+    enableVibrate: true,
+  });
 }
 
 /**
@@ -169,16 +261,22 @@ export async function initNotifications(): Promise<void> {
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => {
         const category = notification.request.content.categoryIdentifier;
-        const isMedReminder = category === MEDICATION_REMINDER_CATEGORY;
-        // While the in-app chime owns the foreground rest cue, the rest ping's
-        // notification sound is muted so the two never double up; turning the
-        // chime off restores it.
-        const restPingMuted =
-          category === REST_COMPLETE_CATEGORY && isRestTimerSoundEnabled();
+        const isMedReminder =
+          category === MEDICATION_REMINDER_CATEGORY ||
+          category === MEDICATION_REMINDER_GROUP_CATEGORY;
+        const isRestPing = category === REST_COMPLETE_CATEGORY;
+        const isMoodCheckin =
+          notification.request.content.data?.kind === MOOD_CHECKIN_KIND;
+        // iOS also runs this while the app is frontmost-but-inactive (screen
+        // locking, app switcher), where the chime never plays — so there the
+        // ping carries the cue itself instead of being hidden as a duplicate.
+        const restPingOwnsCue =
+          isRestPing && AppState.currentState !== 'active';
         return {
-          shouldShowBanner: isMedReminder,
-          shouldShowList: isMedReminder,
-          shouldPlaySound: !restPingMuted,
+          shouldShowBanner: isMedReminder || isMoodCheckin || restPingOwnsCue,
+          shouldShowList: isMedReminder || isMoodCheckin || restPingOwnsCue,
+          // Muted only while the chime owns the cue, so the two never double up.
+          shouldPlaySound: !(isRestPing && willPlayRestCompleteSound()),
           shouldSetBadge: false,
         };
       },
@@ -342,6 +440,8 @@ export async function scheduleRestNotification(
   // anchors its fire time at native construction.
   void dismissDeliveredRestNotifications();
 
+  const chimeSounds = await willBackgroundRestChimeSound();
+
   try {
     const id = await Notifications.scheduleNotificationAsync({
       content: {
@@ -349,8 +449,14 @@ export async function scheduleRestNotification(
           content?.title ??
           notificationCopy('notifications.rest.title', 'Rest complete'),
         body: content?.body ?? exerciseName,
-        sound: true,
+        // With the background chime on, the chime is the sound and the ping
+        // only shows the banner, so the two never ding together.
+        sound: !chimeSounds,
         categoryIdentifier: REST_COMPLETE_CATEGORY,
+        // At the default `active` level a Focus mode delivers the alert
+        // silently, which defeats the point of a rest timer. Needs the
+        // entitlement in app.config.ts; iOS falls back to `active` without it.
+        interruptionLevel: 'timeSensitive',
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -464,6 +570,109 @@ export async function scheduleFastGoalNotification(
     );
     return null;
   }
+}
+
+/**
+ * Schedules a notification 30 minutes (or custom minutes) prior to fasting goal completion.
+ */
+export async function scheduleFastPreEndNotification(
+  targetEndTime: string,
+  preEndMinutes: number = 30
+): Promise<string | null> {
+  const prefs = useAppPreferencesStore.getState();
+  if (!prefs.notificationsEnabled || !prefs.fastingGoalNotificationsEnabled)
+    return null;
+
+  const target = new Date(targetEndTime);
+  const preEnd = new Date(target.getTime() - preEndMinutes * 60 * 1000);
+  if (Number.isNaN(preEnd.getTime()) || preEnd.getTime() <= Date.now()) {
+    return null;
+  }
+
+  const granted = await ensureNotificationPermission();
+  if (!granted) return null;
+
+  try {
+    const id = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: notificationCopy(
+          'notifications.fastingPreEnd.title',
+          'Fasting goal ending soon'
+        ),
+        body: notificationCopy(
+          'notifications.fastingPreEnd.body',
+          `Your fast will reach its goal in ${preEndMinutes} minutes.`,
+          { minutes: preEndMinutes }
+        ),
+        sound: true,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: preEnd,
+        channelId: FASTING_CHANNEL_ID,
+      },
+    });
+    return id;
+  } catch (err) {
+    addLog(
+      `scheduleFastPreEndNotification failed: ${(err as Error).message}`,
+      'ERROR'
+    );
+    return null;
+  }
+}
+
+/**
+ * Schedules one hydration reminder per future time and returns the ids that
+ * were scheduled. Never prompts for permission: this runs from a background
+ * reconcile, and the settings toggle only turns on once permission is granted.
+ */
+export async function scheduleWaterReminderNotifications(
+  times: Date[]
+): Promise<string[]> {
+  const prefs = useAppPreferencesStore.getState();
+  if (!prefs.notificationsEnabled || !prefs.waterReminderEnabled) return [];
+  if (!(await hasNotificationPermission())) return [];
+
+  const nowMs = Date.now();
+  const ids: string[] = [];
+  for (const time of times) {
+    const timeMs = time.getTime();
+    if (Number.isNaN(timeMs) || timeMs <= nowMs) continue;
+    try {
+      const id = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: notificationCopy(
+            'notifications.hydration.title',
+            'Time to hydrate 💧'
+          ),
+          body: notificationCopy(
+            'notifications.hydration.body',
+            "You haven't logged any water in a while."
+          ),
+          sound: true,
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: time,
+          channelId: HYDRATION_CHANNEL_ID,
+        },
+      });
+      ids.push(id);
+    } catch (err) {
+      addLog(
+        `scheduleWaterReminderNotifications failed: ${(err as Error).message}`,
+        'ERROR'
+      );
+      // All or nothing. A half-scheduled chain gets persisted as reconciled,
+      // and the signature guard then blocks a retry for the reminders that
+      // never made it. Returning nothing keeps the caller on its "an empty
+      // result is not persisted" path, so the next reconcile tries again.
+      await Promise.all(ids.map((id) => cancelScheduledNotification(id)));
+      return [];
+    }
+  }
+  return ids;
 }
 
 export async function cancelScheduledNotification(

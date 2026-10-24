@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import { render, screen, act, fireEvent } from '@testing-library/react';
-import ImageLightbox from '@/components/FoodSearch/ImageLightbox';
+import ImageLightbox from '@/components/ImageLightbox';
 
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({

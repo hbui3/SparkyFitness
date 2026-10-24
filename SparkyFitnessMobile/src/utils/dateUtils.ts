@@ -74,6 +74,19 @@ export const formatDateLabel = (
   return formatDate(normalized, locale);
 };
 
+export type DateRelation = 'today' | 'past' | 'future';
+
+/**
+ * Returns whether a YYYY-MM-DD date is 'today', 'past', or 'future'
+ * relative to the device-local calendar day.
+ */
+export const getDateRelationToToday = (dateString: string): DateRelation => {
+  const normalized = normalizeDate(dateString);
+  const today = getTodayDate();
+  if (normalized === today) return 'today';
+  return normalized < today ? 'past' : 'future';
+};
+
 // Format a timestamp as a human-readable relative time ("Just now", "3 minutes ago", etc.)
 export interface RelativeTimeTranslator {
   (key: string, options: Record<string, unknown>): string;
@@ -125,4 +138,10 @@ export const formatRelativeTime = (
     time,
     defaultValue: '{{date}} at {{time}}',
   });
+};
+
+/** Weekday of a `YYYY-MM-DD` calendar day, 0 = Sunday, without any timezone shift. */
+export const weekdayOfDay = (dateString: string): number => {
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(year, month - 1, day).getDay();
 };

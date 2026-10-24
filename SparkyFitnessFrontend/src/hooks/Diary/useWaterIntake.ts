@@ -215,6 +215,7 @@ export const useDeleteWaterIntakeLogMutation = () => {
 
 export const useUpdateWaterIntakeLogTimeMutation = () => {
   const queryClient = useQueryClient();
+  const invalidate = useDiaryInvalidation();
 
   return useMutation({
     mutationFn: ({ logId, loggedAt }: { logId: string; loggedAt: string }) =>
@@ -223,6 +224,7 @@ export const useUpdateWaterIntakeLogTimeMutation = () => {
       queryClient.invalidateQueries({
         queryKey: waterIntakeKeys.all,
       });
+      invalidate();
     },
   });
 };

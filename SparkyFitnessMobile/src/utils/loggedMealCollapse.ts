@@ -28,6 +28,7 @@ export function loggedMealToFoodEntry(meal: FoodEntryMeal): FoodEntry {
     quantity,
     unit: meal.unit,
     entry_date: meal.entry_date,
+    entry_time: meal.entry_time,
     food_name: meal.name,
     // serving_size === quantity so the consumed-amount scaling
     // (value * quantity / serving_size) returns the meal's own totals.

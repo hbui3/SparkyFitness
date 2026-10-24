@@ -1,27 +1,27 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const adaptiveTrainingDaySchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const adaptiveTrainingMuscleStatusSchema = z.enum([
-  "ready",
-  "light",
-  "moderate",
-  "high",
+  'ready',
+  'light',
+  'moderate',
+  'high',
 ]);
 
 export const adaptiveTrainingReasonCodeSchema = z.enum([
-  "muscles_ready",
-  "preferred_muscles",
-  "within_duration",
-  "weekly_target_reached",
-  "trained_yesterday",
-  "low_readiness",
-  "poor_sleep",
-  "no_eligible_presets",
-  "insufficient_muscle_data",
-  "adaptive_disabled",
+  'muscles_ready',
+  'preferred_muscles',
+  'within_duration',
+  'weekly_target_reached',
+  'trained_yesterday',
+  'low_readiness',
+  'poor_sleep',
+  'no_eligible_presets',
+  'insufficient_muscle_data',
+  'adaptive_disabled',
 ]);
 
 export const adaptiveTrainingReasonSchema = z.object({
@@ -73,11 +73,11 @@ export const adaptiveTrainingReadinessSchema = z.object({
 export const adaptiveTrainingRecommendationSchema = z.object({
   id: z.string().uuid(),
   date: adaptiveTrainingDaySchema,
-  kind: z.enum(["workout", "recovery"]),
+  kind: z.enum(['workout', 'recovery']),
   presetId: z.number().int().positive().nullable(),
   presetName: z.string().nullable(),
   score: z.number().min(0).max(100),
-  status: z.enum(["planned", "accepted", "skipped", "completed"]),
+  status: z.enum(['planned', 'accepted', 'skipped', 'completed']),
   volumeFactor: z.number().min(0.5).max(1.25),
   rationale: z.array(adaptiveTrainingReasonSchema),
   algorithmVersion: z.string(),
@@ -100,8 +100,8 @@ export const regenerateAdaptiveTrainingRequestSchema = z.object({
 
 export const updateAdaptiveTrainingRecommendationStatusRequestSchema = z.object(
   {
-    status: z.enum(["planned", "accepted", "skipped", "completed"]),
-  },
+    status: z.enum(['planned', 'accepted', 'skipped', 'completed']),
+  }
 );
 
 export type AdaptiveTrainingReason = z.infer<

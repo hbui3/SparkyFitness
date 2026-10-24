@@ -127,18 +127,18 @@ describe('sleepRepository placeholder integrity', () => {
     expect(insert.values![columns.indexOf('resting_heart_rate')]).toBe(54);
   });
 
-  it('upsertSleepEntry UPDATE: placeholders and zone-column bindings line up', async () => {
+  it('upsertSleepEntry UPDATE by id: placeholders and zone-column bindings line up', async () => {
     mockClient.query.mockImplementation(async (text: string) => {
-      if (text.includes('SELECT id FROM sleep_entries')) {
-        return { rows: [{ id: 'sleep-1' }] };
-      }
       if (text.includes('UPDATE sleep_entries')) {
         return { rows: [{ id: 'sleep-1' }] };
       }
       return { rows: [] };
     });
 
-    await sleepRepository.upsertSleepEntry('user-1', 'user-1', FULL_ENTRY);
+    await sleepRepository.upsertSleepEntry('user-1', 'user-1', {
+      ...FULL_ENTRY,
+      id: 'sleep-1',
+    });
 
     const update = findCall('UPDATE sleep_entries');
     expect(distinctPlaceholders(update.text)).toBe(update.values!.length);
@@ -155,11 +155,8 @@ describe('sleepRepository placeholder integrity', () => {
     ).toBe(54);
   });
 
-  it('upsertSleepEntry UPDATE preserves stored zone metadata when the payload omits it', async () => {
+  it('upsertSleepEntry UPDATE by id preserves stored zone metadata when the payload omits it', async () => {
     mockClient.query.mockImplementation(async (text: string) => {
-      if (text.includes('SELECT id FROM sleep_entries')) {
-        return { rows: [{ id: 'sleep-1' }] };
-      }
       if (text.includes('UPDATE sleep_entries')) {
         return { rows: [{ id: 'sleep-1' }] };
       }
@@ -171,7 +168,10 @@ describe('sleepRepository placeholder integrity', () => {
       record_utc_offset_minutes: _offset,
       ...zonelessEntry
     } = FULL_ENTRY;
-    await sleepRepository.upsertSleepEntry('user-1', 'user-1', zonelessEntry);
+    await sleepRepository.upsertSleepEntry('user-1', 'user-1', {
+      ...zonelessEntry,
+      id: 'sleep-1',
+    });
 
     const update = findCall('UPDATE sleep_entries');
     // A metadata-less re-sync (older client, provider fallback branch) binds
@@ -185,6 +185,31 @@ describe('sleepRepository placeholder integrity', () => {
     expect(
       boundValueFor(update.text, update.values!, 'record_utc_offset_minutes')
     ).toBeUndefined();
+  });
+
+  it('upsertSleepEntry re-sync of a night updates it and keeps stored zone metadata', async () => {
+    mockClient.query.mockImplementation(async (text: string) => {
+      if (text.includes('INSERT INTO sleep_entries')) {
+        return { rows: [{ id: 'sleep-1' }] };
+      }
+      return { rows: [] };
+    });
+
+    await sleepRepository.upsertSleepEntry('user-1', 'user-1', FULL_ENTRY);
+
+    const insert = findCall('INSERT INTO sleep_entries');
+    expect(insert.text).toContain(
+      'ON CONFLICT (user_id, entry_date, source) DO UPDATE SET'
+    );
+    expect(insert.text).toContain(
+      'record_timezone = COALESCE(EXCLUDED.record_timezone, sleep_entries.record_timezone)'
+    );
+    expect(insert.text).toContain(
+      'record_utc_offset_minutes = COALESCE(EXCLUDED.record_utc_offset_minutes, sleep_entries.record_utc_offset_minutes)'
+    );
+    expect(insert.text).toContain(
+      'resting_heart_rate = EXCLUDED.resting_heart_rate'
+    );
   });
 
   it('updateSleepEntry dynamic builder: zone fields update when present', async () => {

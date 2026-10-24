@@ -112,6 +112,17 @@ struct WaterIntakeView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                     }
+                    // Only when there is some to show. A zero is the phone's "setting
+                    // on, nothing logged" state, and the phone's own card hides
+                    // that line.
+                    if let fromFood = water?.fromFoodMl, fromFood > 0 {
+                        Text(String(localized: "watch.water.includesFood", defaultValue: "Includes \(store.context.formattedWater(ml: fromFood)) from food"))
+                            .font(.system(size: 10, weight: .regular, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
                     bottle
                 }
                 .frame(width: geo.size.width * 2 / 3)
@@ -178,7 +189,7 @@ struct WaterIntakeView: View {
                 Image(systemName: "list.bullet")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
-                Text("Log")
+                Text(String(localized: "watch.water.log", defaultValue: "Log"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -187,7 +198,7 @@ struct WaterIntakeView: View {
             .background(Color.secondary.opacity(0.16), in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Today's logged drinks")
+        .accessibilityLabel(String(localized: "watch.water.loggedDrinks", defaultValue: "Today's logged drinks"))
     }
 
     private func containerSquare(_ container: WaterContainer, side: CGFloat) -> some View {
@@ -212,7 +223,7 @@ struct WaterIntakeView: View {
             .background(GoalPalette.water.opacity(0.16), in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Log \(container.name), \(container.displayVolume)")
+        .accessibilityLabel(String(localized: "watch.water.logContainer", defaultValue: "Log \(container.name), \(container.displayVolume)"))
     }
 
     private func tap(_ container: WaterContainer) {
@@ -295,6 +306,11 @@ struct WaterIntakeView: View {
         // the artwork. Widening the bottle means redrawing the path, not
         // changing this number.
         .aspectRatio(70.0 / 130.0, contentMode: .fit)
+        // Flexible so the VStack gives the bottle whatever height is left
+        // under the labels. A width-driven 70:130 bottle is taller than a
+        // 40 mm screen once the food-water line is in the stack, and `.fit`
+        // only shrinks it when the proposed height is bounded.
+        .frame(maxHeight: .infinity, alignment: .top)
         // Decorative: `goalLabel` above already says the same thing in words,
         // so a screen reader would otherwise announce the same percentage
         // twice.

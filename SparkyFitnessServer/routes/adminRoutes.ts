@@ -1,4 +1,5 @@
 import express from 'express';
+import { aiServiceSettingsMutatorSchema } from '@workspace/shared';
 import { authenticate, isAdmin } from '../middleware/authMiddleware.js';
 import authService from '../services/authService.js';
 import userRepository from '../models/userRepository.js';
@@ -24,6 +25,19 @@ const router = express.Router();
 // This will be enhanced later to prioritize SPARKY_FITNESS_ADMIN_EMAIL
 router.use(authenticate);
 router.use(isAdmin);
+router.use((req, res, next) => {
+  if (
+    req.path.startsWith('/ai-service-settings/global') &&
+    req.body?.reasoning_effort !== undefined &&
+    !aiServiceSettingsMutatorSchema.shape.reasoning_effort.safeParse(
+      req.body.reasoning_effort
+    ).success
+  ) {
+    res.status(400).json({ error: 'Invalid reasoning effort.' });
+    return;
+  }
+  next();
+});
 
 // Validates a provider_type value against the external_provider_types lookup
 // table. The set of valid types is dynamic (extended via migrations), so this
@@ -608,6 +622,7 @@ router.post('/ai-service-settings/global', async (req, res, next) => {
       model_name,
       planning_model_name,
       chat_tool_profile,
+      reasoning_effort,
     } = req.body;
     if (!service_name || !service_type) {
       return res
@@ -649,6 +664,7 @@ router.post('/ai-service-settings/global', async (req, res, next) => {
       model_name: model_name || null,
       planning_model_name: planning_model_name || null,
       chat_tool_profile: chat_tool_profile || 'full',
+      reasoning_effort: reasoning_effort || 'medium',
     };
     const result =
       await chatRepository.upsertGlobalAiServiceSetting(settingData);
@@ -729,6 +745,7 @@ router.put('/ai-service-settings/global/:id', async (req, res, next) => {
       model_name,
       planning_model_name,
       chat_tool_profile,
+      reasoning_effort,
     } = req.body;
     // Verify the setting exists and is global
     const existing = await chatRepository.getGlobalAiServiceSettingById(id);
@@ -773,6 +790,7 @@ router.put('/ai-service-settings/global/:id', async (req, res, next) => {
       model_name: model_name || null,
       planning_model_name: planning_model_name || null,
       chat_tool_profile: chat_tool_profile ?? null,
+      reasoning_effort: reasoning_effort ?? undefined,
     };
     const result =
       await chatRepository.upsertGlobalAiServiceSetting(settingData);

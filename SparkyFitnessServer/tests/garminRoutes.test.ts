@@ -69,6 +69,20 @@ vi.mock('../integrations/garminconnect/garminMeasurementMapping.js', () => ({
 }));
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
+vi.mock('../models/globalSettingsRepository.js', () => ({
+  // The mock-data options are off unless an admin turned them on; these route
+  // tests exercise the normal path, so the options never reach the service.
+  isMockDataEnabled: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('../services/providerSyncClaim.js', async (importActual) => ({
+  ...(await importActual<typeof import('../services/providerSyncClaim.js')>()),
+  startProviderSync: vi.fn(async (_target, sync) => ({ running: sync() })),
+}));
+import {
+  SYNC_ALREADY_RUNNING_RESPONSE,
+  startProviderSync,
+} from '../services/providerSyncClaim.js';
 
 const app = express();
 app.use(express.json());
@@ -116,6 +130,20 @@ describe('permission gating (switched-context delegate without diary access)', (
 });
 
 describe('POST /integrations/garmin/sync', () => {
+  it('answers 409 without syncing while another sync holds the account', async () => {
+    vi.mocked(startProviderSync).mockResolvedValueOnce(null);
+
+    const res = await request(app).post('/integrations/garmin/sync').send({});
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual(SYNC_ALREADY_RUNNING_RESPONSE);
+    expect(startProviderSync).toHaveBeenCalledWith(
+      { userId: 'user-123', providerType: 'garmin' },
+      expect.any(Function)
+    );
+    expect(garminService.syncGarminData).not.toHaveBeenCalled();
+  });
+
   it('updates provider last_sync_at when all sync phases complete', async () => {
     const result = {
       health: { processedEntries: 1 },
@@ -134,7 +162,9 @@ describe('POST /integrations/garmin/sync', () => {
       'user-123',
       'manual',
       '2026-06-01',
-      '2026-06-07'
+      '2026-06-07',
+      undefined,
+      false
     );
     expect(
       externalProviderRepository.updateProviderLastSync

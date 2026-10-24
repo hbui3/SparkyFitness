@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const symptomEntriesIdSchema = z.string().or(z.number());
 
@@ -17,6 +17,17 @@ export const symptomEntriesSchema = z.object({
   bristol_type: z.number().nullable().optional(),
   source: z.string(),
   custom_fields: z.unknown(),
+  started_at: z.date().nullable().optional(),
+  ended_at: z.date().nullable().optional(),
+  body_locations: z.array(z.string()),
+  qualities: z.array(z.string()),
+  associated_symptoms: z.array(z.string()),
+  triggers: z.array(z.string()),
+  phases: z.unknown(),
+  impact: z.string().nullable().optional(),
+  peak_severity: z.number().nullable().optional(),
+  severity_timeline: z.unknown(),
+  impact_timeline: z.unknown(),
   created_at: z.date().optional(),
   updated_at: z.date().optional(),
 });
@@ -36,6 +47,17 @@ export const symptomEntriesInitializerSchema = z.object({
   bristol_type: z.number().nullable().optional(),
   source: z.string().optional(),
   custom_fields: z.unknown().optional(),
+  started_at: z.date().nullable().optional(),
+  ended_at: z.date().nullable().optional(),
+  body_locations: z.array(z.string()).optional(),
+  qualities: z.array(z.string()).optional(),
+  associated_symptoms: z.array(z.string()).optional(),
+  triggers: z.array(z.string()).optional(),
+  phases: z.unknown().optional(),
+  impact: z.string().nullable().optional(),
+  peak_severity: z.number().nullable().optional(),
+  severity_timeline: z.unknown().optional(),
+  impact_timeline: z.unknown().optional(),
   created_at: z.date().optional(),
   updated_at: z.date().optional(),
 });

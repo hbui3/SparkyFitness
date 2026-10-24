@@ -1,4 +1,9 @@
 import type { TFunction } from 'i18next';
+import {
+  formatDose,
+  type Medication,
+  type SharedScheduleRule,
+} from '@workspace/shared';
 
 export function medicationTypeLabel(
   typeId: string | null | undefined,
@@ -11,6 +16,12 @@ export function medicationTypeLabel(
       return t('medications.types.tablet', { defaultValue: 'Tablet' });
     case 'capsule':
       return t('medications.types.capsule', { defaultValue: 'Capsule' });
+    case 'softgel':
+      return t('medications.types.softgel', { defaultValue: 'Softgel' });
+    case 'gummy':
+      return t('medications.types.gummy', { defaultValue: 'Gummy' });
+    case 'powder':
+      return t('medications.types.powder', { defaultValue: 'Powder' });
     case 'liquid':
       return t('medications.types.liquid', { defaultValue: 'Liquid' });
     case 'injection':
@@ -69,4 +80,106 @@ export function mealTimingLabel(value: string, t: TFunction): string {
     default:
       return value;
   }
+}
+
+export function injectionSiteLabel(siteId: string, t: TFunction): string {
+  switch (siteId) {
+    case 'stomach_upper_left':
+      return t('medications.glp1.sites.stomach_upper_left', {
+        defaultValue: 'Stomach - Upper Left',
+      });
+    case 'stomach_upper_mid':
+      return t('medications.glp1.sites.stomach_upper_mid', {
+        defaultValue: 'Stomach - Upper Mid',
+      });
+    case 'stomach_upper_right':
+      return t('medications.glp1.sites.stomach_upper_right', {
+        defaultValue: 'Stomach - Upper Right',
+      });
+    case 'stomach_mid_left':
+      return t('medications.glp1.sites.stomach_mid_left', {
+        defaultValue: 'Stomach - Left Mid',
+      });
+    case 'stomach_mid_right':
+      return t('medications.glp1.sites.stomach_mid_right', {
+        defaultValue: 'Stomach - Right Mid',
+      });
+    case 'stomach_lower_left':
+      return t('medications.glp1.sites.stomach_lower_left', {
+        defaultValue: 'Stomach - Lower Left',
+      });
+    case 'stomach_lower_mid':
+      return t('medications.glp1.sites.stomach_lower_mid', {
+        defaultValue: 'Stomach - Lower Mid',
+      });
+    case 'stomach_lower_right':
+      return t('medications.glp1.sites.stomach_lower_right', {
+        defaultValue: 'Stomach - Lower Right',
+      });
+    case 'left_arm':
+      return t('medications.glp1.sites.left_arm', {
+        defaultValue: 'Left Arm',
+      });
+    case 'right_arm':
+      return t('medications.glp1.sites.right_arm', {
+        defaultValue: 'Right Arm',
+      });
+    case 'left_thigh':
+      return t('medications.glp1.sites.left_thigh', {
+        defaultValue: 'Left Thigh',
+      });
+    case 'right_thigh':
+      return t('medications.glp1.sites.right_thigh', {
+        defaultValue: 'Right Thigh',
+      });
+    case 'left_hip':
+      return t('medications.glp1.sites.left_hip', {
+        defaultValue: 'Left Hip',
+      });
+    case 'right_hip':
+      return t('medications.glp1.sites.right_hip', {
+        defaultValue: 'Right Hip',
+      });
+    case 'unknown':
+      return t('medications.glp1.sites.unknown', {
+        defaultValue: 'Unknown',
+      });
+    default:
+      return siteId;
+  }
+}
+
+export function glp1CheckInMetricLabel(
+  metricKey: 'hunger' | 'food_noise' | 'fullness' | 'energy',
+  t: TFunction
+): string {
+  switch (metricKey) {
+    case 'hunger':
+      return t('medications.glp1.checkIn.metric.hunger', {
+        defaultValue: 'Hunger',
+      });
+    case 'food_noise':
+      return t('medications.glp1.checkIn.metric.food_noise', {
+        defaultValue: 'Food noise',
+      });
+    case 'fullness':
+      return t('medications.glp1.checkIn.metric.fullness', {
+        defaultValue: 'Fullness',
+      });
+    case 'energy':
+      return t('medications.glp1.checkIn.metric.energy', {
+        defaultValue: 'Energy',
+      });
+  }
+}
+
+/** 'Tablet · 2 tablets' style secondary line for a dose row. */
+export function medicationDoseSubtitle(
+  med: Medication,
+  schedule: SharedScheduleRule | undefined,
+  t: TFunction
+): string {
+  return [medicationTypeLabel(med.type_id, t), formatDose(med, schedule)]
+    .filter(Boolean)
+    .join(' · ');
 }

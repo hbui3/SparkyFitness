@@ -843,7 +843,10 @@ const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
     } else {
       segments.push({
         key: 'signIn' as const,
-        label: t('auth.passkey', { defaultValue: 'Passkey' }),
+        label:
+          authSettings?.passkey?.enabled !== false
+            ? t('auth.passkey', { defaultValue: 'Passkey' })
+            : t('auth.signIn', { defaultValue: 'Sign In' }),
       });
     }
 
@@ -1016,27 +1019,29 @@ const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
                         </Button>
                       )
                     )}
-                  <Button
-                    variant="outline"
-                    onPress={handlePasskeyLogin}
-                    disabled={loading}
-                    className="w-full flex-row items-center justify-center p-2.5 rounded-lg border border-border-subtle bg-raised"
-                  >
-                    <View className="flex-row items-center">
-                      <View className="mr-2">
-                        <Icon
-                          name="fingerprint"
-                          size={20}
-                          color={accentPrimary}
-                        />
+                  {authSettings?.passkey?.enabled !== false && (
+                    <Button
+                      variant="outline"
+                      onPress={handlePasskeyLogin}
+                      disabled={loading}
+                      className="w-full flex-row items-center justify-center p-2.5 rounded-lg border border-border-subtle bg-raised"
+                    >
+                      <View className="flex-row items-center">
+                        <View className="mr-2">
+                          <Icon
+                            name="fingerprint"
+                            size={20}
+                            color={accentPrimary}
+                          />
+                        </View>
+                        <Text className="text-base font-semibold text-text-primary">
+                          {t('auth.signInWithPasskey', {
+                            defaultValue: 'Sign in with Passkey',
+                          })}
+                        </Text>
                       </View>
-                      <Text className="text-base font-semibold text-text-primary">
-                        {t('auth.signInWithPasskey', {
-                          defaultValue: 'Sign in with Passkey',
-                        })}
-                      </Text>
-                    </View>
-                  </Button>
+                    </Button>
+                  )}
                 </View>
 
                 {!hasEmail && !hasOidc && (

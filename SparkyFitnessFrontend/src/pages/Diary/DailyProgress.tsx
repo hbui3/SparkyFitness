@@ -51,8 +51,10 @@ import {
   normalizeCalorieGoalAdjustmentMode,
   resolveCalorieSafetyFloor,
   DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
+  isAdaptiveActivitySeparated,
 } from '@workspace/shared';
 import { CalorieTargetBreakdown } from '@/components/CalorieTargetBreakdown';
+import { getAdaptiveTdeeForGoal } from '@/utils/adaptiveTdee';
 import { useNutrientGoalPreferences } from '@/hooks/Settings/useNutrientGoalPreferences';
 
 const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
@@ -68,7 +70,9 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
     bodyFatAlgorithm,
     goalMode,
     goalModeCalculationMethod,
+    adaptiveActivitySeparate,
     goalModeCustomPercentage,
+    goalModeWeeklyChangeKg,
     calorieSafetyFloorMode,
     calorieSafetyFloorValue,
     activityLevel,
@@ -282,13 +286,19 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
         : Math.max(adaptiveGoalFloor, adaptiveGoal);
   }
 
+  const activitySeparated = isAdaptiveActivitySeparated(
+    calorieGoalAdjustmentMode,
+    goalModeCalculationMethod,
+    adaptiveActivitySeparate
+  );
   const previewResult = computeCalorieTarget({
     goalMode,
     calculationMethod: goalModeCalculationMethod,
     customPercentage: goalModeCustomPercentage,
+    weeklyChangeKg: goalModeWeeklyChangeKg,
     bmr,
     activityLevelMultiplier: activityMultiplier,
-    adaptiveTdee: adaptiveTdeeData ? adaptiveTdeeData.tdee : null,
+    adaptiveTdee: getAdaptiveTdeeForGoal(adaptiveTdeeData, activitySeparated),
     adaptiveTdeeFallback: adaptiveTdeeData ? adaptiveTdeeData.isFallback : true,
     adaptiveTdeeDaysOfData: adaptiveTdeeData
       ? (adaptiveTdeeData.daysOfData ?? 0)
@@ -394,8 +404,11 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                 <span>{display.eaten}</span>
               </div>
               <div className="text-xs text-gray-500 whitespace-nowrap">
-                {getEnergyUnitString(energyUnit)}{' '}
-                {t('exercise.dailyProgress.eaten', 'eaten')}
+                {t(
+                  'exercise.dailyProgress.eaten2',
+                  '{{energyUnitString}} eaten',
+                  { energyUnitString: getEnergyUnitString(energyUnit) }
+                )}
               </div>
             </div>
 
@@ -409,8 +422,11 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                       <span>{display.burnedTotal}</span>
                     </div>
                     <div className="text-xs text-gray-500 whitespace-nowrap">
-                      {getEnergyUnitString(energyUnit)}{' '}
-                      {t('exercise.dailyProgress.burned', 'burned')}
+                      {t(
+                        'exercise.dailyProgress.burned2',
+                        '{{energyUnitString}} burned',
+                        { energyUnitString: getEnergyUnitString(energyUnit) }
+                      )}
                     </div>
                   </div>
                 </TooltipTrigger>
@@ -462,11 +478,15 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                     </p>
                   )}
 
-                  {bmr && (
+                  {!!bmr && (
                     <p>
                       {t(
-                        'exercise.dailyProgress.bmrCalories',
-                        'BMR: {{bmr}} {{energyUnit}}',
+                        bmrSource === 'measured'
+                          ? 'exercise.dailyProgress.bmrMeasured'
+                          : 'exercise.dailyProgress.bmrAlgorithm',
+                        bmrSource === 'measured'
+                          ? 'BMR: {{bmr}} {{energyUnit}} (Measured)'
+                          : 'BMR: {{bmr}} {{energyUnit}} (Algorithm)',
                         {
                           bmr: display.bmr,
                           energyUnit: getEnergyUnitString(energyUnit),
@@ -539,14 +559,17 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                 </span>
               </div>
               <div className="text-xs dark:text-slate-400 text-gray-500 whitespace-nowrap">
-                {getEnergyUnitString(energyUnit)}{' '}
-                {t('exercise.dailyProgress.goal', 'goal')}
+                {t(
+                  'exercise.dailyProgress.goal2',
+                  '{{energyUnitString}} goal',
+                  { energyUnitString: getEnergyUnitString(energyUnit) }
+                )}
               </div>
             </div>
           </div>
 
           {/* Detailed Burned Breakdown (Visible if data present) */}
-          {(exerciseSource !== 'none' || bmr) && (
+          {!!(exerciseSource !== 'none' || bmr) && (
             <div className="text-center p-2 bg-blue-50 rounded-lg space-y-1">
               <div className="text-sm font-medium text-blue-700">
                 {t(
@@ -596,11 +619,15 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                 </div>
               )}
 
-              {bmr && (
+              {!!bmr && (
                 <div className="text-xs text-blue-600">
                   {t(
-                    'exercise.dailyProgress.bmrCalories',
-                    'BMR: {{bmr}} {{energyUnit}}',
+                    bmrSource === 'measured'
+                      ? 'exercise.dailyProgress.bmrMeasured'
+                      : 'exercise.dailyProgress.bmrAlgorithm',
+                    bmrSource === 'measured'
+                      ? 'BMR: {{bmr}} {{energyUnit}} (Measured)'
+                      : 'BMR: {{bmr}} {{energyUnit}} (Algorithm)',
                     {
                       bmr: display.bmr,
                       energyUnit: getEnergyUnitString(energyUnit),
@@ -712,8 +739,9 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
                     {t('exercise.dailyProgress.dataPoints', 'Data Points')}
                   </span>
                   <span className="font-semibold text-gray-800 dark:text-slate-200">
-                    {adaptiveTdeeData.daysOfData || 0}{' '}
-                    {t('exercise.dailyProgress.days', 'days')}
+                    {t('exercise.dailyProgress.days2', '{{daysOfData}} days', {
+                      daysOfData: adaptiveTdeeData.daysOfData || 0,
+                    })}
                   </span>
                 </div>
               </div>
@@ -843,6 +871,7 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
           {/* Calorie Math Breakdown Dropdown */}
           <div className="pt-3 border-t border-border/40 space-y-2.5">
             <CalorieTargetBreakdown
+              adaptiveActivitySeparate={adaptiveActivitySeparate}
               asDialog
               previewResult={previewResult}
               adaptiveTdeeData={adaptiveTdeeData}
@@ -859,6 +888,7 @@ const DailyProgress = ({ selectedDate }: { selectedDate: string }) => {
               goalMode={goalMode}
               goalModeCalculationMethod={goalModeCalculationMethod}
               goalModeCustomPercentage={goalModeCustomPercentage}
+              goalModeWeeklyChangeKg={goalModeWeeklyChangeKg}
               calorieGoalAdjustmentMode={calorieGoalAdjustmentMode}
               rawManualGoal={rawManualGoal}
               adjustedManualGoal={adjustedManualGoal}

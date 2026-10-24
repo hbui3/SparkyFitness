@@ -16,6 +16,12 @@ describe('localizeExerciseTaxonomyValue', () => {
     ['level', 'beginner', 'Beginner'],
     ['force', 'push', 'Push'],
     ['mechanic', 'compound', 'Compound'],
+    ['muscle', 'abdominals', 'Abdominals'],
+    ['muscle', 'lower back', 'Lower Back'],
+    ['muscle', 'quadriceps', 'Quadriceps'],
+    ['equipment', 'barbell', 'Barbell'],
+    ['equipment', 'e-z curl bar', 'E-Z Curl Bar'],
+    ['equipment', 'body only', 'Body Only'],
   ] as const)(
     'localizes known %s values in English',
     (kind, value, expected) => {

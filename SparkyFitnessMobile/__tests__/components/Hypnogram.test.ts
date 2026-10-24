@@ -1,4 +1,8 @@
-import { buildHypnogramSegments } from '../../src/components/Hypnogram';
+import {
+  buildHypnogramSegments,
+  getHypnogramWindow,
+  hypnogramLanesToShow,
+} from '../../src/components/Hypnogram';
 import { buildStageEvent } from '../helpers/sleepFixtures';
 
 const BOUNDS = { width: 300 };
@@ -118,7 +122,7 @@ describe('buildHypnogramSegments', () => {
     const stages = [
       buildStageEvent({
         id: 'unknown',
-        stage_type: 'in_bed',
+        stage_type: 'asleep_unspecified',
         start_time: '2026-08-22T23:00:00+00:00',
         end_time: '2026-08-23T00:00:00+00:00',
       }),
@@ -130,7 +134,60 @@ describe('buildHypnogramSegments', () => {
     expect(segments).toHaveLength(1);
     expect(segments[0].lane).toBe('other');
     // The raw value is preserved so the renderer can still label it.
-    expect(segments[0].stageType).toBe('in_bed');
+    expect(segments[0].stageType).toBe('asleep_unspecified');
+  });
+
+  test('drops in_bed envelopes so they do not stretch the hypnogram as Other', () => {
+    const stages = [
+      buildStageEvent({
+        id: 'envelope',
+        stage_type: 'in_bed',
+        start_time: '2026-08-22T22:10:00+00:00',
+        end_time: '2026-08-23T06:03:00+00:00',
+      }),
+      buildStageEvent({
+        id: 'rem',
+        stage_type: 'rem',
+        start_time: '2026-08-23T02:20:00+00:00',
+        end_time: '2026-08-23T03:50:00+00:00',
+      }),
+      buildStageEvent({
+        id: 'light',
+        stage_type: 'light',
+        start_time: '2026-08-23T03:50:00+00:00',
+        end_time: '2026-08-23T05:45:00+00:00',
+      }),
+    ];
+
+    const segments = buildHypnogramSegments(stages, BOUNDS);
+    expect(segments.map((segment) => segment.lane)).toEqual(['rem', 'light']);
+    expect(segments[0].x).toBeCloseTo(0, 5);
+    const last = segments[segments.length - 1];
+    expect(last.x + last.width).toBeCloseTo(BOUNDS.width, 5);
+
+    const window = getHypnogramWindow(stages);
+    expect(window?.startMs).toBe(Date.parse('2026-08-23T02:20:00+00:00'));
+    expect(window?.endMs).toBe(Date.parse('2026-08-23T05:45:00+00:00'));
+    expect(hypnogramLanesToShow(stages)).toEqual([
+      'awake',
+      'rem',
+      'light',
+      'deep',
+    ]);
+  });
+
+  test('an in_bed-only session produces no plotted segments', () => {
+    const stages = [
+      buildStageEvent({
+        id: 'envelope',
+        stage_type: 'in_bed',
+        start_time: '2026-08-22T22:10:00+00:00',
+        end_time: '2026-08-23T06:03:00+00:00',
+      }),
+    ];
+
+    expect(buildHypnogramSegments(stages, BOUNDS)).toEqual([]);
+    expect(getHypnogramWindow(stages)).toBeNull();
   });
 
   test('returns [] for an empty array, driving the screen’s empty state', () => {

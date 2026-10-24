@@ -116,8 +116,8 @@ describe('exercise modality writers', () => {
       mockClient.query.mockResolvedValueOnce({ rows: [{ id }] });
       await exerciseDb.updateExercise(id, uuidv4(), { modality: 'duration' });
       const params = lastQuery(mockClient)[1];
-      expect(params[UPDATE_MODALITY_PARAM + 1]).toBe(id);
-      expect(params).toHaveLength(UPDATE_MODALITY_PARAM + 2);
+      expect(params[params.length - 1]).toBe(id);
+      expect(params).toHaveLength(UPDATE_MODALITY_PARAM + 3);
     });
   });
 

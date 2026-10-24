@@ -32,6 +32,11 @@ import {
   useLatestMeasurementsOnOrBefore,
   useMeasurements,
 } from '../hooks/useMeasurements';
+import {
+  useMindfulnessDay,
+  useMindfulnessMutations,
+} from '../hooks/useMindfulness';
+import { MindfulnessCard } from '../components/mindfulness/MindfulnessCard';
 import { useUpsertCheckIn } from '../hooks/useUpsertCheckIn';
 import { usePreferences } from '../hooks/usePreferences';
 import { useProfile } from '../hooks/useProfile';
@@ -242,6 +247,12 @@ const MeasurementsAddScreen: React.FC<Props> = ({ navigation, route }) => {
     });
   const { preferences, isLoading: isPreferencesLoading } = usePreferences();
   const { profile } = useProfile();
+  const { sessions: mindfulSessions, totalMindfulMinutes } =
+    useMindfulnessDay(selectedDate);
+  const {
+    saveSession: saveMindfulSession,
+    deleteSession: deleteMindfulSession,
+  } = useMindfulnessMutations(selectedDate);
   // Weight supports a third "stones + lbs" mode that renders as two inputs.
   const weightMode: 'kg' | 'lbs' | 'st_lbs' =
     preferences?.default_weight_unit ?? 'kg';
@@ -1845,6 +1856,19 @@ const MeasurementsAddScreen: React.FC<Props> = ({ navigation, route }) => {
                 </View>
               )
             )}
+
+            <View className="mt-4 mb-2">
+              <MindfulnessCard
+                sessions={mindfulSessions}
+                totalMindfulMinutes={totalMindfulMinutes}
+                selectedDate={selectedDate}
+                onSaveSession={saveMindfulSession}
+                onDeleteSession={deleteMindfulSession}
+                onPressDetails={() =>
+                  navigation.navigate('MindfulnessDetail', { selectedDate })
+                }
+              />
+            </View>
           </>
         )}
 

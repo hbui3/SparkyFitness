@@ -5,7 +5,12 @@ import { useTranslation } from 'react-i18next';
 import { useCSSVariable } from 'uniwind';
 import Icon from './Icon';
 import type { IconName } from './Icon';
-import { formatDateLabel, formatDate } from '../utils/dateUtils';
+import {
+  formatDateLabel,
+  formatDate,
+  getDateRelationToToday,
+} from '../utils/dateUtils';
+import { withAlpha } from '../utils/colors';
 
 interface DateNavigatorProps {
   title: string;
@@ -82,6 +87,36 @@ const DateNavigator: React.FC<DateNavigatorProps> = ({
   const insets = useSafeAreaInsets();
   const secondaryTextColor = useCSSVariable('--color-text-secondary') as string;
   const primaryTextColor = useCSSVariable('--color-text-primary') as string;
+  const datePastColor =
+    (useCSSVariable('--color-date-past') as string) || '#f97316';
+  const dateFutureColor =
+    (useCSSVariable('--color-date-future') as string) || '#0ea5e9';
+
+  const dateRelation = getDateRelationToToday(selectedDate);
+  const dateTextColor =
+    dateRelation === 'past'
+      ? datePastColor
+      : dateRelation === 'future'
+        ? dateFutureColor
+        : primaryTextColor;
+
+  const pillContainerStyle =
+    dateRelation === 'past'
+      ? {
+          backgroundColor: withAlpha(datePastColor, 0.12),
+          borderColor: withAlpha(datePastColor, 0.35),
+          borderWidth: 1,
+        }
+      : dateRelation === 'future'
+        ? {
+            backgroundColor: withAlpha(dateFutureColor, 0.12),
+            borderColor: withAlpha(dateFutureColor, 0.35),
+            borderWidth: 1,
+          }
+        : {
+            borderColor: 'transparent',
+            borderWidth: 1,
+          };
 
   const dateLabel = showDateAlways
     ? formatDate(selectedDate, locale)
@@ -136,17 +171,20 @@ const DateNavigator: React.FC<DateNavigatorProps> = ({
               ? resolvedDateControls.chooseDateHint
               : resolvedDateControls.goToTodayHint
           }
-          className="flex-row items-center justify-center px-2"
-          style={{ minWidth: 44, minHeight: 44 }}
+          className="flex-row items-center justify-center px-2.5 py-1 rounded-full"
+          style={[{ minWidth: 44, minHeight: 44 }, pillContainerStyle]}
         >
-          <Text className="text-text-primary text-lg font-medium">
+          <Text
+            style={{ color: dateTextColor }}
+            className="text-lg font-medium"
+          >
             {dateLabel}
           </Text>
           {onDatePress && (
             <Icon
               name="chevron-down"
               size={14}
-              color={primaryTextColor}
+              color={dateTextColor}
               style={{ marginLeft: 4 }}
             />
           )}

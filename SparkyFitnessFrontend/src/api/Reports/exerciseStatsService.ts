@@ -32,6 +32,10 @@ export const queryExerciseActivities = async (filters: {
   pageSize?: number;
   userId?: string;
   unitSystem?: 'metric' | 'imperial';
+  startDate?: string | null;
+  endDate?: string | null;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
 }): Promise<ExerciseActivityQueryResponse> => {
   const params = new URLSearchParams();
   if (filters.unitSystem) params.append('unitSystem', filters.unitSystem);
@@ -44,6 +48,10 @@ export const queryExerciseActivities = async (filters: {
   if (filters.page) params.append('page', String(filters.page));
   if (filters.pageSize) params.append('pageSize', String(filters.pageSize));
   if (filters.userId) params.append('userId', filters.userId);
+  if (filters.startDate) params.append('startDate', filters.startDate);
+  if (filters.endDate) params.append('endDate', filters.endDate);
+  if (filters.sortBy) params.append('sortBy', filters.sortBy);
+  if (filters.sortOrder) params.append('sortOrder', filters.sortOrder);
 
   return await apiCall(`/exercise-stats/query?${params.toString()}`, {
     method: 'GET',

@@ -79,13 +79,14 @@ describe('hasLoggedMealComponents', () => {
 
 describe('loggedMealToFoodEntry', () => {
   test('maps meal fields and tags the entry with its meal id', () => {
-    const entry = loggedMealToFoodEntry(makeMeal());
+    const entry = loggedMealToFoodEntry(makeMeal({ entry_time: '12:45' }));
 
     expect(entry.id).toBe('meal-1');
     expect(entry.food_entry_meal_id).toBe('meal-1');
     expect(entry.meal_id).toBe('template-1');
     expect(entry.food_name).toBe('Chicken Bowl');
     expect(entry.meal_type).toBe('lunch');
+    expect(entry.entry_time).toBe('12:45');
     expect(entry.calories).toBe(600);
     expect(entry.protein).toBe(45);
   });

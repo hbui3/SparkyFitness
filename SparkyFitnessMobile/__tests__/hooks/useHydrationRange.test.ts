@@ -2,6 +2,7 @@ import { renderHook, waitFor } from '@testing-library/react-native';
 import { useHydrationRange } from '../../src/hooks/useHydrationRange';
 import { waterIntakeRangeQueryKey } from '../../src/hooks/queryKeys';
 import { fetchWaterIntakeRange } from '../../src/services/api/measurementsApi';
+import { fetchGoalsRange } from '../../src/services/api/goalsApi';
 import { addDays, getTodayDate } from '../../src/utils/dateUtils';
 import {
   createTestQueryClient,
@@ -13,6 +14,10 @@ jest.mock('../../src/services/api/measurementsApi', () => ({
   fetchWaterIntakeRange: jest.fn(),
 }));
 
+jest.mock('../../src/services/api/goalsApi', () => ({
+  fetchGoalsRange: jest.fn(),
+}));
+
 jest.mock('@react-navigation/native', () => ({
   useFocusEffect: jest.fn((callback) => {
     callback();
@@ -21,6 +26,9 @@ jest.mock('@react-navigation/native', () => ({
 
 const mockFetchWaterIntakeRange = fetchWaterIntakeRange as jest.MockedFunction<
   typeof fetchWaterIntakeRange
+>;
+const mockFetchGoalsRange = fetchGoalsRange as jest.MockedFunction<
+  typeof fetchGoalsRange
 >;
 
 const today = getTodayDate();
@@ -31,6 +39,7 @@ describe('useHydrationRange', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetchWaterIntakeRange.mockResolvedValue([]);
+    mockFetchGoalsRange.mockResolvedValue({});
     queryClient = createTestQueryClient();
   });
 
@@ -133,6 +142,60 @@ describe('useHydrationRange', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(mockFetchWaterIntakeRange).not.toHaveBeenCalled();
+    expect(mockFetchGoalsRange).not.toHaveBeenCalled();
     expect(result.current.hydrationData).toEqual([]);
+  });
+
+  test('requests the raw (unadjusted) goal range for the same window', async () => {
+    renderHook(() => useHydrationRange({ range: '7d' }), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => {
+      expect(mockFetchGoalsRange).toHaveBeenCalledWith(
+        addDays(today, -6),
+        today,
+        false
+      );
+    });
+  });
+
+  test('steps hydrationGoals to the resolved value on the day it changed', async () => {
+    mockFetchGoalsRange.mockResolvedValue({
+      [addDays(today, -2)]: { water_goal_ml: 2000 } as never,
+      [addDays(today, -1)]: { water_goal_ml: 2500 } as never,
+      [today]: { water_goal_ml: 2500 } as never,
+    });
+
+    const { result } = renderHook(() => useHydrationRange({ range: '7d' }), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    const { hydrationGoals } = result.current;
+    expect(hydrationGoals).toHaveLength(7);
+    expect(hydrationGoals[4]).toBe(2000); // addDays(today, -2)
+    expect(hydrationGoals[5]).toBe(2500); // addDays(today, -1)
+    expect(hydrationGoals[6]).toBe(2500); // today
+  });
+
+  test('resolves a day missing from the goals response to null', async () => {
+    mockFetchGoalsRange.mockResolvedValue({
+      [today]: { water_goal_ml: 2500 } as never,
+    });
+
+    const { result } = renderHook(() => useHydrationRange({ range: '7d' }), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.hydrationGoals[0]).toBeNull();
+    expect(result.current.hydrationGoals[6]).toBe(2500);
   });
 });

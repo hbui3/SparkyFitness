@@ -1,254 +1,41 @@
 import { tool } from 'ai';
-import { todayInZone } from '@workspace/shared';
 import { z } from 'zod';
-import workoutPlanTemplateService, {
-  type WorkoutPlanAssignmentSetInput,
-} from '../../services/workoutPlanTemplateService.js';
-import plannedWorkoutScheduleService from '../../services/plannedWorkoutScheduleService.js';
-import workoutPresetRepository from '../../models/workoutPresetRepository.js';
+import { todayInZone } from '@workspace/shared';
 import { log } from '../../config/logging.js';
-import {
-  formatConfirmation,
-  formatJsonResult,
-  formatList,
-} from './formatting.js';
-import { ERRORS, formatZodError, toolError } from './errors.js';
+import workoutPlanTemplateService from '../../services/workoutPlanTemplateService.js';
+import workoutPresetRepository from '../../models/workoutPresetRepository.js';
+import type { WorkoutPlanAssignmentInput } from '../../models/workoutPlanTemplateRepository.js';
+import { ERRORS, formatZodError } from './errors.js';
+import { findExerciseByExactName } from './exerciseLookup.js';
+import { formatConfirmation, formatList } from './formatting.js';
 import {
   manageWorkoutPlansSchema,
   manageWorkoutPlansInput,
   WORKOUT_PLAN_ACTIONS,
   type ManageWorkoutPlansInput,
+  type WorkoutPlanSessionItemInput,
+  workoutPlanSessionItemSchema,
 } from './schemas/workoutPlans.js';
 import { normalizeActionArgs } from './dates.js';
 
-const calendarDaySchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD calendar day');
-
-const workoutPlanAssignmentSchema = z
-  .object({
-    dayOfWeek: z.number().int().min(0).max(6),
-    weekIndex: z.number().int().min(0).max(7).optional(),
-    workoutPresetName: z.string().trim().min(1).max(255),
-  })
-  .strict();
-
-const listNativeWorkoutPlansSchema = z
-  .object({ action: z.literal('list') })
-  .strict();
-
-const upsertWorkoutPlanSchema = z
-  .object({
-    action: z.literal('upsert'),
-    planName: z.string().trim().min(1).max(255),
-    description: z.string().trim().max(2_000).optional(),
-    startDate: calendarDaySchema,
-    endDate: calendarDaySchema.optional(),
-    isActive: z.boolean().optional().default(true),
-    cycleLengthWeeks: z.number().int().min(1).max(8).optional(),
-    assignments: z.array(workoutPlanAssignmentSchema).min(1).max(14),
-    currentClientDate: calendarDaySchema.optional(),
-  })
-  .strict()
-  .refine((value) => !value.endDate || value.endDate >= value.startDate, {
-    message: 'endDate must be on or after startDate',
-    path: ['endDate'],
-  })
-  .refine(
-    (value) =>
-      value.assignments.every(
-        (assignment) =>
-          (assignment.weekIndex ?? 0) < (value.cycleLengthWeeks ?? 1)
-      ),
-    {
-      message:
-        'Every assignment weekIndex must be smaller than cycleLengthWeeks',
-      path: ['assignments'],
-    }
-  );
-
-const setWorkoutPlanActiveSchema = z
-  .object({
-    action: z.literal('set_active'),
-    planName: z.string().trim().min(1).max(255),
-    isActive: z.boolean(),
-    currentClientDate: calendarDaySchema.optional(),
-  })
-  .strict();
-
-const manageNativeWorkoutPlanSchema = z.discriminatedUnion('action', [
-  listNativeWorkoutPlansSchema,
-  upsertWorkoutPlanSchema,
-  setWorkoutPlanActiveSchema,
-]);
-
-const manageCombinedWorkoutPlanSchema = z.union([
-  manageWorkoutPlansSchema,
+import {
+  executeNativeAction,
   manageNativeWorkoutPlanSchema,
-]);
-
-const NATIVE_WORKOUT_PLAN_ACTIONS = ['list', 'upsert', 'set_active'] as const;
+  nativeWorkoutPlansInput,
+  NATIVE_WORKOUT_PLAN_ACTIONS,
+} from './nativeWorkoutPlanTools.js';
 const VALID_ACTIONS = [
   ...WORKOUT_PLAN_ACTIONS,
   ...NATIVE_WORKOUT_PLAN_ACTIONS,
 ] as const;
-
-// Keep the published schema flat while exposing both upstream template
-// inspection/deletion and the fork's owner-requested plan-writing operations.
-const manageCombinedWorkoutPlansInput = manageWorkoutPlansInput.extend({
+const combinedWorkoutPlansInput = manageWorkoutPlansInput.extend({
+  ...nativeWorkoutPlansInput.shape,
   action: z.enum(VALID_ACTIONS).optional(),
-  planName: z.string().trim().min(1).max(255).optional(),
-  description: z.string().trim().max(2_000).optional(),
-  startDate: calendarDaySchema.optional(),
-  endDate: calendarDaySchema.optional(),
-  isActive: z.boolean().optional(),
-  cycleLengthWeeks: z.number().int().min(1).max(8).optional(),
-  assignments: z.array(workoutPlanAssignmentSchema).max(14).optional(),
-  currentClientDate: calendarDaySchema.optional(),
+  assignments: z.union([
+    manageWorkoutPlansInput.shape.assignments,
+    nativeWorkoutPlansInput.shape.assignments,
+  ]),
 });
-
-type NativeWorkoutPlanInput = z.infer<typeof manageNativeWorkoutPlanSchema>;
-
-interface WorkoutPresetLookup {
-  id: number;
-  name: string;
-}
-
-interface WorkoutPlanAssignmentRecord {
-  id?: number;
-  day_of_week: number;
-  week_index: number;
-  workout_preset_id: number;
-  workout_preset_name?: string;
-  exercise_id?: string | null;
-  sort_order: number;
-  sets: WorkoutPlanAssignmentSetInput[];
-}
-
-interface WorkoutPlanRecord {
-  id: number;
-  plan_name: string;
-  description: string | null;
-  start_date: string;
-  end_date: string | null;
-  is_active: boolean;
-  cycle_length_weeks: number;
-  assignments: WorkoutPlanAssignmentRecord[];
-}
-
-interface WorkoutPlanAssignmentRow {
-  day_of_week: number;
-  workout_preset_name?: string | null;
-  exercise_name?: string | null;
-  sets?: unknown[] | null;
-}
-
-interface WorkoutPlanTemplateRow {
-  id: number | string;
-  plan_name: string;
-  description?: string | null;
-  is_active?: boolean;
-  assignments?: WorkoutPlanAssignmentRow[];
-}
-
-class WorkoutPresetNotFoundError extends Error {
-  constructor(presetName: string) {
-    super(`Workout preset "${presetName}" was not found.`);
-    this.name = 'WorkoutPresetNotFoundError';
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asPositiveInteger(value: unknown): number | null {
-  const candidate = typeof value === 'number' ? value : Number(value);
-  return Number.isSafeInteger(candidate) && candidate > 0 ? candidate : null;
-}
-
-function asWorkoutPlan(value: unknown): WorkoutPlanRecord | null {
-  if (!isRecord(value)) return null;
-  const id = asPositiveInteger(value.id);
-  if (id === null || typeof value.plan_name !== 'string') return null;
-  return {
-    id,
-    plan_name: value.plan_name,
-    description:
-      typeof value.description === 'string' ? value.description : null,
-    start_date: typeof value.start_date === 'string' ? value.start_date : '',
-    end_date: typeof value.end_date === 'string' ? value.end_date : null,
-    is_active: value.is_active === true,
-    cycle_length_weeks: asPositiveInteger(value.cycle_length_weeks) ?? 1,
-    assignments: Array.isArray(value.assignments)
-      ? (value.assignments as WorkoutPlanAssignmentRecord[])
-      : [],
-  };
-}
-
-async function listPlans(userId: string): Promise<WorkoutPlanRecord[]> {
-  const raw: unknown =
-    await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(userId);
-  return Array.isArray(raw)
-    ? raw
-        .map(asWorkoutPlan)
-        .filter((plan): plan is WorkoutPlanRecord => plan !== null)
-    : [];
-}
-
-async function resolvePreset(
-  userId: string,
-  presetName: string
-): Promise<WorkoutPresetLookup> {
-  const raw: unknown = await workoutPresetRepository.getWorkoutPresetByName(
-    userId,
-    presetName
-  );
-  if (!isRecord(raw)) {
-    throw new WorkoutPresetNotFoundError(presetName);
-  }
-  const id = asPositiveInteger(raw.id);
-  if (id === null) {
-    throw new Error(`Workout preset "${presetName}" has an invalid ID.`);
-  }
-  return {
-    id,
-    name: typeof raw.name === 'string' ? raw.name : presetName,
-  };
-}
-
-async function resolveAssignments(
-  userId: string,
-  assignments: z.infer<typeof workoutPlanAssignmentSchema>[]
-): Promise<WorkoutPlanAssignmentRecord[]> {
-  return Promise.all(
-    assignments.map(async (assignment, index) => {
-      const preset = await resolvePreset(userId, assignment.workoutPresetName);
-      return {
-        day_of_week: assignment.dayOfWeek,
-        week_index: assignment.weekIndex ?? 0,
-        workout_preset_id: preset.id,
-        workout_preset_name: preset.name,
-        exercise_id: null,
-        sort_order: index,
-        sets: [],
-      };
-    })
-  );
-}
-
-function workoutPlanToolError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  log('error', `[workoutPlanTools] Workout plan operation failed: ${message}`);
-  if (error instanceof WorkoutPresetNotFoundError) {
-    return toolError(
-      'WORKOUT_PRESET_NOT_FOUND',
-      message,
-      'Do not retry this native plan write with the same missing preset. For a Speediance program, call sparky_manage_speediance_workouts action=create_plan with the complete workouts and schedule; it upserts the Speediance workouts and canonical presets before writing the plan. For a native-only plan, create the missing workout preset first.'
-    );
-  }
-  return toolError('WORKOUT_PLAN_ERROR', message);
-}
 
 const DAY_NAMES = [
   'Sunday',
@@ -260,182 +47,623 @@ const DAY_NAMES = [
   'Saturday',
 ];
 
-function formatAssignment(assignment: WorkoutPlanAssignmentRow): string {
-  const day =
-    DAY_NAMES[assignment.day_of_week] ?? `Day ${assignment.day_of_week}`;
-  const item =
-    assignment.workout_preset_name ??
-    assignment.exercise_name ??
-    'Unknown item';
-  const setCount = assignment.sets?.length ?? 0;
-  const sets =
+const WEEKDAY_MAP: Record<string, number> = {
+  sunday: 0,
+  sun: 0,
+  monday: 1,
+  mon: 1,
+  tuesday: 2,
+  tue: 2,
+  tues: 2,
+  wednesday: 3,
+  wed: 3,
+  thursday: 4,
+  thu: 4,
+  thur: 4,
+  thurs: 4,
+  friday: 5,
+  fri: 5,
+  saturday: 6,
+  sat: 6,
+};
+
+interface WorkoutPlanAssignmentRow {
+  id: number | string;
+  day_of_week?: number | null;
+  session_index?: number | null;
+  session_name?: string | null;
+  workout_preset_id?: number | null;
+  workout_preset_name?: string | null;
+  workout_preset_format?: string | null;
+  exercise_id?: string | null;
+  exercise_name?: string | null;
+  sets?: unknown[] | null;
+}
+
+interface WorkoutPlanTemplateRow {
+  id: string | number;
+  plan_name: string;
+  description?: string | null;
+  is_active?: boolean;
+  schedule_type?: 'weekly' | 'sequential' | null;
+  entry_mode?: 'prompt' | 'prefill' | null;
+  assignments?: WorkoutPlanAssignmentRow[];
+  next_assignment?: WorkoutPlanAssignmentRow | null;
+  next_assignments?: WorkoutPlanAssignmentRow[];
+  start_date?: string | null;
+  end_date?: string | null;
+  sequence_position?: {
+    current: number;
+    total: number;
+    session_name?: string | null;
+  } | null;
+}
+
+function planMutationConfirmPrompt(
+  confirmed: boolean | undefined,
+  action: 'update' | 'delete',
+  planId: number
+): string | null {
+  if (confirmed === true) return null;
+  if (action === 'delete') {
+    return `Deleting workout plan ${planId} is permanent. Confirm with the user first. If they agree, call delete_workout_plan again with plan_id=${planId} and confirmed=true. Nothing was deleted.`;
+  }
+  return `Updating workout plan ${planId} can replace all assignments and unlinks history if changing schedule type. Confirm with the user first. If they agree, call update_workout_plan again with the same fields and confirmed=true. Call get_workout_plan with plan_id=${planId} first to inspect current assignments. Nothing was changed.`;
+}
+
+function formatPlanAssignmentLine(a: WorkoutPlanAssignmentRow): string {
+  const item = a.workout_preset_name ?? a.exercise_name ?? 'Unknown item';
+  const format = a.workout_preset_format;
+  const formatSuffix = format && format !== 'standard' ? `, ${format}` : '';
+  const isPreset = Boolean(a.workout_preset_name || a.workout_preset_id);
+  const typeSuffix = isPreset ? ` (preset${formatSuffix})` : '';
+  const setCount = a.sets?.length ?? 0;
+  const setsSuffix =
     setCount > 0 ? ` — ${setCount} set${setCount === 1 ? '' : 's'}` : '';
-  return `${day}: ${item}${sets}`;
+  return `${item}${typeSuffix}${setsSuffix}`;
 }
 
-async function executeTemplateAction(
+async function resolvePlanAssignments(
   userId: string,
-  args: ManageWorkoutPlansInput
-): Promise<string> {
-  try {
-    switch (args.action) {
-      case 'list_workout_plans': {
-        const rows =
-          (await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(
-            userId
-          )) as unknown as WorkoutPlanTemplateRow[];
-        return formatList(rows, 'Workout Plans', (row) => {
-          const count = row.assignments?.length ?? 0;
-          const state = row.is_active ? 'active' : 'inactive';
-          return `**${row.plan_name}** (${state}, ${count} assignment${count === 1 ? '' : 's'})\n  ID: ${row.id}`;
-        });
+  rawSessions: WorkoutPlanSessionItemInput[],
+  scheduleType: 'sequential' | 'weekly'
+): Promise<WorkoutPlanAssignmentInput[]> {
+  if (!rawSessions || rawSessions.length === 0) {
+    return [];
+  }
+  const assignments: WorkoutPlanAssignmentInput[] = [];
+  let currentSessionIndex = 1;
+  let prevSessionName: string | null = null;
+
+  for (let i = 0; i < rawSessions.length; i++) {
+    const item = rawSessions[i];
+    let workoutPresetId: number | null = item.workout_preset_id ?? null;
+    let exerciseId: string | null = item.exercise_id ?? null;
+
+    if (!workoutPresetId && !exerciseId && item.preset_name) {
+      const preset = await workoutPresetRepository.getWorkoutPresetByName(
+        userId,
+        item.preset_name
+      );
+      if (!preset) {
+        throw new Error(`Preset with name "${item.preset_name}" not found.`);
       }
-      case 'get_workout_plan': {
-        const plan =
-          (await workoutPlanTemplateService.getWorkoutPlanTemplateById(
-            userId,
-            args.plan_id
-          )) as unknown as WorkoutPlanTemplateRow;
-        return formatList(
-          plan.assignments ?? [],
-          `Workout Plan: ${plan.plan_name}`,
-          formatAssignment
-        );
-      }
-      case 'delete_workout_plan':
-        await workoutPlanTemplateService.deleteWorkoutPlanTemplate(
-          userId,
-          args.plan_id
-        );
-        return formatConfirmation('Workout plan deleted.');
+      workoutPresetId = preset.id;
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.toLowerCase().includes('not found')) {
-      return ERRORS.NOT_FOUND(
-        'Workout plan',
-        'plan_id' in args ? String(args.plan_id) : ''
+
+    if (!workoutPresetId && !exerciseId && item.exercise_name) {
+      const exercise = await findExerciseByExactName(
+        userId,
+        item.exercise_name
+      );
+      if (!exercise) {
+        throw new Error(
+          `Exercise with name "${item.exercise_name}" not found. Use sparky_manage_exercise search_exercises to find the exact name or ID.`
+        );
+      }
+      exerciseId = String(exercise.id);
+    }
+
+    if (!workoutPresetId && !exerciseId) {
+      throw new Error(
+        `Assignment at position ${i + 1} must specify a workout preset (preset_name or workout_preset_id) or an exercise (exercise_name or exercise_id).`
       );
     }
-    log('error', '[Workout Plan Tool] Error:', error);
-    return ERRORS.DB_ERROR(error);
+
+    let dayOfWeek: number | null;
+    let sessionIndex: number | null;
+    const sessionName: string | null = item.session_name || null;
+
+    if (scheduleType === 'sequential') {
+      if (item.session_index !== undefined && item.session_index !== null) {
+        sessionIndex = item.session_index;
+        currentSessionIndex = item.session_index;
+      } else if (
+        sessionName &&
+        prevSessionName &&
+        sessionName === prevSessionName
+      ) {
+        sessionIndex = currentSessionIndex;
+      } else {
+        if (i > 0) {
+          currentSessionIndex++;
+        }
+        sessionIndex = currentSessionIndex;
+      }
+      prevSessionName = sessionName;
+      dayOfWeek = null;
+    } else {
+      if (item.day_of_week === undefined || item.day_of_week === null) {
+        throw new Error(
+          `Weekly assignment at position ${i + 1} is missing required day_of_week (0-6 or Sunday-Saturday).`
+        );
+      }
+      if (typeof item.day_of_week === 'number') {
+        dayOfWeek = item.day_of_week;
+      } else {
+        const s = item.day_of_week.trim().toLowerCase();
+        if (/^\d+$/.test(s)) {
+          dayOfWeek = Number(s);
+        } else if (s in WEEKDAY_MAP) {
+          dayOfWeek = WEEKDAY_MAP[s];
+        } else {
+          throw new Error(
+            `Invalid day_of_week "${item.day_of_week}" at position ${i + 1}. Expected 0-6 or Sunday-Saturday.`
+          );
+        }
+      }
+      if (dayOfWeek < 0 || dayOfWeek > 6) {
+        throw new Error(
+          `Invalid day_of_week "${item.day_of_week}" at position ${i + 1}. Expected 0-6.`
+        );
+      }
+      sessionIndex = null;
+    }
+
+    const sets =
+      exerciseId && item.sets && item.sets.length > 0
+        ? item.sets.map((s, sIdx) => ({
+            set_number: sIdx + 1,
+            set_type: s.set_type || 'Working Set',
+            reps: s.reps ?? null,
+            weight: s.weight ?? null,
+            duration: s.duration ?? null,
+            distance: s.distance ?? null,
+            rest_time: s.rest_time ?? null,
+            notes: s.notes ?? null,
+          }))
+        : null;
+
+    assignments.push({
+      workout_preset_id: workoutPresetId,
+      exercise_id: exerciseId,
+      day_of_week: dayOfWeek,
+      session_index: sessionIndex,
+      session_name: sessionName,
+      sort_order: item.sort_order ?? i,
+      sets,
+    });
   }
+
+  return assignments;
 }
 
-async function executeNativeAction(
-  userId: string,
-  timezone: string,
-  args: NativeWorkoutPlanInput
-): Promise<string> {
-  try {
-    const plans = await listPlans(userId);
-    if (args.action === 'list') {
-      const timeline = await plannedWorkoutScheduleService.getTrainingTimeline(
-        userId,
-        todayInZone(timezone)
-      );
-      return formatJsonResult({ plans, timeline });
+// `sessions` arrives as an array or a JSON string. A JSON string skips the
+// published schema, so every item is validated here either way.
+function parseSessionsInput(
+  raw: string | WorkoutPlanSessionItemInput[] | undefined
+):
+  | { ok: true; sessions: WorkoutPlanSessionItemInput[] | undefined }
+  | {
+      ok: false;
+      error: string;
+    } {
+  if (raw === undefined) return { ok: true, sessions: undefined };
+  let value: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return {
+        ok: false,
+        error: ERRORS.VALIDATION('Invalid JSON format for sessions'),
+      };
     }
-
-    const currentClientDate = args.currentClientDate ?? todayInZone(timezone);
-    const existing = plans.find((plan) => plan.plan_name === args.planName);
-
-    if (args.action === 'set_active') {
-      if (!existing) {
-        return toolError(
-          'WORKOUT_PLAN_NOT_FOUND',
-          `Workout plan "${args.planName}" was not found.`
-        );
-      }
-      const updated: unknown =
-        await workoutPlanTemplateService.updateWorkoutPlanTemplate(
-          userId,
-          existing.id,
-          {
-            plan_name: existing.plan_name,
-            description: existing.description,
-            start_date: existing.start_date,
-            end_date: existing.end_date,
-            is_active: args.isActive,
-            cycle_length_weeks: existing.cycle_length_weeks,
-            assignments: existing.assignments,
-            currentClientDate,
-          }
-        );
-      return formatJsonResult({ plan: updated, operation: 'updated' });
-    }
-
-    const assignments = await resolveAssignments(userId, args.assignments);
-    const planData = {
-      plan_name: args.planName,
-      description: args.description ?? null,
-      start_date: args.startDate,
-      end_date: args.endDate ?? null,
-      is_active: args.isActive,
-      cycle_length_weeks: args.cycleLengthWeeks ?? 1,
-      assignments,
-      currentClientDate,
-    };
-
-    if (existing) {
-      const updated: unknown =
-        await workoutPlanTemplateService.updateWorkoutPlanTemplate(
-          userId,
-          existing.id,
-          planData
-        );
-      return formatJsonResult({ plan: updated, operation: 'updated' });
-    }
-
-    const created: unknown =
-      await workoutPlanTemplateService.createWorkoutPlanTemplate(
-        userId,
-        planData
-      );
-    return formatJsonResult({ plan: created, operation: 'created' });
-  } catch (error) {
-    return workoutPlanToolError(error);
   }
+  const result = z.array(workoutPlanSessionItemSchema).safeParse(value);
+  if (!result.success) {
+    return { ok: false, error: formatZodError(result.error) };
+  }
+  return { ok: true, sessions: result.data };
 }
 
-export function buildWorkoutPlanTools(userId: string, timezone: string) {
+// Service-side assignment validation errors (unknown preset/exercise ID,
+// missing weekday) are input problems, not a missing plan.
+function isAssignmentValidationError(message: string): boolean {
+  return (
+    message.startsWith('Workout Preset with ID') ||
+    message.startsWith('Exercise with ID') ||
+    message.includes('Changing schedule_type requires') ||
+    message.includes('Weekly workout plan assignments must have')
+  );
+}
+
+export function buildWorkoutPlanTools(userId: string, tz: string) {
   return {
     sparky_manage_workout_plans: tool({
-      description: `List and inspect native SparkyFitness workout plans, delete a plan, or—after an explicit user request—create, update, and activate a plan made from existing workout presets.
+      description: `Workout plan templates: list, inspect, create, update, delete workout plans, or check active plan progression.
 
 This tool takes a FLAT object with an "action" field. Do NOT nest fields under the action name.
 
-Actions:
-- action: 'list_workout_plans' — list saved plan templates with IDs
-- action: 'get_workout_plan' (fields: plan_id) — inspect one plan's assignments
-- action: 'delete_workout_plan' (fields: plan_id) — permanently delete a plan
-- action: 'list' — return native plans plus the canonical completed/missed/upcoming training timeline and exact exercise/set counts
-- action: 'upsert' (fields: planName, startDate, assignments, optional description/endDate/isActive/cycleLengthWeeks/currentClientDate) — create or replace the same-named native plan
-- action: 'set_active' (fields: planName, isActive, optional currentClientDate) — activate or deactivate a native plan
+Workout plans support two schedule types:
+1. "sequential" (DEFAULT) — Sessions are ordered (Session 1 -> Session 2 -> ... -> Session N -> wraps). Missed days do NOT skip sessions; the next incomplete session is always ready. Ideal for PPL, Upper/Lower, or full-body cycles.
+2. "weekly" — Tied to specific weekdays (Mon, Wed, Fri). Missed weekdays are skipped.
 
-Call a write action only after the user explicitly asked for it. Each workoutPresetName must already exist in sparky_manage_exercise action=get_workout_presets. Never introduce a new Speediance workout here; use sparky_manage_speediance_workouts action=create_plan so remote workouts and canonical presets are synchronized before the schedule is written. Prefer stable multi-week plans adapted from saved training feedback.`,
-      inputSchema: manageCombinedWorkoutPlansInput,
+Actions:
+- action: 'list' — native plans plus canonical completed/missed/upcoming timeline and exact exercise/set counts.
+- action: 'upsert' (planName, startDate, assignments [{dayOfWeek, weekIndex?, workoutPresetName}], cycleLengthWeeks?, endDate?, isActive?) — create or replace a named weekly cycle using existing presets, only after the user requested it. For new Speediance workouts use sparky_manage_speediance_workouts action=create_plan first.
+- action: 'set_active' (planName, isActive) — activate/deactivate a named plan after a user request.
+- action: 'list_workout_plans' — returns every saved workout plan template (name, active state, mode, session/day count, ID)
+- action: 'get_workout_plan' (fields: plan_id) — returns one plan with its full session/day assignments
+- action: 'get_active_workout_plan' (fields: date?) — returns the user's active workout plan progression and upcoming session/assignments for today or the specified date
+- action: 'create_workout_plan' (fields: plan_name, schedule_type?, is_active?, description?, start_date?, end_date?, sessions) — creates a workout plan. "sessions" is an array of assignments (preset_name/workout_preset_id or exercise_name/exercise_id). Default schedule_type is sequential.
+- action: 'update_workout_plan' (fields: plan_id, confirmed, plan_name?, schedule_type?, is_active?, description?, start_date?, end_date?, sessions?) — updates a plan. confirmed=true required. If sessions is provided, replaces all assignments.
+- action: 'delete_workout_plan' (fields: plan_id, confirmed) — permanently deletes the plan with the given ID. confirmed=true required.`,
+      inputSchema: combinedWorkoutPlansInput,
       execute: async (rawArgs) => {
         const normalized = normalizeActionArgs(
           rawArgs,
-          timezone,
+          tz,
           [...VALID_ACTIONS],
           () => 'list_workout_plans'
         );
-        const parsed = manageCombinedWorkoutPlanSchema.safeParse(normalized);
-        if (!parsed.success) return formatZodError(parsed.error);
-
         if (
-          parsed.data.action === 'list_workout_plans' ||
-          parsed.data.action === 'get_workout_plan' ||
-          parsed.data.action === 'delete_workout_plan'
+          typeof normalized === 'object' &&
+          normalized !== null &&
+          'action' in normalized &&
+          NATIVE_WORKOUT_PLAN_ACTIONS.some(
+            (action) => action === normalized.action
+          )
         ) {
-          return executeTemplateAction(userId, parsed.data);
+          const native = manageNativeWorkoutPlanSchema.safeParse(normalized);
+          if (!native.success) return formatZodError(native.error);
+          return executeNativeAction(userId, tz, native.data);
         }
-        return executeNativeAction(userId, timezone, parsed.data);
+        const parsed = manageWorkoutPlansSchema.safeParse(normalized);
+        if (!parsed.success) {
+          return formatZodError(parsed.error);
+        }
+        const args: ManageWorkoutPlansInput = parsed.data;
+        try {
+          switch (args.action) {
+            case 'list_workout_plans': {
+              const rows =
+                (await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(
+                  userId
+                )) as unknown as WorkoutPlanTemplateRow[];
+              return formatList(rows, 'Workout Plans', (row) => {
+                const isSequential = row.schedule_type === 'sequential';
+                const state = row.is_active ? 'active' : 'inactive';
+                if (isSequential) {
+                  const sessionCount =
+                    new Set(
+                      row.assignments
+                        ?.map((a) => a.session_index)
+                        .filter((idx) => idx !== null && idx !== undefined)
+                    ).size || (row.assignments?.length ? 1 : 0);
+                  return `**${row.plan_name}** (${state}, sequential, ${sessionCount} session${sessionCount === 1 ? '' : 's'})\n  ID: ${row.id}`;
+                } else {
+                  const dayCount =
+                    new Set(
+                      row.assignments
+                        ?.map((a) => a.day_of_week)
+                        .filter((d) => d !== null && d !== undefined)
+                    ).size || (row.assignments?.length ? 1 : 0);
+                  return `**${row.plan_name}** (${state}, weekly, ${dayCount} day${dayCount === 1 ? '' : 's'})\n  ID: ${row.id}`;
+                }
+              });
+            }
+
+            case 'get_workout_plan': {
+              const plan =
+                (await workoutPlanTemplateService.getWorkoutPlanTemplateById(
+                  userId,
+                  args.plan_id
+                )) as unknown as WorkoutPlanTemplateRow;
+              const assignments = plan.assignments ?? [];
+              const isSequential = plan.schedule_type === 'sequential';
+
+              if (assignments.length === 0) {
+                return `# Workout Plan: ${plan.plan_name} (${isSequential ? 'Sequential' : 'Weekly'})\n\n_No assignments in this plan._`;
+              }
+
+              if (isSequential) {
+                const sessionMap = new Map<
+                  number,
+                  WorkoutPlanAssignmentRow[]
+                >();
+                for (const a of assignments) {
+                  const idx = a.session_index ?? 1;
+                  if (!sessionMap.has(idx)) {
+                    sessionMap.set(idx, []);
+                  }
+                  sessionMap.get(idx)!.push(a);
+                }
+                const sortedIndexes = Array.from(sessionMap.keys()).sort(
+                  (x, y) => x - y
+                );
+                const sections: string[] = [
+                  `# Workout Plan: ${plan.plan_name} (Sequential)\n`,
+                ];
+                for (const sIdx of sortedIndexes) {
+                  const sAssignments = sessionMap.get(sIdx)!;
+                  const sName = sAssignments.find(
+                    (a) => a.session_name
+                  )?.session_name;
+                  const header = sName
+                    ? `Session ${sIdx} — ${sName}:`
+                    : `Session ${sIdx}:`;
+                  sections.push(header);
+                  sAssignments.forEach((a, i) => {
+                    sections.push(`  ${i + 1}. ${formatPlanAssignmentLine(a)}`);
+                  });
+                  sections.push('');
+                }
+                return sections.join('\n').trim();
+              } else {
+                const dayMap = new Map<number, WorkoutPlanAssignmentRow[]>();
+                for (const a of assignments) {
+                  const dow = a.day_of_week ?? 0;
+                  if (!dayMap.has(dow)) {
+                    dayMap.set(dow, []);
+                  }
+                  dayMap.get(dow)!.push(a);
+                }
+                const sortedDays = Array.from(dayMap.keys()).sort(
+                  (x, y) => x - y
+                );
+                const sections: string[] = [
+                  `# Workout Plan: ${plan.plan_name} (Weekly)\n`,
+                ];
+                for (const dow of sortedDays) {
+                  const dayName = DAY_NAMES[dow] ?? `Day ${dow}`;
+                  sections.push(`${dayName}:`);
+                  const dayAssignments = dayMap.get(dow)!;
+                  dayAssignments.forEach((a, i) => {
+                    sections.push(`  ${i + 1}. ${formatPlanAssignmentLine(a)}`);
+                  });
+                  sections.push('');
+                }
+                return sections.join('\n').trim();
+              }
+            }
+
+            case 'get_active_workout_plan': {
+              const targetDate = args.date || todayInZone(tz);
+              const plans =
+                (await workoutPlanTemplateService.getActiveWorkoutPlanForDate(
+                  userId,
+                  targetDate
+                )) as unknown as WorkoutPlanTemplateRow[];
+              if (!plans || plans.length === 0) {
+                return `No active workout plan found for ${targetDate}.`;
+              }
+              const lines: string[] = [];
+              for (const plan of plans) {
+                const isSequential = plan.schedule_type === 'sequential';
+                if (isSequential) {
+                  const pos = plan.sequence_position;
+                  const posStr = pos
+                    ? `Session ${pos.current} of ${pos.total}${pos.session_name ? ' — ' + pos.session_name : ''}`
+                    : 'Next session';
+                  lines.push(
+                    `# Active Plan: **${plan.plan_name}** (Sequential)`
+                  );
+                  lines.push(`Next up: ${posStr}`);
+                  const nextList =
+                    plan.next_assignments && plan.next_assignments.length > 0
+                      ? plan.next_assignments
+                      : plan.next_assignment
+                        ? [plan.next_assignment]
+                        : [];
+                  if (nextList.length > 0) {
+                    lines.push('\n**Assignments in this session:**');
+                    nextList.forEach((a, idx) => {
+                      lines.push(`${idx + 1}. ${formatPlanAssignmentLine(a)}`);
+                    });
+                  } else {
+                    lines.push('\n_No assignments remaining in this cycle._');
+                  }
+                } else {
+                  // The repository already selects this date's weekday
+                  // assignments into next_assignments.
+                  const dayAssignments = plan.next_assignments ?? [];
+                  const dayOfWeek =
+                    dayAssignments[0]?.day_of_week ??
+                    new Date(`${targetDate}T12:00:00Z`).getUTCDay();
+                  const dayName = DAY_NAMES[dayOfWeek] ?? `Day ${dayOfWeek}`;
+                  lines.push(`# Active Plan: **${plan.plan_name}** (Weekly)`);
+                  if (dayAssignments.length > 0) {
+                    lines.push(`\n**Session for ${dayName} (${targetDate}):**`);
+                    dayAssignments.forEach((a, idx) => {
+                      lines.push(`${idx + 1}. ${formatPlanAssignmentLine(a)}`);
+                    });
+                  } else {
+                    lines.push(
+                      `\nRest day: nothing scheduled for ${dayName} (${targetDate}).`
+                    );
+                  }
+                }
+              }
+              return lines.join('\n');
+            }
+
+            case 'create_workout_plan': {
+              const sessionsResult = parseSessionsInput(
+                args.sessions ?? args.assignments
+              );
+              if (!sessionsResult.ok) return sessionsResult.error;
+              const parsedSessions = sessionsResult.sessions ?? [];
+
+              const scheduleType = args.schedule_type || 'sequential';
+              let entryMode = args.entry_mode;
+              let notice = '';
+              if (scheduleType === 'sequential') {
+                if (entryMode === 'prefill') {
+                  notice =
+                    ' Note: Sequential plans only support "prompt" entry mode (coerced to prompt).';
+                }
+                entryMode = 'prompt';
+              }
+
+              let resolvedAssignments: WorkoutPlanAssignmentInput[] = [];
+              if (parsedSessions.length > 0) {
+                try {
+                  resolvedAssignments = await resolvePlanAssignments(
+                    userId,
+                    parsedSessions,
+                    scheduleType
+                  );
+                } catch (err) {
+                  return ERRORS.VALIDATION(
+                    err instanceof Error ? err.message : String(err)
+                  );
+                }
+              }
+
+              const created =
+                await workoutPlanTemplateService.createWorkoutPlanTemplate(
+                  userId,
+                  {
+                    plan_name: args.plan_name,
+                    description: args.description,
+                    schedule_type: scheduleType,
+                    entry_mode: entryMode,
+                    is_active: args.is_active ?? false,
+                    start_date: args.start_date,
+                    end_date: args.end_date,
+                    assignments: resolvedAssignments,
+                    currentClientDate: todayInZone(tz),
+                  }
+                );
+
+              return formatConfirmation(
+                `Workout plan "${created.plan_name}" created (ID: ${created.id}, ${scheduleType}, ${resolvedAssignments.length} assignment${resolvedAssignments.length === 1 ? '' : 's'}).${notice}`
+              );
+            }
+
+            case 'update_workout_plan': {
+              const blocked = planMutationConfirmPrompt(
+                args.confirmed,
+                'update',
+                args.plan_id
+              );
+              if (blocked) return blocked;
+
+              const sessionsResult = parseSessionsInput(
+                args.sessions ?? args.assignments
+              );
+              if (!sessionsResult.ok) return sessionsResult.error;
+              const parsedSessions = sessionsResult.sessions;
+
+              // Always load the plan: the effective schedule type decides how
+              // sessions resolve and whether entry_mode is forced to prompt.
+              // Guessing 'sequential' here would flip a weekly prefill plan to
+              // prompt on an unrelated edit (e.g. renaming it).
+              const existing =
+                (await workoutPlanTemplateService.getWorkoutPlanTemplateById(
+                  userId,
+                  args.plan_id
+                )) as unknown as WorkoutPlanTemplateRow;
+
+              const targetScheduleType =
+                args.schedule_type ?? existing.schedule_type ?? 'weekly';
+
+              let resolvedAssignments: WorkoutPlanAssignmentInput[] | undefined;
+              if (parsedSessions !== undefined) {
+                try {
+                  resolvedAssignments = await resolvePlanAssignments(
+                    userId,
+                    parsedSessions,
+                    targetScheduleType
+                  );
+                } catch (err) {
+                  return ERRORS.VALIDATION(
+                    err instanceof Error ? err.message : String(err)
+                  );
+                }
+              }
+
+              let entryMode = args.entry_mode;
+              let notice = '';
+              if (targetScheduleType === 'sequential' && entryMode) {
+                if (entryMode === 'prefill') {
+                  notice =
+                    ' Note: Sequential plans only support "prompt" entry mode (coerced to prompt).';
+                }
+                entryMode = 'prompt';
+              }
+
+              const updated =
+                await workoutPlanTemplateService.updateWorkoutPlanTemplate(
+                  userId,
+                  args.plan_id,
+                  {
+                    plan_name: args.plan_name ?? existing.plan_name,
+                    description:
+                      args.description ?? existing.description ?? null,
+                    schedule_type:
+                      args.schedule_type ?? existing.schedule_type ?? undefined,
+                    entry_mode: entryMode ?? existing.entry_mode ?? undefined,
+                    is_active: args.is_active ?? existing.is_active ?? false,
+                    start_date: args.start_date ?? existing.start_date ?? null,
+                    end_date: args.end_date ?? existing.end_date ?? null,
+                    assignments: resolvedAssignments,
+                    currentClientDate: todayInZone(tz),
+                  }
+                );
+
+              return formatConfirmation(
+                `Workout plan "${updated.plan_name}" updated.${notice}`
+              );
+            }
+
+            case 'delete_workout_plan': {
+              const blocked = planMutationConfirmPrompt(
+                args.confirmed,
+                'delete',
+                args.plan_id
+              );
+              if (blocked) return blocked;
+
+              await workoutPlanTemplateService.deleteWorkoutPlanTemplate(
+                userId,
+                args.plan_id
+              );
+              return formatConfirmation('Workout plan deleted.');
+            }
+
+            default:
+              return ERRORS.INVALID_ACTION(
+                String((args as ManageWorkoutPlansInput).action),
+                [...VALID_ACTIONS]
+              );
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '';
+          if (isAssignmentValidationError(message)) {
+            return ERRORS.VALIDATION(message);
+          }
+          if (message.includes('not found')) {
+            return ERRORS.NOT_FOUND(
+              'Workout plan',
+              'plan_id' in args ? String(args.plan_id) : ''
+            );
+          }
+          log('error', '[Workout Plan Tool] Error:', error);
+          return ERRORS.DB_ERROR(error);
+        }
       },
     }),
   };
 }
-
-export default { buildWorkoutPlanTools };

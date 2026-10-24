@@ -18,6 +18,7 @@ import {
   CheckSquare,
   X,
   Edit,
+  Copy,
   Trash2,
   Share2,
   Lock,
@@ -37,9 +38,12 @@ import {
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { useAuth } from '@/hooks/useAuth';
 import type { ExerciseOwnershipFilter } from '@/types/exercises';
+import { localizeMuscle, localizeEquipment } from '@/utils/exerciseTaxonomy';
 import WorkoutPresetsManager from './WorkoutPresetsManager';
+import EquipmentManager from '@/pages/Exercises/EquipmentManager';
 import WorkoutPlansManager from '@/pages/Exercises/WorkoutPlansManager';
 import SpeedianceWorkoutManager from './SpeedianceWorkoutManager';
+import TrainingProgramsEntry from '@/pages/Exercises/TrainingPrograms/TrainingProgramsEntry';
 import {
   useExercises,
   useUpdateExerciseShareStatusMutation,
@@ -227,14 +231,14 @@ const ExerciseDatabaseManager = () => {
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }
-            aria-label="Select all"
+            aria-label={t('common.selectAll', 'Select all')}
           />
         ),
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
             onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label="Select row"
+            aria-label={t('common.selectRow', 'Select row')}
             disabled={row.original.user_id !== user?.id}
           />
         ),
@@ -321,14 +325,22 @@ const ExerciseDatabaseManager = () => {
               {exercise.primary_muscles &&
                 exercise.primary_muscles.length > 0 && (
                   <div className="text-[10px] text-gray-500 truncate max-w-[150px]">
-                    <span className="font-medium">Muscles: </span>
-                    {exercise.primary_muscles.join(', ')}
+                    <span className="font-medium">
+                      {t('exercises.muscles', 'Muscles:')}{' '}
+                    </span>
+                    {exercise.primary_muscles
+                      .map((m) => localizeMuscle(t, m))
+                      .join(', ')}
                   </div>
                 )}
               {exercise.equipment && exercise.equipment.length > 0 && (
                 <div className="text-[10px] text-gray-500 truncate max-w-[150px]">
-                  <span className="font-medium">Equipment: </span>
-                  {exercise.equipment.join(', ')}
+                  <span className="font-medium">
+                    {t('exercises.equipment', 'Equipment:')}{' '}
+                  </span>
+                  {exercise.equipment
+                    .map((eq) => localizeEquipment(t, eq))
+                    .join(', ')}
                 </div>
               )}
             </div>
@@ -346,7 +358,9 @@ const ExerciseDatabaseManager = () => {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="h-8 w-8 p-0">
-                  <span className="sr-only">Open menu</span>
+                  <span className="sr-only">
+                    {t('exercises.openMenu', 'Open menu')}
+                  </span>
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -360,6 +374,17 @@ const ExerciseDatabaseManager = () => {
                 >
                   <Edit className="mr-2 h-4 w-4" />
                   {t('common.edit', 'Edit')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    editForm.openDuplicateDialog(
+                      exercise,
+                      t('exercise.databaseManager.copySuffix', '(copy)')
+                    )
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('exercise.databaseManager.duplicateExercise', 'Duplicate')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!isOwned}
@@ -653,6 +678,7 @@ const ExerciseDatabaseManager = () => {
         entityName={t('exercise.databaseManager.exercises', 'exercises')}
         description={t('exercise.databaseManager.bulkDeleteDescription', {
           count: selectedCount,
+          selectedCount,
           defaultValue: `Remove these ${selectedCount} exercises from your library and from any workout presets and plans. Workouts you have already logged are kept in your diary.`,
         })}
         onConfirm={handleBulkDeleteConfirm}
@@ -666,6 +692,11 @@ const ExerciseDatabaseManager = () => {
 
       {/* Owner-only remote manager; unavailable providers render a connection hint. */}
       <SpeedianceWorkoutManager />
+      {/* Run and walk training programs */}
+      <TrainingProgramsEntry />
+
+      {/* Equipment Section (shoes and their mileage) */}
+      <EquipmentManager />
 
       <AddExerciseDialog
         open={isAddExerciseDialogOpen}

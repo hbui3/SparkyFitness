@@ -58,9 +58,9 @@ export const CardioVolumeIntervalChart = ({
 
   const chartData = summaryData.intervalsBreakdown.map((pt) => ({
     label: pt.label,
-    distance: pt.distanceFormatted,
-    duration: pt.durationMinutes,
-    calories: pt.caloriesBurned,
+    distance: Number(pt.distanceFormatted.toFixed(2)),
+    duration: Math.round(pt.durationMinutes),
+    calories: Math.round(pt.caloriesBurned),
     workouts: pt.workoutCount,
   }));
 
@@ -112,30 +112,35 @@ export const CardioVolumeIntervalChart = ({
         <div className="flex flex-wrap items-center gap-2">
           {/* Metric Selector */}
           <div className="flex items-center bg-muted p-1 rounded-md text-xs">
-            <Button
-              variant={metric === 'distance' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setMetric('distance')}
-            >
-              {t('exerciseAnalytics.volume.distance', 'Distance')}
-            </Button>
-            <Button
-              variant={metric === 'duration' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setMetric('duration')}
-            >
-              {t('exerciseAnalytics.volume.duration', 'Duration')}
-            </Button>
-            <Button
-              variant={metric === 'calories' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setMetric('calories')}
-            >
-              {t('exerciseAnalytics.volume.calories', 'Calories')}
-            </Button>
+            {(
+              [
+                [
+                  'distance',
+                  t('exerciseAnalytics.volume.distance', 'Distance'),
+                ],
+                [
+                  'duration',
+                  t('exerciseAnalytics.volume.duration', 'Duration'),
+                ],
+                [
+                  'calories',
+                  t('exerciseAnalytics.volume.calories', 'Calories'),
+                ],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={`h-7 px-2.5 rounded text-xs font-medium ${
+                  metric === key
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground'
+                }`}
+                onClick={() => setMetric(key)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {/* Interval Selector */}
@@ -169,7 +174,7 @@ export const CardioVolumeIntervalChart = ({
           )}
         </div>
       </CardHeader>
-      <CardContent className="h-72 pt-2">
+      <CardContent className="h-56 sm:h-72 pt-2">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={chartData}
@@ -186,12 +191,29 @@ export const CardioVolumeIntervalChart = ({
               axisLine={false}
               tick={{ fontSize: 11 }}
             />
-            <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 11 }}
+              tickFormatter={(value: number) =>
+                metric === 'distance'
+                  ? Number(value).toFixed(value >= 10 ? 0 : 1)
+                  : String(Math.round(value))
+              }
+            />
             <Tooltip
-              formatter={(val: unknown) => [
-                `${String(val ?? 0)} ${metric === 'distance' ? unitLabel : metric === 'duration' ? t('common.min', 'min') : 'kcal'}`,
-                metricLabel,
-              ]}
+              formatter={(val: unknown) => {
+                const n = Number(val ?? 0);
+                const shown =
+                  metric === 'distance' ? n.toFixed(2) : String(Math.round(n));
+                const suffix =
+                  metric === 'distance'
+                    ? unitLabel
+                    : metric === 'duration'
+                      ? t('common.min', 'min')
+                      : 'kcal';
+                return [`${shown} ${suffix}`, metricLabel];
+              }}
               contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
             />
             <Bar dataKey={dataKey} fill={barColor} radius={[4, 4, 0, 0]} />

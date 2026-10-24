@@ -15,8 +15,9 @@ interface RenderOverrides {
   weight?: string;
   reps?: string;
   duration?: string;
+  distance?: string;
   isActive?: boolean;
-  activeField?: 'weight' | 'reps' | 'duration' | 'rpe';
+  activeField?: 'weight' | 'reps' | 'duration' | 'distance' | 'rpe';
   modality?: ExerciseModality;
   nextSetKey?: string | null;
 }
@@ -36,6 +37,8 @@ function renderRow(overrides?: RenderOverrides) {
       weight={overrides?.weight ?? ''}
       reps={overrides?.reps ?? ''}
       duration={overrides?.duration ?? ''}
+      distance={overrides?.distance ?? ''}
+      distanceUnitLabel="m"
       setNumber={1}
       isActive={overrides?.isActive ?? false}
       activeField={overrides?.activeField}
@@ -83,6 +86,62 @@ describe('EditableSetRow', () => {
       expect(callbacks.onActivateSet).toHaveBeenCalledWith(
         'ex-1:set-1',
         'reps'
+      );
+    });
+  });
+
+  describe('weight_distance', () => {
+    it('edits weight and distance and never offers reps', () => {
+      const { getByDisplayValue, callbacks } = renderRow({
+        modality: 'weight_distance',
+        isActive: true,
+        weight: '40',
+        distance: '30',
+      });
+      fireEvent.changeText(getByDisplayValue('30'), '35');
+      expect(callbacks.onUpdateSetField).toHaveBeenCalledWith(
+        'ex-1',
+        'set-1',
+        'distance',
+        '35'
+      );
+      fireEvent.changeText(getByDisplayValue('40'), '45');
+      expect(callbacks.onUpdateSetField).toHaveBeenCalledWith(
+        'ex-1',
+        'set-1',
+        'weight',
+        '45'
+      );
+    });
+
+    it('shows distance with its unit and activates the distance field', () => {
+      const { getByText, callbacks } = renderRow({
+        modality: 'weight_distance',
+        weight: '40',
+        distance: '30',
+      });
+      fireEvent.press(getByText('30 m'));
+      expect(callbacks.onActivateSet).toHaveBeenCalledWith(
+        'ex-1:set-1',
+        'distance'
+      );
+    });
+  });
+
+  describe('weight_duration', () => {
+    it('edits weight and seconds', () => {
+      const { getByDisplayValue, callbacks } = renderRow({
+        modality: 'weight_duration',
+        isActive: true,
+        weight: '20',
+        duration: '60',
+      });
+      fireEvent.changeText(getByDisplayValue('60'), '75');
+      expect(callbacks.onUpdateSetField).toHaveBeenCalledWith(
+        'ex-1',
+        'set-1',
+        'duration',
+        '75'
       );
     });
   });

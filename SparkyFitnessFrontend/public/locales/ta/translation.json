@@ -271,7 +271,6 @@
     "editPresetTooltip": "இந்த முன்னமைவைத் திருத்து",
     "deletePresetTooltip": "இந்த முன்னமைவை நீக்கு",
     "loading": "ஏற்றுகிறது...",
-    "loadMore": "மேலும் ஏற்று",
     "noExercisesInPreset": "இந்த முன்னமைவில் உடற்பயிற்சிகள் இல்லை",
     "failedToLoadPresets": "ஒர்க்அவுட் முன்னமைவுகளை ஏற்ற முடியவில்லை.",
     "createSuccess": "ஒர்க்அவுட் முன்னமைவு வெற்றிகரமாக உருவாக்கப்பட்டது.",
@@ -868,7 +867,6 @@
     "searchFoodsToYour": "உங்கள் உணவுகளைத் தேடுங்கள்"
   },
   "checkIn": {
-    "howAreYouFeelingToday": "இன்று எப்படி உணர்கிறீர்கள்?",
     "neutral": "நடுநிலை",
     "anyThoughtsOrFeelings": "ஏதேனும் எண்ணங்கள் அல்லது உணர்வுகள் சேர்க்க விரும்புகிறீர்களா?",
     "sleepTracking": "தூக்க கண்காணிப்பு",

@@ -25,11 +25,6 @@ import {
   CircleAlert,
   Flame,
   RotateCcw,
-  Activity,
-  User,
-  Heart,
-  Dumbbell,
-  Bone,
   Gauge,
   StickyNote,
   type LucideIcon,
@@ -82,45 +77,6 @@ export const COUNTABLE_SUPPLEMENT_FORMS: string[] = [
 
 export const isCountableForm = (typeId: string | null | undefined): boolean =>
   !!typeId && COUNTABLE_SUPPLEMENT_FORMS.includes(typeId);
-
-export type MedSubtype = 'all' | 'meds' | 'supplements';
-
-// Partitions the medication list for the `All | Meds | Supplements` segmented filter.
-// Supplements are is_supplement medication rows, so this is a view filter over the same
-// list, not a separate data source — keeping the adherence engine and rollup untouched.
-export const filterMedsBySubtype = <T extends { is_supplement?: boolean }>(
-  meds: T[],
-  subtype: MedSubtype
-): T[] =>
-  meds.filter((med) =>
-    subtype === 'all'
-      ? true
-      : subtype === 'supplements'
-        ? Boolean(med.is_supplement)
-        : !med.is_supplement
-  );
-
-// Whether a logged entry belongs to the subtype currently on screen. `all` always
-// says yes and deliberately never consults the id set: an entry outlives the
-// medication it came from, so an orphan matches no visible id and filtering the
-// mixed view would silently drop history that view exists to show. The narrowed
-// views do filter, because an orphan cannot be classified once its row is gone.
-export const isEntryVisibleForSubtype = (
-  medicationId: string | null | undefined,
-  visibleMedIds: Set<string>,
-  subtype: MedSubtype
-): boolean =>
-  subtype === 'all' || (!!medicationId && visibleMedIds.has(medicationId));
-
-// Array form of the rule above, for the Log view's entry lists.
-export const filterEntriesBySubtype = <T extends { medication_id: string }>(
-  entries: T[],
-  visibleMedIds: Set<string>,
-  subtype: MedSubtype
-): T[] =>
-  entries.filter((entry) =>
-    isEntryVisibleForSubtype(entry.medication_id, visibleMedIds, subtype)
-  );
 
 export const MED_TYPE_ICONS: Record<string, LucideIcon> = {
   pill: Pill,
@@ -186,31 +142,10 @@ export const SYMPTOM_COLORS: Record<string, string> = {
 
 // Tinted chip backgrounds (light + dark) that wrap a symptom icon so it reads
 // as colorful and prominent as the emojis it replaced.
-export const SYMPTOM_CHIPS: Record<string, string> = {
-  nausea:
-    'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400',
-  fatigue:
-    'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400',
-  headache:
-    'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400',
-  constipation:
-    'bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400',
-  diarrhea: 'bg-sky-100 text-sky-600 dark:bg-sky-900/40 dark:text-sky-400',
-  vomiting:
-    'bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-400',
-  acid_reflux: 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
-  stomach_pain:
-    'bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-400',
-  dizziness:
-    'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400',
-};
-
 export const symptomIcon = (name: string): LucideIcon =>
   SYMPTOM_ICONS[name] ?? StickyNote;
 export const symptomColor = (name: string): string =>
   SYMPTOM_COLORS[name] ?? 'text-muted-foreground';
-export const symptomChip = (name: string): string =>
-  SYMPTOM_CHIPS[name] ?? 'bg-muted text-muted-foreground';
 
 // Built-in symptoms are referenced by their display-name snapshot in logged
 // history, so build a lookup keyed by lower-cased display name too.
@@ -222,26 +157,6 @@ export const symptomIconForSnapshot = (snapshot: string): LucideIcon =>
   symptomIcon(SNAPSHOT_TO_KEY[snapshot.toLowerCase()] ?? '');
 export const symptomColorForSnapshot = (snapshot: string): string =>
   symptomColor(SNAPSHOT_TO_KEY[snapshot.toLowerCase()] ?? '');
-
-export const LOCATION_ICONS: Record<string, LucideIcon> = {
-  general: User,
-  head: Brain,
-  abdomen: Activity,
-  chest: Heart,
-  back: User,
-  muscles: Dumbbell,
-  joints: Bone,
-};
-
-export const LOCATION_COLORS: Record<string, string> = {
-  general: 'text-slate-500',
-  head: 'text-purple-500',
-  abdomen: 'text-orange-500',
-  chest: 'text-red-500',
-  back: 'text-teal-500',
-  muscles: 'text-amber-500',
-  joints: 'text-cyan-500',
-};
 
 // GI sub-tracker tile accents (icon + value share the same hue).
 export const GI_TILE_ICONS = {
@@ -318,20 +233,6 @@ export const positiveDoseOrNull = (value: string): number | null => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
-
-// Which of the two Log cards to render for the active filter. The medications card
-// doubles as the "nothing scheduled at all" empty state, so it stays in the All view
-// even when the user has no medications — dropping it there would leave a user with
-// only supplements-in-waiting staring at a blank column. The supplement card is only
-// worth its header once there is something to put under it.
-export const visibleDoseCards = (
-  subtype: MedSubtype,
-  hasSupplementContent: boolean
-): { medications: boolean; supplements: boolean } => ({
-  medications: subtype !== 'supplements',
-  supplements:
-    subtype === 'supplements' || (subtype === 'all' && hasSupplementContent),
-});
 
 // How many nutrient rows a supplement's per-dose payload carries. Used for the compact
 // "12 nutrients" badge — a multivitamin has ~26, which is correct but not worth listing

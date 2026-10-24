@@ -54,6 +54,7 @@ const FamilyAccessManager = () => {
     can_manage_checkin: false,
     can_view_reports: false,
     can_manage_medications: false,
+    can_manage_symptoms: false,
     share_external_providers: false,
     access_end_date: '',
   });
@@ -85,6 +86,7 @@ const FamilyAccessManager = () => {
       can_manage_checkin: false,
       can_view_reports: false,
       can_manage_medications: false,
+      can_manage_symptoms: false,
       share_external_providers: false,
       access_end_date: '',
     });
@@ -107,6 +109,8 @@ const FamilyAccessManager = () => {
       can_view_reports: access.access_permissions.can_view_reports,
       can_manage_medications:
         access.access_permissions.can_manage_medications || false,
+      can_manage_symptoms:
+        access.access_permissions.can_manage_symptoms || false,
       share_external_providers:
         access.access_permissions.share_external_providers,
       access_end_date: access.access_end_date
@@ -128,6 +132,7 @@ const FamilyAccessManager = () => {
       !formData.can_manage_checkin &&
       !formData.can_view_reports &&
       !formData.can_manage_medications &&
+      !formData.can_manage_symptoms &&
       !formData.share_external_providers
     ) {
       toast({
@@ -194,6 +199,7 @@ const FamilyAccessManager = () => {
           can_manage_checkin: formData.can_manage_checkin,
           can_view_reports: formData.can_view_reports,
           can_manage_medications: formData.can_manage_medications,
+          can_manage_symptoms: formData.can_manage_symptoms,
           share_external_providers: formData.share_external_providers,
         },
         access_end_date: formData.access_end_date || null,
@@ -278,6 +284,10 @@ const FamilyAccessManager = () => {
     managesMedications: t(
       'settings.familyAccess.managesMedications',
       'Manages Medications'
+    ),
+    managesSymptoms: t(
+      'settings.familyAccess.managesSymptoms',
+      'Manages Symptoms'
     ),
     viewsReports: t('settings.familyAccess.viewsReports', 'Views Reports'),
     sharesExternalProviders: t(
@@ -530,7 +540,44 @@ const FamilyAccessManager = () => {
                         <p className="text-xs">
                           {t(
                             'settings.familyAccess.canManageMedicationsHelp',
-                            'Allows delegate to log medications, doses, titration plans, symptoms, and injection sites on your behalf. Diary logs are blocked. Gives read-only profile access.'
+                            'Allows delegate to log medications, doses, titration plans, and injection sites on your behalf. Diary logs are blocked. Gives read-only profile access.'
+                          )}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="can_manage_symptoms"
+                        checked={formData.can_manage_symptoms}
+                        onCheckedChange={(checked) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            can_manage_symptoms: !!checked,
+                          }))
+                        }
+                      />
+                      <Label
+                        htmlFor="can_manage_symptoms"
+                        className="cursor-pointer"
+                      >
+                        {t(
+                          'settings.familyAccess.canManageSymptoms',
+                          'Can Manage Symptoms'
+                        )}
+                      </Label>
+                    </div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer transition-colors" />
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="max-w-[280px]">
+                        <p className="text-xs">
+                          {t(
+                            'settings.familyAccess.canManageSymptomsHelp',
+                            'Allows delegate to log and edit symptoms, episodes, triggers, treatments, and photos on your behalf. Menstrual cycle and pregnancy symptoms are never shared. Diary logs are blocked.'
                           )}
                         </p>
                       </TooltipContent>
@@ -715,6 +762,11 @@ const FamilyAccessManager = () => {
                             {permissionLabels.managesMedications}
                           </span>
                         )}
+                        {access.access_permissions.can_manage_symptoms && (
+                          <span className="bg-rose-100 text-rose-800 text-xs px-2 py-1 rounded">
+                            {permissionLabels.managesSymptoms}
+                          </span>
+                        )}
                         {access.access_permissions.can_view_reports && (
                           <span className="bg-orange-100 text-orange-800 text-xs px-2 py-1 rounded">
                             {permissionLabels.viewsReports}
@@ -835,6 +887,11 @@ const FamilyAccessManager = () => {
                         {access.access_permissions.can_manage_medications && (
                           <span className="bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded">
                             {permissionLabels.managesMedications}
+                          </span>
+                        )}
+                        {access.access_permissions.can_manage_symptoms && (
+                          <span className="bg-rose-100 text-rose-800 text-xs px-2 py-1 rounded">
+                            {permissionLabels.managesSymptoms}
                           </span>
                         )}
                         {access.access_permissions.can_view_reports && (

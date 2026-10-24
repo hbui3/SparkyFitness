@@ -21,11 +21,11 @@ spec:
     - name: wget
       image: busybox:1.37
       imagePullPolicy: IfNotPresent
-      command: ['wget']
+      command: ['sh', '-c']
       args:
-        - '--spider'
-        - '--timeout=5'
-        - '{{ include "sparkyfitness.fullname" . }}-frontend:{{ .Values.frontend.service.port | default .Values.frontend.port }}'
+        - |
+          wget --spider --timeout=5 http://{{ include "sparkyfitness.fullname" . }}-frontend:{{ .Values.frontend.service.port | default .Values.frontend.port }}/ && \
+          wget --spider --timeout=5 http://{{ include "sparkyfitness.fullname" . }}-frontend:{{ .Values.frontend.service.port | default .Values.frontend.port }}/api/health
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534

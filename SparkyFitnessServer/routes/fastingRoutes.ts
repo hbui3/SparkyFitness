@@ -1,11 +1,42 @@
 import express from 'express';
 import fastingRepository from '../models/fastingRepository.js';
+import fastingPreferencesRepository from '../models/fastingPreferencesRepository.js';
+import fastingAutoCalculationService from '../services/fastingAutoCalculationService.js';
 import moodRepository from '../models/moodRepository.js';
 import { log } from '../config/logging.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import {
+  todayInZone,
+  addDays,
+  userFastingPreferencesMutatorSchema,
+  clampStoredMoodValue,
+  instantToDay,
+} from '@workspace/shared';
 import { authenticate } from '../middleware/authMiddleware.js';
 import checkPermissionMiddleware from '../middleware/checkPermissionMiddleware.js';
 const router = express.Router();
+
+// Logs the optional end-of-fast mood as a manual check-in stamped at the end
+// of the fast and dated in the user's timezone. Writes nothing when the fast
+// ended without a mood value, or when a check-in at that end time already
+// exists: a retried end then neither duplicates the mood nor loses one whose
+// first write failed after the fast had ended.
+async function saveFastingMoodCheckin(
+  userId: string,
+  moodValue: number | null,
+  notes: string | null | undefined,
+  endTime: string
+): Promise<void> {
+  if (moodValue === null) return;
+  if (await moodRepository.hasManualCheckinAt(userId, endTime)) return;
+  const tz = await loadUserTimezone(userId);
+  await moodRepository.createCheckin(userId, {
+    moodValue,
+    notes: notes || null,
+    entryTimestamp: endTime,
+    entryDate: instantToDay(endTime, tz),
+  });
+}
 /**
  * @swagger
  * tags:
@@ -42,11 +73,21 @@ router.use(checkPermissionMiddleware('checkin'));
 router.get('/current', async (req, res) => {
   const { userId } = req.query;
 
-  const targetUserId = userId || req.userId;
+  const targetUserId = (userId as string) || req.userId;
   log('debug', `GET /current: Fetching fast for userId: ${targetUserId}`);
   try {
     const currentFast = await fastingRepository.getCurrentFast(targetUserId);
-    res.json(currentFast || null);
+    if (currentFast) {
+      return res.json(currentFast);
+    }
+
+    const tz = await loadUserTimezone(targetUserId);
+    // If no manual fast is active, check if auto-calculation is enabled
+    const autoFast = await fastingAutoCalculationService.getCurrentAutoFast(
+      targetUserId,
+      tz
+    );
+    res.json(autoFast || null);
   } catch (error) {
     // @ts-expect-error TS(2571): Object is of type 'unknown'.
     log('error', `Error fetching current fast: ${error.message}`, error);
@@ -162,6 +203,7 @@ router.post('/start', async (req, res) => {
  *                 properties:
  *                   value:
  *                     type: integer
+ *                     description: Mood intensity on a 10-100 scale; see the MoodEntry schema for the band boundaries.
  *                   notes:
  *                     type: string
  *     responses:
@@ -187,40 +229,94 @@ router.post('/end', async (req, res) => {
   if (!id || !end_time) {
     return res.status(400).json({ error: 'Fast ID and end time are required' });
   }
+  // The mood lands in the same 10-100 column `POST /api/mood` writes, so it is
+  // brought into range the same way, and an unparseable value is rejected here,
+  // before either branch writes anything, rather than reaching the column. A
+  // mood with no value logs no check-in.
+  let storedMoodValue: number | null = null;
+  if (mood && mood.value !== null && mood.value !== undefined) {
+    storedMoodValue = clampStoredMoodValue(mood.value);
+    if (storedMoodValue === null) {
+      return res.status(400).json({ error: 'Mood value must be a number' });
+    }
+  }
   try {
-    // 1. Fetch the fast by id to validate ownership and get existing start_time
+    if (id === 'auto-current') {
+      const tz = await loadUserTimezone(userId);
+      const activeAuto = await fastingAutoCalculationService.getCurrentAutoFast(
+        userId,
+        tz
+      );
+      if (!activeAuto) {
+        return res.status(404).json({ error: 'Fast not found' });
+      }
+
+      const startUsed = start_time || activeAuto.start_time;
+      if (new Date(startUsed) > new Date(end_time)) {
+        return res
+          .status(400)
+          .json({ error: 'start_time must be before end_time' });
+      }
+
+      const durationMinutes = Math.max(
+        0,
+        Math.round(
+          (new Date(end_time).getTime() - new Date(startUsed).getTime()) / 60000
+        )
+      );
+      const targetEnd = activeAuto.target_end_time || null;
+      const fastingType = activeAuto.fasting_type || '16:8';
+
+      const completed = await fastingRepository.createCompletedFast(
+        userId,
+        startUsed,
+        end_time,
+        targetEnd,
+        durationMinutes,
+        fastingType
+      );
+      // A retried end finds the fast already recorded (null); the mood write
+      // is keyed on the end time, so it is still made once and only once.
+      await saveFastingMoodCheckin(
+        userId,
+        storedMoodValue,
+        mood?.notes,
+        end_time
+      );
+      return res.json(completed);
+    }
+
     const fast = await fastingRepository.getFastingById(id, userId);
     if (!fast) return res.status(404).json({ error: 'Fast not found' });
-    // Determine which start time to use: provided one (frontend) or stored one
     const startUsed = start_time || fast.start_time;
-    // Validate chronological order
     if (new Date(startUsed) > new Date(end_time)) {
       return res
         .status(400)
         .json({ error: 'start_time must be before end_time' });
     }
-    if (mood && mood.value !== null) {
-      // Create mood entry, but we will not store mood_entry_id on fasting_logs (separate table only)
-      await moodRepository.createOrUpdateMoodEntry(
-        userId,
-        mood.value,
-        mood.notes || '',
-        end_time
-      );
-    }
-    // Calculate duration based on chosen start
-    const durationMinutes = Math.round(
-      // @ts-expect-error TS(2362): The left-hand side of an arithmetic operation must... Remove this comment to see the full error message
-      (new Date(end_time) - new Date(startUsed)) / 60000
+    const durationMinutes = Math.max(
+      0,
+      Math.round(
+        (new Date(end_time).getTime() - new Date(startUsed).getTime()) / 60000
+      )
     );
-    // Persist end (and optional start) and other fields; do not store mood/weight on fasting_logs
     const updatedFast = await fastingRepository.endFast(
-      id,
+      fast.id,
       userId,
       end_time,
       durationMinutes,
       startUsed
     );
+    // A retry of an already completed fast still reaches here; the mood write
+    // is keyed on the end time, so it is made once and only once.
+    if (updatedFast) {
+      await saveFastingMoodCheckin(
+        userId,
+        storedMoodValue,
+        mood?.notes,
+        end_time
+      );
+    }
     res.json(updatedFast);
   } catch (error) {
     // @ts-expect-error TS(2571): Object is of type 'unknown'.
@@ -228,7 +324,83 @@ router.post('/end', async (req, res) => {
     res.status(500).json({ error: 'Failed to end fast' });
   }
 });
+
+// Fasting Preferences
+router.get('/preferences', async (req, res) => {
+  const userId = req.userId;
+  try {
+    const prefs =
+      await fastingPreferencesRepository.getFastingPreferences(userId);
+    res.json(prefs);
+  } catch (error) {
+    log(
+      'error',
+      `Error fetching fasting preferences: ${(error as Error).message}`,
+      error
+    );
+    res.status(500).json({ error: 'Failed to fetch fasting preferences' });
+  }
+});
+
+router.put('/preferences', async (req, res) => {
+  const userId = req.userId;
+  const parsed = userFastingPreferencesMutatorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues });
+  }
+
+  try {
+    const updated = await fastingPreferencesRepository.upsertFastingPreferences(
+      userId,
+      parsed.data
+    );
+    if (updated.auto_calculate) {
+      const tz = await loadUserTimezone(userId);
+      await fastingAutoCalculationService.syncCompletedAutoFasts(
+        userId,
+        tz,
+        updated
+      );
+    }
+    res.json(updated);
+  } catch (error) {
+    log(
+      'error',
+      `Error updating fasting preferences: ${(error as Error).message}`,
+      error
+    );
+    res.status(500).json({ error: 'Failed to update fasting preferences' });
+  }
+});
+
+// Auto-calculated Fasting History
+router.get('/calculated', async (req, res) => {
+  const userId = req.userId;
+  const { startDate, endDate } = req.query;
+  try {
+    const tz = await loadUserTimezone(userId);
+    const end = (endDate as string) || todayInZone(tz);
+    const start = (startDate as string) || addDays(end, -30);
+    const fasts =
+      await fastingAutoCalculationService.getCalculatedFastingHistory(
+        userId,
+        start,
+        end,
+        tz
+      );
+    res.json(fasts);
+  } catch (error) {
+    log(
+      'error',
+      `Error calculating fasting history: ${(error as Error).message}`,
+      error
+    );
+    res.status(500).json({ error: 'Failed to calculate fasting history' });
+  }
+});
+
 // Update a fast (edit start/end times, etc)
+
 /**
  * @swagger
  * /fasting/{id}:
@@ -513,4 +685,18 @@ router.get('/history/range/:startDate/:endDate', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch fasting logs by range' });
   }
 });
+
+router.post('/sync', async (req, res) => {
+  const userId = req.userId;
+  try {
+    const tz = await loadUserTimezone(userId);
+    const syncedCount =
+      await fastingAutoCalculationService.syncCompletedAutoFasts(userId, tz);
+    res.json({ success: true, syncedCount });
+  } catch (error) {
+    log('error', `Error syncing fasts: ${(error as Error).message}`, error);
+    res.status(500).json({ error: 'Failed to sync fasting logs' });
+  }
+});
+
 export default router;

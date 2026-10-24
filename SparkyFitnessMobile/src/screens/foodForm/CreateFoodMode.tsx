@@ -6,10 +6,18 @@ import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCSSVariable } from 'uniwind';
 import { StackActions } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  buildNamedFoodPortion,
+  getFoodPortionUnit,
+  parseNamedFoodPortion,
+} from '@workspace/shared';
 import Icon from '../../components/Icon';
 import StepperInput from '../../components/StepperInput';
 import FoodForm, { type FoodFormData } from '../../components/FoodForm';
 import FoodImagePicker from '../../components/FoodImagePicker';
+import LabelScanSourceBanner from '../../components/LabelScanSourceBanner';
+import { useRetryLabelScan } from '../../hooks/useRetryLabelScan';
 import { usableFoodImages } from '../../utils/foodImages';
 import { splitPickerImages, type PickerImage } from '../../utils/pickerImages';
 import BottomSheetPicker from '../../components/BottomSheetPicker';
@@ -24,7 +32,10 @@ import {
 } from '../../services/mealPlanSelection';
 import { useMealTypes, usePreferences } from '../../hooks';
 import { useSaveFood } from '../../hooks/useSaveFood';
-import { useAddFoodEntry } from '../../hooks/useAddFoodEntry';
+import {
+  resolveSelectedVariant,
+  useAddFoodEntry,
+} from '../../hooks/useAddFoodEntry';
 import { getLocalizedMealLabel } from '../../constants/meals';
 import {
   getTodayDate,
@@ -32,7 +43,19 @@ import {
   formatDateLabel,
 } from '../../utils/dateUtils';
 import { parseOptional } from '../../types/foodInfo';
-import { createFoodVariant } from '../../services/api/foodsApi';
+import {
+  createFoodVariant,
+  deleteFoodVariant,
+  fetchFoodVariants,
+  updateFood,
+  updateFoodVariant,
+  type UpdateFoodPayload,
+} from '../../services/api/foodsApi';
+import type { FoodItem } from '../../types/foods';
+import {
+  saveNamedFoodPortions,
+  type EditableFoodPortion,
+} from '../../utils/namedFoodPortions';
 import type { FoodFormScreenProps } from '../FoodFormScreen';
 import type {
   EquivalentUnit,
@@ -41,6 +64,8 @@ import type {
 import {
   formatServingSizeDisplay,
   formatServingUnit,
+  buildCreateFoodVariantPayload,
+  servingVariantKey,
 } from '../../utils/foodDetails';
 import { buildMealIngredientDraftFromSavedFood } from '../../utils/mealBuilderDraft';
 import {
@@ -51,11 +76,14 @@ import { useNativeIOSHeadersActive } from '../../services/nativeTabBarPreference
 import { useScreenHeader } from '../../hooks/useScreenHeader';
 import { BarcodeField, BARCODE_REGEX } from './BarcodeField';
 import {
+  FOOD_VARIANT_FIELDS,
+  hasFoodFormChanges,
   buildVariantFromFormData,
   buildVariantFromInitialValues,
   confirmDiscardEquivalents,
   equivalentsDiffer,
   isBlankEquivalent,
+  invalidateFoodCaches,
 } from './persistence';
 
 type CreateFoodParams = Extract<
@@ -64,6 +92,14 @@ type CreateFoodParams = Extract<
 >;
 
 const CREATE_FORM_SOURCE_VARIANT_ID = '__create-form-source-variant__';
+
+interface FoodSaveSnapshot {
+  data: FoodFormData;
+  custom: string;
+  images: string;
+  barcode: string | null;
+  isQuickFood: boolean;
+}
 
 export function CreateFoodMode({
   params,
@@ -107,7 +143,6 @@ export function CreateFoodMode({
     if (scannedBarcodeNonce == null || pendingScannedBarcode == null) return;
     // Consume a one-shot navigation param: guarded by the nonce and paired with
     // clearing the param via setParams, so it can't move to a render-time derive.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBarcodeInput(pendingScannedBarcode);
     navigation.setParams({
       pendingScannedBarcode: undefined,
@@ -130,6 +165,19 @@ export function CreateFoodMode({
     );
 
   const [equivalentDraft, setEquivalentDraft] = useState<EquivalentUnit[]>([]);
+  const [portionDraft, setPortionDraft] = useState<EditableFoodPortion[]>([]);
+  const [isPortionSaving, setIsPortionSaving] = useState(false);
+  const savedFoodRef = useRef<FoodItem | null>(null);
+  const savedReferenceVariantIdRef = useRef<string | null>(null);
+  const savedRequestRef = useRef<FoodSaveSnapshot | null>(null);
+  const pendingFoodSaveSnapshotRef = useRef<FoodSaveSnapshot | null>(null);
+  const pendingMetadataKeysRef = useRef(new Set<keyof UpdateFoodPayload>());
+  const pendingMetadataImagesRef = useRef(false);
+  const pendingReferenceWriteRef = useRef(false);
+  const pendingCustomWriteRef = useRef(false);
+  const initialVariantIdsRef = useRef<Set<string> | null>(null);
+  const attemptedVariantKeysRef = useRef(new Set<string>());
+  const queryClient = useQueryClient();
   // Baseline is always empty for a new food — use a stable ref so it doesn't
   // need to be listed as a useEffect dependency.
   const equivalentBaselineRef = useRef<EquivalentUnit[]>([]);
@@ -267,9 +315,15 @@ export function CreateFoodMode({
   );
   const {
     addEntry,
+    addEntryAsync,
     isPending: isAddPending,
     invalidateCache,
   } = useAddFoodEntry({
+    onFoodSaved: (saved) => {
+      savedFoodRef.current = saved;
+      savedReferenceVariantIdRef.current = null;
+      savedRequestRef.current = pendingFoodSaveSnapshotRef.current;
+    },
     onSuccess: (entry) => {
       isSavingRef.current = true;
       if (entry.food_id && pendingEquivalentSaveRef.current) {
@@ -281,7 +335,7 @@ export function CreateFoodMode({
     },
   });
 
-  const isSubmitting = isAddPending || isSavePending;
+  const isSubmitting = isAddPending || isSavePending || isPortionSaving;
 
   const handleSubmit = async (data: FoodFormData) => {
     if (!data.name.trim()) {
@@ -304,6 +358,19 @@ export function CreateFoodMode({
         }),
         text2: t('createFood.errors.servingSizeRequired', {
           defaultValue: 'Serving size must be greater than zero.',
+        }),
+      });
+      return;
+    }
+    const metricUnit = getFoodPortionUnit(data.servingUnit);
+    if (
+      portionDraft.some((portion) => !portion.id && portion.unit !== metricUnit)
+    ) {
+      Toast.show({
+        type: 'error',
+        text1: t('foodForm.portions.metricReferenceRequired', {
+          defaultValue:
+            'Select a gram or milliliter serving that matches your new portions.',
         }),
       });
       return;
@@ -366,6 +433,248 @@ export function CreateFoodMode({
     const cleanEquivalents = equivalentDraft.filter(
       (eq) => !isBlankEquivalent(eq)
     );
+    const requestSnapshot: FoodSaveSnapshot = {
+      data: { ...data },
+      custom: JSON.stringify(customNutrientValues),
+      images: JSON.stringify(imageArgs ?? null),
+      barcode: resolvedBarcode,
+      isQuickFood: saveFoodPayload.is_quick_food,
+    };
+
+    const saveFoodForForm = async () => {
+      if (portionDraft.length === 0 && !savedFoodRef.current) {
+        return saveFoodAsync(saveFoodPayload, imageArgs);
+      }
+      setIsPortionSaving(true);
+      try {
+        let saved = savedFoodRef.current;
+        let source: FoodItem['default_variant'];
+        if (!saved) {
+          saved = await saveFoodAsync(saveFoodPayload, imageArgs);
+          savedFoodRef.current = saved;
+          savedRequestRef.current = requestSnapshot;
+          source = saved.default_variant;
+          savedReferenceVariantIdRef.current = source.id ?? null;
+        } else {
+          const previous = savedRequestRef.current;
+          const persistedRows = await fetchFoodVariants(saved.id);
+          const referenceId = savedReferenceVariantIdRef.current;
+          const selectedReference = referenceId
+            ? persistedRows.find((variant) => variant.id === referenceId)
+            : await resolveSelectedVariant(
+                saved.id,
+                parseDecimalInput(
+                  previous?.data.servingSize ?? data.servingSize
+                ),
+                previous?.data.servingUnit ?? data.servingUnit,
+                saved.default_variant
+              );
+          if (!selectedReference)
+            throw new Error('Saved serving could not be confirmed');
+          const persistedReference = persistedRows.find(
+            (variant) => variant.id === selectedReference.id
+          );
+          if (!persistedReference)
+            throw new Error('Saved serving could not be confirmed');
+          source = persistedReference;
+          // Keep the row identity even if a unit-changing PUT loses its response.
+          savedReferenceVariantIdRef.current = selectedReference.id;
+          const metadata: UpdateFoodPayload = {};
+          const metadataChanged = (
+            key: keyof UpdateFoodPayload,
+            changed: boolean
+          ) => changed || pendingMetadataKeysRef.current.has(key);
+          if (metadataChanged('name', data.name !== previous?.data.name))
+            metadata.name = data.name;
+          if (metadataChanged('brand', data.brand !== previous?.data.brand))
+            metadata.brand = data.brand;
+          if (metadataChanged('notes', data.notes !== previous?.data.notes))
+            metadata.notes = saveFoodPayload.notes;
+          if (metadataChanged('barcode', resolvedBarcode !== previous?.barcode))
+            metadata.barcode = resolvedBarcode;
+          if (
+            metadataChanged(
+              'is_quick_food',
+              requestSnapshot.isQuickFood !== previous?.isQuickFood
+            )
+          )
+            metadata.is_quick_food = requestSnapshot.isQuickFood;
+          const imagesChanged =
+            pendingMetadataImagesRef.current ||
+            previous?.images !== requestSnapshot.images;
+          if (Object.keys(metadata).length > 0 || imagesChanged) {
+            // A failed response may still mean the write committed. Retain only
+            // attempted fields so a later reversion can restore the user's intent.
+            for (const key of Object.keys(
+              metadata
+            ) as (keyof UpdateFoodPayload)[])
+              pendingMetadataKeysRef.current.add(key);
+            pendingMetadataImagesRef.current = imagesChanged;
+            const updated = await updateFood(
+              saved.id,
+              metadata,
+              imagesChanged ? splitPickerImages(pickerImages) : undefined
+            );
+            saved = {
+              ...saved,
+              ...updated,
+              default_variant: saved.default_variant,
+            };
+            savedFoodRef.current = saved;
+            savedRequestRef.current = {
+              ...requestSnapshot,
+              data: {
+                ...(previous?.data ?? data),
+                name: data.name,
+                brand: data.brand,
+                notes: data.notes,
+              },
+              custom: previous?.custom ?? requestSnapshot.custom,
+            };
+            pendingMetadataKeysRef.current.clear();
+            pendingMetadataImagesRef.current = false;
+          }
+          const customChanged = previous?.custom !== requestSnapshot.custom;
+          if (
+            source.id &&
+            (pendingReferenceWriteRef.current ||
+              customChanged ||
+              hasFoodFormChanges(
+                previous?.data ?? data,
+                data,
+                FOOD_VARIANT_FIELDS
+              ))
+          ) {
+            const payload = buildCreateFoodVariantPayload(saved.id, {
+              ...source,
+              ...buildVariantFromFormData(data, pendingUnitSelection),
+              custom_nutrients:
+                customChanged || pendingCustomWriteRef.current
+                  ? customNutrientValues
+                  : source.custom_nutrients,
+            });
+            pendingReferenceWriteRef.current = true;
+            pendingCustomWriteRef.current ||= customChanged;
+            await updateFoodVariant(source.id, payload);
+            pendingReferenceWriteRef.current = false;
+            pendingCustomWriteRef.current = false;
+            source = { ...source, ...payload };
+            if (source.id === saved.default_variant.id) {
+              saved = { ...saved, default_variant: source };
+            }
+          }
+          savedFoodRef.current = saved;
+          savedRequestRef.current = requestSnapshot;
+        }
+        const existing = await fetchFoodVariants(saved.id);
+        initialVariantIdsRef.current ??= new Set(
+          existing.map((variant) => variant.id)
+        );
+        const variantKey = (size: number, unit: string) =>
+          servingVariantKey({ serving_size: size, serving_unit: unit });
+        const baselineKeys = new Set(
+          existing
+            .filter((variant) => initialVariantIdsRef.current?.has(variant.id))
+            .map(servingVariantKey)
+        );
+        // Creation may resolve an existing barcode/provider food. Its saved
+        // reference stays authoritative until the user changes this form.
+        const desiredNamedKeys = new Set(
+          portionDraft.flatMap((portion) => {
+            const variant = buildNamedFoodPortion(source, portion);
+            return variant ? [servingVariantKey(variant)] : [];
+          })
+        );
+        for (const key of desiredNamedKeys)
+          attemptedVariantKeysRef.current.add(key);
+        for (const equivalent of cleanEquivalents)
+          attemptedVariantKeysRef.current.add(
+            variantKey(equivalent.serving_size, equivalent.serving_unit)
+          );
+        const mayRemove = (variant: {
+          id: string;
+          serving_size: number;
+          serving_unit: string;
+        }) =>
+          !initialVariantIdsRef.current?.has(variant.id) &&
+          attemptedVariantKeysRef.current.has(
+            variantKey(variant.serving_size, variant.serving_unit)
+          );
+        const removedIds = existing
+          .filter(
+            (variant) =>
+              mayRemove(variant) &&
+              parseNamedFoodPortion(variant.serving_unit) &&
+              !desiredNamedKeys.has(servingVariantKey(variant))
+          )
+          .map((variant) => variant.id);
+        // Reused foods keep their independently saved baseline nutrition.
+        const portionsToSave = portionDraft.flatMap((portion) => {
+          const variant = buildNamedFoodPortion(source, portion);
+          const key = variant ? servingVariantKey(variant) : null;
+          if (key && baselineKeys.has(key)) return [];
+          const match = key
+            ? existing.find((row) => servingVariantKey(row) === key)
+            : undefined;
+          return [{ ...portion, id: match?.id ?? portion.id }];
+        });
+        const confirmed = await saveNamedFoodPortions(
+          saved.id,
+          source,
+          portionsToSave,
+          removedIds
+        );
+        // Only equivalents created by this attempt are recalculated on retry.
+        for (const equivalent of cleanEquivalents) {
+          const match = confirmed.find(
+            (variant) =>
+              servingVariantKey(variant) === servingVariantKey(equivalent)
+          );
+          if (match && initialVariantIdsRef.current.has(match.id)) continue;
+          const payload = buildCreateFoodVariantPayload(saved.id, {
+            ...source,
+            serving_size: equivalent.serving_size,
+            serving_unit: equivalent.serving_unit,
+          });
+          if (match) await updateFoodVariant(match.id, payload);
+          else await createFoodVariant(payload);
+        }
+        for (const variant of confirmed) {
+          if (
+            mayRemove(variant) &&
+            variant.id !== saved.default_variant.id &&
+            !parseNamedFoodPortion(variant.serving_unit) &&
+            !cleanEquivalents.some(
+              (equivalent) =>
+                servingVariantKey(equivalent) === servingVariantKey(variant)
+            )
+          )
+            await deleteFoodVariant(variant.id);
+        }
+        const readback = await fetchFoodVariants(saved.id);
+        const readbackKeys = new Set(readback.map(servingVariantKey));
+        if (
+          [...desiredNamedKeys].some((key) => !readbackKeys.has(key)) ||
+          cleanEquivalents.some(
+            (equivalent) => !readbackKeys.has(servingVariantKey(equivalent))
+          )
+        )
+          throw new Error('Food equivalents could not be confirmed');
+        queryClient.setQueryData(['foodVariants', saved.id], readback);
+        invalidateFoodCaches(queryClient, saved.id);
+        return saved;
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: t('foodForm.portions.saveFailed', {
+            defaultValue: 'Could not save all portions. Try saving again.',
+          }),
+        });
+        throw error;
+      } finally {
+        setIsPortionSaving(false);
+      }
+    };
 
     // Schedules equivalent-variant creation after the food is saved. Fires
     // and forgets — navigation has already occurred. Any failures are shown
@@ -422,9 +731,10 @@ export function CreateFoodMode({
         return;
       }
       try {
-        const savedFood = await saveFoodAsync(saveFoodPayload, imageArgs);
+        const savedFood = await saveFoodForForm();
         isSavingRef.current = true;
-        saveEquivalentsAsync(savedFood.id);
+        if (portionDraft.length === 0 && !savedFoodRef.current)
+          saveEquivalentsAsync(savedFood.id);
         const ingredient = buildMealIngredientDraftFromSavedFood(
           savedFood,
           parseDecimalInput(data.servingSize) || 0,
@@ -453,9 +763,10 @@ export function CreateFoodMode({
 
     if (isLibraryMode) {
       try {
-        const savedFood = await saveFoodAsync(saveFoodPayload, imageArgs);
+        const savedFood = await saveFoodForForm();
         isSavingRef.current = true;
-        saveEquivalentsAsync(savedFood.id);
+        if (portionDraft.length === 0 && !savedFoodRef.current)
+          saveEquivalentsAsync(savedFood.id);
         Toast.show({
           type: 'success',
           text1: t('createFood.success.foodSaved', {
@@ -495,10 +806,34 @@ export function CreateFoodMode({
       return;
     }
 
+    if (portionDraft.length > 0 || savedFoodRef.current) {
+      // This path reconciles equivalents before logging instead of on success.
+      pendingEquivalentSaveRef.current = null;
+      try {
+        const saved = await saveFoodForForm();
+        await addEntryAsync({
+          savedFood: saved,
+          saveFoodPayload,
+          createEntryPayload: {
+            food_id: saved.id,
+            variant_id: saved.default_variant.id,
+            meal_type_id: effectiveMealId,
+            quantity,
+            unit: data.servingUnit || 'serving',
+            entry_date: selectedDate,
+          },
+        });
+      } catch {
+        // Keep this form and savedFoodRef for a retry of the same food.
+      }
+      return;
+    }
+
     // Always overwrite the ref so a stale callback from a previous failed
     // attempt can never fire on this retry with the wrong equivalents.
     pendingEquivalentSaveRef.current =
       cleanEquivalents.length > 0 ? saveEquivalentsAsync : null;
+    pendingFoodSaveSnapshotRef.current = requestSnapshot;
     // isSavingRef is set in onSuccess so it stays false if addEntry fails.
     addEntry({
       saveFoodPayload,
@@ -538,6 +873,12 @@ export function CreateFoodMode({
     },
   });
 
+  const {
+    canRetry: canRetryLabelScan,
+    retry: retryLabelScan,
+    retrying: retryingLabelScan,
+  } = useRetryLabelScan(params, navigation);
+
   return (
     <View
       className="flex-1 bg-background"
@@ -559,6 +900,13 @@ export function CreateFoodMode({
         hideSubmitButton={usesNativeHeader}
         headerChildren={
           <View className="mb-4">
+            {params.labelScanSource && (
+              <LabelScanSourceBanner
+                source={params.labelScanSource}
+                onRetry={canRetryLabelScan ? retryLabelScan : undefined}
+                busy={retryingLabelScan}
+              />
+            )}
             <FoodImagePicker
               items={pickerImages}
               onItemsChange={setPickerImages}
@@ -578,6 +926,7 @@ export function CreateFoodMode({
             : undefined
         }
         equivalents={{ items: equivalentDraft, onChange: setEquivalentDraft }}
+        portions={{ items: portionDraft, onChange: setPortionDraft }}
         onCustomNutrientsChange={setCustomNutrientValues}
       >
         {isLogEntryMode ? (

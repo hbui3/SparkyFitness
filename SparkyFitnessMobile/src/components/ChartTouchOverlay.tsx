@@ -23,6 +23,13 @@ type ChartTouchOverlayProps = {
   layout: ChartTouchLayout;
   onSelect: (index: number) => void;
   onClear?: () => void;
+  /**
+   * Fires with the raw touch point on every update once the long press has activated,
+   * independent of whether the selected zone (index) changed. Callers that need
+   * finer-grained position than the zone index -- e.g. which stacked segment a point
+   * falls in -- read this instead of `onSelect`.
+   */
+  onPointMove?: (point: TouchPoint) => void;
   testIDPrefix?: string;
 };
 
@@ -32,7 +39,7 @@ type ChartTouchZone = {
   width: number;
 };
 
-type TouchPoint = {
+export type TouchPoint = {
   x: number;
   y: number;
 };
@@ -183,6 +190,7 @@ const ChartTouchOverlay: React.FC<ChartTouchOverlayProps> = ({
   layout,
   onSelect,
   onClear,
+  onPointMove,
   testIDPrefix,
 }) => {
   const zones = useMemo(
@@ -211,6 +219,8 @@ const ChartTouchOverlay: React.FC<ChartTouchOverlayProps> = ({
     if (!point || !layout.chartBounds || !zones.length) {
       return;
     }
+
+    onPointMove?.(point);
 
     const nextIndex = findZoneIndexForPoint(
       point,

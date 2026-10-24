@@ -8,7 +8,7 @@ import {
   HistoryImportEntry,
 } from '@/types/exercises';
 import { exerciseSnapshotResponseSchema } from '@workspace/shared';
-import type { ImportFitResponse } from '@workspace/shared';
+import type { BodyFigure, ImportFitResponse } from '@workspace/shared';
 import z from 'zod';
 
 // Helper function to safely parse JSON strings that might be arrays
@@ -262,8 +262,19 @@ export const importFitFiles = async (
   }) as Promise<ImportFitResponse>;
 };
 
-export const getBodyMapSvg = async (): Promise<string> => {
-  const response = await fetch('/images/muscle-male.svg');
+// The files live in /public, so the URLs are not content-hashed. Bump a
+// figure's version when its drawing changes or browsers keep the old one.
+export const BODY_MAP_SVG_VERSION: Record<BodyFigure, string> = {
+  male: 'lats1',
+  female: 'f1',
+};
+
+export const getBodyMapSvg = async (
+  figure: BodyFigure = 'male'
+): Promise<string> => {
+  const response = await fetch(
+    `/images/muscle-${figure}.svg?v=${BODY_MAP_SVG_VERSION[figure]}`
+  );
   if (!response.ok) {
     throw new Error('Failed to fetch SVG');
   }

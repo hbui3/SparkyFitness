@@ -79,11 +79,11 @@ describe('hydrationNutritionRangeService.getHydrationNutritionRange (#2348)', ()
 
   it('handles a Date object for entry_date the same as a plain string', async () => {
     measurementRepo.getWaterTotalsByDateRange.mockResolvedValue([
-      { entry_date: new Date(Date.UTC(2026, 8, 1)), total_ml: 250 },
+      { entry_date: new Date(2026, 8, 1), total_ml: 250 },
     ]);
     reportRepo.getDailyNutritionTotalsRange.mockResolvedValue([
       {
-        entry_date: new Date(Date.UTC(2026, 8, 1)),
+        entry_date: new Date(2026, 8, 1),
         caffeine_mg: 63,
         alcohol_g: 0,
       },

@@ -17,11 +17,14 @@ import { Thread } from '@/components/thread';
 import { useToast } from '@/hooks/use-toast';
 import { useChatToolCategories } from '@/contexts/ChatToolCategoriesContext';
 import { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { FoodAssistantState } from '@/components/ai/FoodAssistantState';
 
 import { MessagePart, ImagePart, MessageMetadata } from '@/types/Chatbot_types';
 import { type UIMessage } from 'ai';
 import { resizeImageBase64 } from '@/utils/imageResize';
 
+import { useTranslation } from 'react-i18next';
 interface SparkyChatInnerProps {
   activeAIServiceSetting: {
     id: string;
@@ -40,8 +43,10 @@ const SparkyChatInner = ({
   activeAIServiceSetting,
   history,
 }: SparkyChatInnerProps) => {
+  const { t } = useTranslation();
   const invalidateDiary = useDiaryInvalidation();
   const invalidateChat = useChatInvalidation();
+  const queryClient = useQueryClient();
   const userDate = formatDateToYYYYMMDD(new Date());
   const { toast } = useToast();
 
@@ -151,13 +156,17 @@ const SparkyChatInner = ({
       // Invalidate queries to refresh diary nutrition and check-ins in real-time
       invalidateDiary();
       invalidateChat();
+      void queryClient.invalidateQueries({ queryKey: ['foodAssistant'] });
     },
     onError: (error) => {
       toast({
-        title: 'Chat Error',
+        title: t('chat.sparkyChatInterface.chatError', 'Chat Error'),
         description:
           error.message ||
-          'Failed to process message. Please check your AI service settings.',
+          t(
+            'chat.sparkyChatInterface.failedToProcessMessagePlease',
+            'Failed to process message. Please check your AI service settings.'
+          ),
         variant: 'destructive',
       });
     },
@@ -165,6 +174,19 @@ const SparkyChatInner = ({
 
   return (
     <div className="flex flex-col h-full bg-background">
+      <FoodAssistantState
+        onResume={(taskId) =>
+          runtime.thread.append({
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Continue my saved food task ${taskId}. Read its latest checkpoint before proceeding.`,
+              },
+            ],
+          })
+        }
+      />
       <div className="flex-1 overflow-hidden py-4">
         <Thread runtime={runtime} />
       </div>

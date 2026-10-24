@@ -1,16 +1,16 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachWorkoutProviderSchema = z.enum([
-  "speediance",
-  "sparky",
-  "manual",
-  "other",
+  'speediance',
+  'sparky',
+  'manual',
+  'other',
 ]);
 
 export const coachWorkoutDifficultySchema = z.enum([
-  "too_easy",
-  "just_right",
-  "too_hard",
+  'too_easy',
+  'just_right',
+  'too_hard',
 ]);
 
 export const coachExerciseFeedbackSchema = z.object({

@@ -149,9 +149,43 @@ describe('classifyActivitySport — provider-declared', () => {
       })
     ).toEqual({ sport: 'strength', confidence: 'declared' });
   });
+
+  it('treats Liftosaur as strength', () => {
+    expect(
+      classifyActivitySport({
+        providerName: 'Liftosaur',
+        detailData: { workout: { programName: 'GZCLP' } },
+      })
+    ).toEqual({ sport: 'strength', confidence: 'declared' });
+  });
+
+  it('reads the COROS sport type and fallback', () => {
+    expect(
+      classifyActivitySport({
+        providerName: 'coros_mcp',
+        detailData: { sportType: 100 },
+      })
+    ).toEqual({ sport: 'running', confidence: 'declared' });
+
+    expect(
+      classifyActivitySport({
+        providerName: 'coros_mcp',
+        detailData: { sportType: 200 },
+      })
+    ).toEqual({ sport: 'cycling', confidence: 'declared' });
+  });
 });
 
 describe('classifyActivitySport — notes templates', () => {
+  it('extracts sport from COROS notes fallback', () => {
+    expect(
+      classifyActivitySport({
+        exerciseName: 'Outdoor Run',
+        category: 'cardio',
+        notes: 'Logged from COROS: Outdoor Run (running)',
+      })
+    ).toEqual({ sport: 'running', confidence: 'inferred' });
+  });
   it('falls back to the Garmin notes typeKey when the details row is missing', () => {
     expect(
       classifyActivitySport({
@@ -230,6 +264,33 @@ describe('classifyActivitySport — free-text names', () => {
       sport: 'other',
       confidence: 'inferred',
     });
+  });
+});
+
+describe('stair workouts', () => {
+  // Apple Health names the same workout "Stair Climbing" (Fitness calls it
+  // "Stair Stepper") and has a second type, "Stairs"; the old tokens only knew
+  // "stepper", so these classified as other.
+  it.each([
+    'Stair Climbing',
+    'Stairs',
+    'StairMaster',
+    'stair_climbing',
+    'Stair Stepper',
+  ])('treats %s as fitness equipment', (name) => {
+    expect(mapRawSportValue(name)).toBe('fitness_equipment');
+    expect(classifyActivitySport({ exerciseName: name })).toEqual({
+      sport: 'fitness_equipment',
+      confidence: 'inferred',
+    });
+  });
+
+  it('still refuses to guess when a name also names another sport', () => {
+    expect(mapRawSportValue('Stairs then run')).toBe('other');
+  });
+
+  it('does not match "stair" inside unrelated words', () => {
+    expect(mapRawSportValue('Staircase repair')).toBe('other');
   });
 });
 

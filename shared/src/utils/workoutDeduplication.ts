@@ -1,4 +1,4 @@
-import { localDateTimeToUtc } from "./timezone.ts";
+import { localDateTimeToUtc } from './timezone.ts';
 
 export interface WorkoutDeduplicationCandidate {
   id: string;
@@ -20,16 +20,16 @@ interface ActivityTimeWindow {
 }
 
 const MOBILE_MIRROR_SOURCES = new Set([
-  "healthkit",
-  "health connect",
-  "apple health",
+  'healthkit',
+  'health connect',
+  'apple health',
 ]);
 const PREFERRED_RAW_SOURCES = new Set([
-  "speediance",
-  "igpsport",
-  "garmin",
-  "garmin_fit",
-  "strava",
+  'speediance',
+  'igpsport',
+  'garmin',
+  'garmin_fit',
+  'strava',
 ]);
 const MINIMUM_OVERLAP_RATIO = 0.8;
 
@@ -41,7 +41,7 @@ function parseInstant(value: string | null | undefined): number | null {
 
 function candidateWindow(
   candidate: WorkoutDeduplicationCandidate,
-  timezone: string,
+  timezone: string
 ): ActivityTimeWindow | null {
   const explicitStart = parseInstant(candidate.activityStartedAt);
   let localStart = Number.NaN;
@@ -49,10 +49,10 @@ function candidateWindow(
     try {
       const minutePrecisionStart = localDateTimeToUtc(
         candidate.activityStartedAtLocal,
-        timezone,
+        timezone
       ).getTime();
       const secondsMatch = /T\d{2}:\d{2}:(\d{2}(?:\.\d+)?)/.exec(
-        candidate.activityStartedAtLocal,
+        candidate.activityStartedAtLocal
       );
       localStart = minutePrecisionStart + Number(secondsMatch?.[1] ?? 0) * 1000;
     } catch {
@@ -75,7 +75,7 @@ function candidateWindow(
 
 function substantiallyOverlaps(
   first: ActivityTimeWindow,
-  second: ActivityTimeWindow,
+  second: ActivityTimeWindow
 ): boolean {
   const overlapMs =
     Math.min(first.endMs, second.endMs) -
@@ -83,7 +83,7 @@ function substantiallyOverlaps(
   if (overlapMs <= 0) return false;
   const shorterDurationMs = Math.min(
     first.endMs - first.startMs,
-    second.endMs - second.startMs,
+    second.endMs - second.startMs
   );
   return (
     shorterDurationMs > 0 &&
@@ -98,11 +98,11 @@ function substantiallyOverlaps(
  */
 export function findMirroredWorkoutDuplicates(
   candidates: WorkoutDeduplicationCandidate[],
-  timezone: string,
+  timezone: string
 ): MirroredWorkoutDuplicate[] {
   const preferred = candidates
     .filter((candidate) =>
-      PREFERRED_RAW_SOURCES.has(candidate.source?.toLowerCase() ?? ""),
+      PREFERRED_RAW_SOURCES.has(candidate.source?.toLowerCase() ?? '')
     )
     .map((candidate) => ({
       candidate,
@@ -110,22 +110,22 @@ export function findMirroredWorkoutDuplicates(
     }))
     .filter(
       (
-        item,
+        item
       ): item is {
         candidate: WorkoutDeduplicationCandidate;
         window: ActivityTimeWindow;
-      } => item.window !== null,
+      } => item.window !== null
     );
 
   const duplicates: MirroredWorkoutDuplicate[] = [];
   for (const candidate of candidates) {
-    if (!MOBILE_MIRROR_SOURCES.has(candidate.source?.toLowerCase() ?? "")) {
+    if (!MOBILE_MIRROR_SOURCES.has(candidate.source?.toLowerCase() ?? '')) {
       continue;
     }
     const window = candidateWindow(candidate, timezone);
     if (!window) continue;
     const match = preferred.find((item) =>
-      substantiallyOverlaps(window, item.window),
+      substantiallyOverlaps(window, item.window)
     );
     if (match) {
       duplicates.push({

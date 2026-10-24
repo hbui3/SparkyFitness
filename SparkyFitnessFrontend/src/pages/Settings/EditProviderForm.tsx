@@ -10,7 +10,8 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Clipboard } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { RoutingProviderFields } from './RoutingProviderFields';
+import { Trans, useTranslation } from 'react-i18next';
 import type { ExternalDataProvider } from './ExternalProviderSettings';
 import { toast } from '@/hooks/use-toast';
 import { useExternalProviderTypesQuery } from '@/hooks/Settings/useExternalProviderSettings';
@@ -51,7 +52,9 @@ export const EditProviderForm = ({
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <Label>Provider Name</Label>
+          <Label>
+            {t('settings.editProviderForm.providerName', 'Provider Name')}
+          </Label>
           <Input
             value={editData.provider_name || ''}
             onChange={(e) =>
@@ -63,7 +66,9 @@ export const EditProviderForm = ({
           />
         </div>
         <div>
-          <Label>Provider Type</Label>
+          <Label>
+            {t('settings.editProviderForm.providerType', 'Provider Type')}
+          </Label>
           <Select
             value={editData.provider_type || ''}
             onValueChange={(value) =>
@@ -77,7 +82,9 @@ export const EditProviderForm = ({
                     ? 'https://euapi.speediance.com'
                     : value === 'igpsport'
                       ? 'https://prod.en.igpsport.com'
-                      : '',
+                      : value === 'coros_mcp'
+                        ? 'https://mcpus.coros.com/mcp'
+                        : '',
                 garmin_connect_status: 'disconnected',
                 garmin_last_status_check: '',
                 garmin_token_expires: '',
@@ -135,7 +142,10 @@ export const EditProviderForm = ({
           </p>
           <div>
             <Label htmlFor="edit-openfoodfacts-username">
-              Open Food Facts Username (Optional)
+              {t(
+                'settings.editProviderForm.openFoodFactsUsernameOptional',
+                'Open Food Facts Username (Optional)'
+              )}
             </Label>
             <Input
               id="edit-openfoodfacts-username"
@@ -147,14 +157,20 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="(leave blank to keep existing)"
+              placeholder={t(
+                'settings.editProviderForm.leaveBlankToKeepExisting',
+                '(leave blank to keep existing)'
+              )}
               autoComplete="username"
               aria-describedby="edit-openfoodfacts-credential-help"
             />
           </div>
           <div>
             <Label htmlFor="edit-openfoodfacts-password">
-              Open Food Facts Password (Optional)
+              {t(
+                'settings.editProviderForm.openFoodFactsPasswordOptional',
+                'Open Food Facts Password (Optional)'
+              )}
             </Label>
             <Input
               id="edit-openfoodfacts-password"
@@ -166,7 +182,10 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="•••••••• (leave blank to keep existing)"
+              placeholder={t(
+                'settings.editProviderForm.leaveBlankToKeepExisting2',
+                '•••••••• (leave blank to keep existing)'
+              )}
               autoComplete="current-password"
               aria-describedby="edit-openfoodfacts-credential-help"
             />
@@ -183,36 +202,52 @@ export const EditProviderForm = ({
             )}
           </p>
           <p className="text-sm text-muted-foreground col-span-2">
-            Open Food Facts is a community-driven database that supports
-            localization. Sparky automatically queries products in your active
-            language setting in SparkyFitness. For more information, visit the{' '}
-            <a
-              href="https://world.openfoodfacts.org/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline font-medium"
-            >
-              Open Food Facts Portal
-            </a>{' '}
-            or learn about language support in the{' '}
-            <a
-              href="https://en.wiki.openfoodfacts.org/Translations"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline font-medium"
-            >
-              Open Food Facts Translations Wiki
-            </a>
-            .
+            <Trans
+              i18nKey="settings.editProviderForm.openFoodFactsIsA2"
+              defaults={
+                'Open Food Facts is a community-driven database that supports localization. Sparky automatically queries products in your active language setting in SparkyFitness. For more information, visit the <link>Open Food Facts Portal</link> or learn about language support in the <link2>Open Food Facts Translations Wiki</link2>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://world.openfoodfacts.org/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+                link2: (
+                  <a
+                    href="https://en.wiki.openfoodfacts.org/Translations"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+              }}
+            />
           </p>
         </>
+      )}
+      {editData.provider_type === 'valhalla' && (
+        <RoutingProviderFields
+          idPrefix="edit"
+          baseUrl={editData.base_url}
+          appKey={editData.app_key}
+          onBaseUrlChange={(value) =>
+            setEditData((prev) => ({ ...prev, base_url: value }))
+          }
+          onAppKeyChange={(value) =>
+            setEditData((prev) => ({ ...prev, app_key: value }))
+          }
+        />
       )}
       {(editData.provider_type === 'mealie' ||
         editData.provider_type === 'tandoor' ||
         editData.provider_type === 'norish') && (
         <>
           <div>
-            <Label>App URL</Label>
+            <Label>{t('settings.editProviderForm.appURL', 'App URL')}</Label>
             <Input
               type="text"
               value={editData.base_url || ''}
@@ -224,16 +259,25 @@ export const EditProviderForm = ({
               }
               placeholder={
                 editData.provider_type === 'norish'
-                  ? 'e.g., https://norish.your-domain.com'
+                  ? t(
+                      'settings.editProviderForm.eGHttpsNorishYour',
+                      'e.g., https://norish.your-domain.com'
+                    )
                   : editData.provider_type === 'tandoor'
-                    ? 'e.g., http://your-tandoor-instance.com'
-                    : 'e.g., http://your-mealie-instance.com'
+                    ? t(
+                        'settings.editProviderForm.eGHttpYourTandoor',
+                        'e.g., http://your-tandoor-instance.com'
+                      )
+                    : t(
+                        'settings.editProviderForm.eGHttpYourMealie',
+                        'e.g., http://your-mealie-instance.com'
+                      )
               }
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>API Key</Label>
+            <Label>{t('settings.editProviderForm.apiKey', 'API Key')}</Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -245,10 +289,19 @@ export const EditProviderForm = ({
               }
               placeholder={
                 editData.provider_type === 'norish'
-                  ? 'Enter Norish API Key'
+                  ? t(
+                      'settings.editProviderForm.enterNorishAPIKey',
+                      'Enter Norish API Key'
+                    )
                   : editData.provider_type === 'tandoor'
-                    ? 'Enter Tandoor API Key'
-                    : 'Enter Mealie API Key'
+                    ? t(
+                        'settings.editProviderForm.enterTandoorAPIKey',
+                        'Enter Tandoor API Key'
+                      )
+                    : t(
+                        'settings.editProviderForm.enterMealieAPIKey',
+                        'Enter Mealie API Key'
+                      )
               }
               autoComplete="off"
             />
@@ -259,7 +312,11 @@ export const EditProviderForm = ({
         editData.provider_type === 'fatsecret') && (
         <>
           <div>
-            <Label>{isFatsecret ? 'Client ID' : 'App ID'}</Label>
+            <Label>
+              {isFatsecret
+                ? t('settings.editProviderForm.clientID', 'Client ID')
+                : t('settings.editProviderForm.appID', 'App ID')}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -269,12 +326,23 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder={isFatsecret ? 'Enter Client ID' : 'Enter App ID'}
+              placeholder={
+                isFatsecret
+                  ? t(
+                      'settings.editProviderForm.enterClientID',
+                      'Enter Client ID'
+                    )
+                  : t('settings.editProviderForm.enterAppID', 'Enter App ID')
+              }
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>{isFatsecret ? 'Client Secret' : 'App Key'}</Label>
+            <Label>
+              {isFatsecret
+                ? t('settings.editProviderForm.clientSecret', 'Client Secret')
+                : t('settings.editProviderForm.appKey', 'App Key')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -285,16 +353,25 @@ export const EditProviderForm = ({
                 }))
               }
               placeholder={
-                isFatsecret ? 'Enter Client Secret' : 'Enter App Key'
+                isFatsecret
+                  ? t(
+                      'settings.editProviderForm.enterClientSecret',
+                      'Enter Client Secret'
+                    )
+                  : t('settings.editProviderForm.enterAppKey', 'Enter App Key')
               }
               autoComplete="off"
             />
           </div>
           {editData.provider_type === 'fatsecret' && (
             <p className="text-sm text-muted-foreground col-span-2">
-              Note: For Fatsecret, you need to set up{' '}
-              <strong>your public IP</strong> whitelisting in your Fatsecret
-              developer account. This process can take up to 24 hours.
+              <Trans
+                i18nKey="settings.editProviderForm.noteForFatsecretYouNeed2"
+                defaults={
+                  'Note: For Fatsecret, you need to set up <strong>your public IP</strong> whitelisting in your Fatsecret developer account. This process can take up to 24 hours.'
+                }
+                components={{ strong: <strong /> }}
+              />
             </p>
           )}
         </>
@@ -304,32 +381,59 @@ export const EditProviderForm = ({
           <div className="col-span-2">
             <div className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-3 space-y-1.5">
               <p className="text-sm font-semibold text-red-800 dark:text-red-200">
-                ⚠️ Unofficial API — Use at your own risk
+                {t(
+                  'settings.editProviderForm.unofficialAPIUseAtYour',
+                  '⚠️ Unofficial API — Use at your own risk'
+                )}
               </p>
               <p className="text-sm text-red-700 dark:text-red-300">
-                YAZIO integration uses an{' '}
-                <strong>unofficial, undocumented API</strong> that is not
-                provided or endorsed by YAZIO. Using it may{' '}
-                <strong>risk getting your YAZIO account banned</strong>. The API
-                could also <strong>stop working at any time</strong> without
-                notice if YAZIO changes their backend.
+                <Trans
+                  i18nKey="settings.editProviderForm.yazioIntegrationUsesAnUnofficial"
+                  defaults={
+                    'YAZIO integration uses an <strong>unofficial, undocumented API</strong> that is not provided or endorsed by YAZIO. Using it may <strong2>risk getting your YAZIO account banned</strong2>. The API could also <strong3>stop working at any time</strong3> without notice if YAZIO changes their backend.'
+                  }
+                  components={{
+                    strong: <strong />,
+                    strong2: <strong />,
+                    strong3: <strong />,
+                  }}
+                />
               </p>
               <p className="text-sm text-red-700 dark:text-red-300">
-                For more information & client credentials, see{' '}
-                <a
-                  href="https://github.com/saganos/yazio_public_api"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-red-800 dark:text-red-200 underline font-medium"
-                >
-                  saganos/yazio_public_api
-                </a>
-                .
+                <Trans
+                  i18nKey="settings.editProviderForm.forMoreInformationClientCredentials2"
+                  defaults={
+                    'For more information & client credentials, see <1>saganos/yazio_public_api</1>.'
+                  }
+                  components={{
+                    1: (
+                      <a
+                        href="https://github.com/saganos/yazio_public_api"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-red-800 dark:text-red-200 underline font-medium"
+                      />
+                    ),
+                    link: (
+                      <a
+                        href="https://github.com/saganos/yazio_public_api"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-red-800 dark:text-red-200 underline font-medium"
+                      />
+                    ),
+                  }}
+                />
               </p>
             </div>
           </div>
           <div>
-            <Label>YAZIO Email / Username (Optional)</Label>
+            <Label>
+              {t(
+                'settings.editProviderForm.yazioEmailUsernameOptional',
+                'YAZIO Email / Username (Optional)'
+              )}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -339,12 +443,20 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="Enter YAZIO email or username"
+              placeholder={t(
+                'settings.editProviderForm.enterYAZIOEmailOrUsername',
+                'Enter YAZIO email or username'
+              )}
               autoComplete="username"
             />
           </div>
           <div>
-            <Label>YAZIO Password (Optional)</Label>
+            <Label>
+              {t(
+                'settings.editProviderForm.yazioPasswordOptional',
+                'YAZIO Password (Optional)'
+              )}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -354,16 +466,23 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Leave blank to keep existing password"
+              placeholder={t(
+                'settings.editProviderForm.leaveBlankToKeepExisting3',
+                'Leave blank to keep existing password'
+              )}
               autoComplete="current-password"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Email and password are optional. Only Client ID and Client Secret
-            are required.
+            {t(
+              'settings.editProviderForm.emailAndPasswordAreOptional',
+              'Email and password are optional. Only Client ID and Client Secret are required.'
+            )}
           </p>
           <div>
-            <Label>YAZIO Client ID</Label>
+            <Label>
+              {t('settings.editProviderForm.yazioClientID', 'YAZIO Client ID')}
+            </Label>
             <Input
               type="text"
               value={editData.yazio_client_id || ''}
@@ -373,12 +492,20 @@ export const EditProviderForm = ({
                   yazio_client_id: e.target.value,
                 }))
               }
-              placeholder="Enter YAZIO Client ID"
+              placeholder={t(
+                'settings.editProviderForm.enterYAZIOClientID',
+                'Enter YAZIO Client ID'
+              )}
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>YAZIO Client Secret</Label>
+            <Label>
+              {t(
+                'settings.editProviderForm.yazioClientSecret',
+                'YAZIO Client Secret'
+              )}
+            </Label>
             <Input
               type="password"
               value={editData.yazio_client_secret || ''}
@@ -388,7 +515,10 @@ export const EditProviderForm = ({
                   yazio_client_secret: e.target.value,
                 }))
               }
-              placeholder="Leave blank to keep existing client secret"
+              placeholder={t(
+                'settings.editProviderForm.leaveBlankToKeepExisting4',
+                'Leave blank to keep existing client secret'
+              )}
               autoComplete="off"
             />
           </div>
@@ -396,37 +526,49 @@ export const EditProviderForm = ({
       )}
       {editData.provider_type === 'nutritionix' && (
         <p className="text-sm text-muted-foreground col-span-2">
-          Get your App ID and App Key from the{' '}
-          <a
-            href="https://developer.nutritionix.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 underline"
-          >
-            Nutritionix Developer Portal
-          </a>
-          .
+          <Trans
+            i18nKey="settings.editProviderForm.getYourAppIDAnd2"
+            defaults={
+              'Get your App ID and App Key from the <link>Nutritionix Developer Portal</link>.'
+            }
+            components={{
+              link: (
+                <a
+                  href="https://developer.nutritionix.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 underline"
+                />
+              ),
+            }}
+          />
         </p>
       )}
       {editData.provider_type === 'fatsecret' && (
         <p className="text-sm text-muted-foreground col-span-2">
-          Get your Client ID and Client Secret from the{' '}
-          <a
-            href="https://platform.fatsecret.com/my-account/dashboard"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 underline"
-          >
-            Fatsecret Platform Dashboard
-          </a>
-          , under <strong>REST API OAuth 2.0 Credentials</strong> (not the OAuth
-          1.0 Consumer Key/Secret).
+          <Trans
+            i18nKey="settings.editProviderForm.getYourClientIDAnd2"
+            defaults={
+              'Get your Client ID and Client Secret from the <link>Fatsecret Platform Dashboard</link>, under <strong>REST API OAuth 2.0 Credentials</strong> (not the OAuth 1.0 Consumer Key/Secret).'
+            }
+            components={{
+              link: (
+                <a
+                  href="https://platform.fatsecret.com/my-account/dashboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 underline"
+                />
+              ),
+              strong: <strong />,
+            }}
+          />
         </p>
       )}
       {editData.provider_type === 'usda' && (
         <>
           <div>
-            <Label>API Key</Label>
+            <Label>{t('settings.editProviderForm.apiKey', 'API Key')}</Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -436,28 +578,39 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter USDA API Key"
+              placeholder={t(
+                'settings.editProviderForm.enterUSDAAPIKey',
+                'Enter USDA API Key'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Get your API Key from the{' '}
-            <a
-              href="https://fdc.nal.usda.gov/api-guide.html"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 underline"
-            >
-              USDA FoodData Central API Guide
-            </a>
-            .
+            <Trans
+              i18nKey="settings.editProviderForm.getYourAPIKeyFrom3"
+              defaults={
+                'Get your API Key from the <link>USDA FoodData Central API Guide</link>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://fdc.nal.usda.gov/api-guide.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline"
+                  />
+                ),
+              }}
+            />
           </p>
         </>
       )}
       {editData.provider_type === 'withings' && (
         <>
           <div>
-            <Label>Client ID</Label>
+            <Label>
+              {t('settings.editProviderForm.clientID', 'Client ID')}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -467,12 +620,17 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="Enter Withings Client ID"
+              placeholder={t(
+                'settings.editProviderForm.enterWithingsClientID',
+                'Enter Withings Client ID'
+              )}
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>Client Secret</Label>
+            <Label>
+              {t('settings.editProviderForm.clientSecret', 'Client Secret')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -482,24 +640,31 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter Withings Client Secret"
+              placeholder={t(
+                'settings.editProviderForm.enterWithingsClientSecret',
+                'Enter Withings Client Secret'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Withings integration uses OAuth2. You will be redirected to Withings
-            to authorize access after adding the provider.
-            <br />
-            In your{' '}
-            <a
-              href="https://developer.withings.com/dashboard/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 underline"
-            >
-              Withings Developer Dashboard
-            </a>
-            , you must set your callback URL to:
+            <Trans
+              i18nKey="settings.editProviderForm.withingsIntegrationUsesOAuth2You2"
+              defaults={
+                'Withings integration uses OAuth2. You will be redirected to Withings to authorize access after adding the provider.<br/>In your <link>Withings Developer Dashboard</link>, you must set your callback URL to:'
+              }
+              components={{
+                br: <br />,
+                link: (
+                  <a
+                    href="https://developer.withings.com/dashboard/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline"
+                  />
+                ),
+              }}
+            />
             <strong className="flex items-center">
               {`${window.location.origin}/withings/callback`}
               <Button
@@ -512,8 +677,11 @@ export const EditProviderForm = ({
                     `${window.location.origin}/withings/callback`
                   );
                   toast({
-                    title: 'Copied!',
-                    description: 'Callback URL copied to clipboard.',
+                    title: t('common.copied', 'Copied!'),
+                    description: t(
+                      'settings.editProviderForm.callbackURLCopiedToClipboard',
+                      'Callback URL copied to clipboard.'
+                    ),
                   });
                 }}
               >
@@ -531,17 +699,26 @@ export const EditProviderForm = ({
             <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
               <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
                 <div className="h-2 w-2 bg-green-500 rounded-full"></div>
-                <span className="font-medium">Connected to Garmin</span>
+                <span className="font-medium">
+                  {t(
+                    'settings.editProviderForm.connectedToGarmin',
+                    'Connected to Garmin'
+                  )}
+                </span>
               </div>
               <p className="text-sm text-muted-foreground mt-2">
-                Your Garmin account is connected. To reconnect with different
-                credentials, disconnect first and add a new provider.
+                {t(
+                  'settings.editProviderForm.yourGarminAccountIsConnected',
+                  'Your Garmin account is connected. To reconnect with different credentials, disconnect first and add a new provider.'
+                )}
               </p>
             </div>
           ) : (
             <>
               <div>
-                <Label>Garmin Email</Label>
+                <Label>
+                  {t('settings.editProviderForm.garminEmail', 'Garmin Email')}
+                </Label>
                 <Input
                   type="email"
                   value={editData.app_id || ''}
@@ -551,12 +728,20 @@ export const EditProviderForm = ({
                       app_id: e.target.value,
                     }))
                   }
-                  placeholder="Enter Garmin Email"
+                  placeholder={t(
+                    'settings.editProviderForm.enterGarminEmail',
+                    'Enter Garmin Email'
+                  )}
                   autoComplete="username"
                 />
               </div>
               <div>
-                <Label>Garmin Password</Label>
+                <Label>
+                  {t(
+                    'settings.editProviderForm.garminPassword',
+                    'Garmin Password'
+                  )}
+                </Label>
                 <Input
                   type="password"
                   value={editData.app_key || ''}
@@ -566,17 +751,21 @@ export const EditProviderForm = ({
                       app_key: e.target.value,
                     }))
                   }
-                  placeholder="Enter Garmin Password"
+                  placeholder={t(
+                    'settings.editProviderForm.enterGarminPassword',
+                    'Enter Garmin Password'
+                  )}
                   autoComplete="current-password"
                 />
               </div>
               <p className="text-sm text-muted-foreground col-span-2">
-                Note: Garmin Connect integration is tested with few metrics
-                only. Ensure your Docker Compose is updated to include Garmin
-                section.
-                <br />
-                Sparky Fitness does not store your Garmin email or password.
-                They are used only during login to obtain secure tokens.
+                <Trans
+                  i18nKey="settings.editProviderForm.noteGarminConnectIntegrationIs2"
+                  defaults={
+                    'Note: Garmin Connect integration is tested with few metrics only. Ensure your Docker Compose is updated to include Garmin section.<br/>Sparky Fitness does not store your Garmin email or password. They are used only during login to obtain secure tokens.'
+                  }
+                  components={{ br: <br /> }}
+                />
               </p>
             </>
           )}
@@ -585,7 +774,9 @@ export const EditProviderForm = ({
       {editData.provider_type === 'fitbit' && (
         <>
           <div>
-            <Label>Client ID</Label>
+            <Label>
+              {t('settings.editProviderForm.clientID', 'Client ID')}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -595,12 +786,17 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="Enter Fitbit Client ID"
+              placeholder={t(
+                'settings.editProviderForm.enterFitbitClientID',
+                'Enter Fitbit Client ID'
+              )}
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>Client Secret</Label>
+            <Label>
+              {t('settings.editProviderForm.clientSecret', 'Client Secret')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -610,24 +806,31 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter Fitbit Client Secret"
+              placeholder={t(
+                'settings.editProviderForm.enterFitbitClientSecret',
+                'Enter Fitbit Client Secret'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Fitbit integration uses OAuth2. You will be redirected to Fitbit to
-            authorize access after adding the provider.
-            <br />
-            In your{' '}
-            <a
-              href="https://dev.fitbit.com/apps"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 underline"
-            >
-              Fitbit Developer Dashboard
-            </a>
-            , you must set your callback URL to:
+            <Trans
+              i18nKey="settings.editProviderForm.fitbitIntegrationUsesOAuth2You2"
+              defaults={
+                'Fitbit integration uses OAuth2. You will be redirected to Fitbit to authorize access after adding the provider.<br/>In your <link>Fitbit Developer Dashboard</link>, you must set your callback URL to:'
+              }
+              components={{
+                br: <br />,
+                link: (
+                  <a
+                    href="https://dev.fitbit.com/apps"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline"
+                  />
+                ),
+              }}
+            />
             <strong className="flex items-center">
               {`${window.location.origin}/fitbit/callback`}
               <Button
@@ -640,8 +843,11 @@ export const EditProviderForm = ({
                     `${window.location.origin}/fitbit/callback`
                   );
                   toast({
-                    title: 'Copied!',
-                    description: 'Callback URL copied to clipboard.',
+                    title: t('common.copied', 'Copied!'),
+                    description: t(
+                      'settings.editProviderForm.callbackURLCopiedToClipboard',
+                      'Callback URL copied to clipboard.'
+                    ),
                   });
                 }}
               >
@@ -654,7 +860,9 @@ export const EditProviderForm = ({
       {editData.provider_type === 'oura' && (
         <>
           <div>
-            <Label>Client ID</Label>
+            <Label>
+              {t('settings.editProviderForm.clientID', 'Client ID')}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -664,12 +872,17 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="Enter Oura Client ID"
+              placeholder={t(
+                'settings.editProviderForm.enterOuraClientID',
+                'Enter Oura Client ID'
+              )}
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>Client Secret</Label>
+            <Label>
+              {t('settings.editProviderForm.clientSecret', 'Client Secret')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -679,24 +892,31 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter Oura Client Secret"
+              placeholder={t(
+                'settings.editProviderForm.enterOuraClientSecret',
+                'Enter Oura Client Secret'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Oura integration uses OAuth2. You will be redirected to Oura to
-            authorize access after adding the provider.
-            <br />
-            In your{' '}
-            <a
-              href="https://developer.ouraring.com/applications"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 underline"
-            >
-              Oura Developer Portal
-            </a>
-            , you must set your callback URL to:
+            <Trans
+              i18nKey="settings.editProviderForm.ouraIntegrationUsesOAuth2You2"
+              defaults={
+                'Oura integration uses OAuth2. You will be redirected to Oura to authorize access after adding the provider.<br/>In your <link>Oura Developer Portal</link>, you must set your callback URL to:'
+              }
+              components={{
+                br: <br />,
+                link: (
+                  <a
+                    href="https://developer.ouraring.com/applications"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline"
+                  />
+                ),
+              }}
+            />
             <strong className="flex items-center">
               {`${window.location.origin}/oura/callback`}
               <Button
@@ -709,8 +929,11 @@ export const EditProviderForm = ({
                     `${window.location.origin}/oura/callback`
                   );
                   toast({
-                    title: 'Copied!',
-                    description: 'Callback URL copied to clipboard.',
+                    title: t('common.copied', 'Copied!'),
+                    description: t(
+                      'settings.editProviderForm.callbackURLCopiedToClipboard',
+                      'Callback URL copied to clipboard.'
+                    ),
                   });
                 }}
               >
@@ -723,7 +946,9 @@ export const EditProviderForm = ({
       {editData.provider_type === 'strava' && (
         <>
           <div>
-            <Label>Client ID</Label>
+            <Label>
+              {t('settings.editProviderForm.clientID', 'Client ID')}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -733,12 +958,17 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="Enter Strava Client ID"
+              placeholder={t(
+                'settings.editProviderForm.enterStravaClientID',
+                'Enter Strava Client ID'
+              )}
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>Client Secret</Label>
+            <Label>
+              {t('settings.editProviderForm.clientSecret', 'Client Secret')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -748,24 +978,31 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter Strava Client Secret"
+              placeholder={t(
+                'settings.editProviderForm.enterStravaClientSecret',
+                'Enter Strava Client Secret'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Strava integration uses OAuth2. You will be redirected to Strava to
-            authorize access after adding or updating the provider.
-            <br />
-            In your{' '}
-            <a
-              href="https://www.strava.com/settings/api"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 underline"
-            >
-              Strava API Dashboard
-            </a>
-            , you must set your "Authorization Callback Domain" to:
+            <Trans
+              i18nKey="settings.editProviderForm.stravaIntegrationUsesOAuth2You2"
+              defaults={
+                'Strava integration uses OAuth2. You will be redirected to Strava to authorize access after adding or updating the provider.<br/>In your <link>Strava API Dashboard</link>, you must set your "Authorization Callback Domain" to:'
+              }
+              components={{
+                br: <br />,
+                link: (
+                  <a
+                    href="https://www.strava.com/settings/api"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline"
+                  />
+                ),
+              }}
+            />
             <strong className="flex items-center">
               {window.location.hostname}
               <Button
@@ -776,24 +1013,40 @@ export const EditProviderForm = ({
                   e.preventDefault();
                   navigator.clipboard.writeText(window.location.hostname);
                   toast({
-                    title: 'Copied!',
-                    description: 'Domain copied to clipboard.',
+                    title: t('common.copied', 'Copied!'),
+                    description: t(
+                      'settings.editProviderForm.domainCopiedToClipboard',
+                      'Domain copied to clipboard.'
+                    ),
                   });
                 }}
               >
                 <Clipboard className="h-4 w-4" />
               </Button>
             </strong>
-            and ensuring your local URL is correct if testing locally. Note:
-            Strava callback URL on the server is configured to:
-            <strong>{`${window.location.origin}/strava/callback`}</strong>
+            <span className="block">
+              {t(
+                'settings.editProviderForm.ensureLocalUrl',
+                'Also ensure your local URL is correct if testing locally.'
+              )}
+            </span>
+            <Trans
+              i18nKey="settings.editProviderForm.stravaCallbackNote"
+              defaults={
+                'Note: Strava callback URL on the server is configured to: <strong>{{value}}</strong>'
+              }
+              values={{ value: `${window.location.origin}/strava/callback` }}
+              components={{ strong: <strong /> }}
+            />
           </p>
         </>
       )}
       {editData.provider_type === 'googlehealth' && (
         <>
           <div>
-            <Label>Client ID</Label>
+            <Label>
+              {t('settings.editProviderForm.clientID', 'Client ID')}
+            </Label>
             <Input
               type="text"
               value={editData.app_id || ''}
@@ -803,12 +1056,17 @@ export const EditProviderForm = ({
                   app_id: e.target.value,
                 }))
               }
-              placeholder="Enter Google Cloud Client ID"
+              placeholder={t(
+                'settings.editProviderForm.enterGoogleCloudClientID',
+                'Enter Google Cloud Client ID'
+              )}
               autoComplete="off"
             />
           </div>
           <div>
-            <Label>Client Secret</Label>
+            <Label>
+              {t('settings.editProviderForm.clientSecret', 'Client Secret')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -818,24 +1076,32 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter Google Cloud Client Secret"
+              placeholder={t(
+                'settings.editProviderForm.enterGoogleCloudClientSecret',
+                'Enter Google Cloud Client Secret'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Google Health integration uses OAuth2. After saving, click{' '}
-            <strong>Connect</strong> on the provider card to authorize access.
-            <br />
-            In your{' '}
-            <a
-              href="https://console.cloud.google.com/apis/credentials"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 underline"
-            >
-              Google Cloud Console
-            </a>
-            , your OAuth 2.0 Web Application client must have this callback URL:
+            <Trans
+              i18nKey="settings.editProviderForm.googleHealthIntegrationUsesOAuth22"
+              defaults={
+                'Google Health integration uses OAuth2. After saving, click <strong>Connect</strong> on the provider card to authorize access.<br/>In your <link>Google Cloud Console</link>, your OAuth 2.0 Web Application client must have this callback URL:'
+              }
+              components={{
+                strong: <strong />,
+                br: <br />,
+                link: (
+                  <a
+                    href="https://console.cloud.google.com/apis/credentials"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline"
+                  />
+                ),
+              }}
+            />
             <strong className="flex items-center mt-1">
               {`${window.location.origin}/googlehealth/callback`}
               <Button
@@ -849,14 +1115,22 @@ export const EditProviderForm = ({
                       `${window.location.origin}/googlehealth/callback`
                     );
                     toast({
-                      title: 'Copied!',
-                      description: 'Callback URL copied to clipboard.',
+                      title: t('common.copied', 'Copied!'),
+                      description: t(
+                        'settings.editProviderForm.callbackURLCopiedToClipboard',
+                        'Callback URL copied to clipboard.'
+                      ),
                     });
                   } else {
                     toast({
-                      title: 'Copy Failed',
-                      description:
-                        'Clipboard access requires a secure context (HTTPS).',
+                      title: t(
+                        'settings.editProviderForm.copyFailed',
+                        'Copy Failed'
+                      ),
+                      description: t(
+                        'settings.editProviderForm.clipboardAccessRequiresASecure',
+                        'Clipboard access requires a secure context (HTTPS).'
+                      ),
                       variant: 'destructive',
                     });
                   }
@@ -871,7 +1145,9 @@ export const EditProviderForm = ({
       {editData.provider_type === 'hevy' && (
         <>
           <div>
-            <Label>Hevy API Key</Label>
+            <Label>
+              {t('settings.editProviderForm.hevyAPIKey', 'Hevy API Key')}
+            </Label>
             <Input
               type="password"
               value={editData.app_key || ''}
@@ -881,12 +1157,54 @@ export const EditProviderForm = ({
                   app_key: e.target.value,
                 }))
               }
-              placeholder="Enter Hevy API Key"
+              placeholder={t(
+                'settings.editProviderForm.enterHevyAPIKey',
+                'Enter Hevy API Key'
+              )}
               autoComplete="off"
             />
           </div>
           <p className="text-sm text-muted-foreground col-span-2">
-            Get your API Key from Hevy Settings &#62; API Key.
+            {t(
+              'settings.editProviderForm.getYourAPIKeyFrom2',
+              'Get your API Key from Hevy Settings > API Key.'
+            )}
+          </p>
+        </>
+      )}
+      {editData.provider_type === 'liftosaur' && (
+        <>
+          <div>
+            <Label>
+              {t(
+                'settings.editProviderForm.liftosaurAPIKey',
+                'Liftosaur API Key'
+              )}
+            </Label>
+            <Input
+              type="password"
+              value={editData.app_key || ''}
+              onChange={(e) =>
+                setEditData((prev) => ({
+                  ...prev,
+                  app_key: e.target.value,
+                }))
+              }
+              placeholder={t(
+                'settings.editProviderForm.enterLiftosaurAPIKeyLftsk',
+                'Enter Liftosaur API Key (lftsk_...)'
+              )}
+              autoComplete="off"
+            />
+          </div>
+          <p className="text-sm text-muted-foreground col-span-2">
+            <Trans
+              i18nKey="settings.editProviderForm.generateAnAPIKeyIn2"
+              defaults={
+                'Generate an API key in the Liftosaur app: Settings > API Keys (starts with <span>lftsk_</span>). A Liftosaur Pro subscription is required to use the Liftosaur API.'
+              }
+              components={{ span: <span className="font-mono" /> }}
+            />
           </p>
         </>
       )}
@@ -1054,11 +1372,15 @@ export const EditProviderForm = ({
         editData.provider_type === 'googlehealth' ||
         editData.provider_type === 'strava' ||
         editData.provider_type === 'polar' ||
+        editData.provider_type === 'coros_mcp' ||
+        editData.provider_type === 'liftosaur' ||
         editData.provider_type === 'hevy' ||
         editData.provider_type === 'speediance' ||
         editData.provider_type === 'igpsport') && (
         <div>
-          <Label htmlFor="edit_sync_frequency">Sync Frequency</Label>
+          <Label htmlFor="edit_sync_frequency">
+            {t('settings.editProviderForm.syncFrequency', 'Sync Frequency')}
+          </Label>
           <Select
             value={editData.sync_frequency || 'manual'}
             onValueChange={(value) =>
@@ -1069,12 +1391,23 @@ export const EditProviderForm = ({
             }
           >
             <SelectTrigger id="edit_sync_frequency">
-              <SelectValue placeholder="Select sync frequency" />
+              <SelectValue
+                placeholder={t(
+                  'settings.editProviderForm.selectSyncFrequency',
+                  'Select sync frequency'
+                )}
+              />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="manual">Manual</SelectItem>
-              <SelectItem value="hourly">Hourly</SelectItem>
-              <SelectItem value="daily">Daily</SelectItem>
+              <SelectItem value="manual">
+                {t('settings.editProviderForm.manual', 'Manual')}
+              </SelectItem>
+              <SelectItem value="hourly">
+                {t('settings.editProviderForm.hourly', 'Hourly')}
+              </SelectItem>
+              <SelectItem value="daily">
+                {t('settings.editProviderForm.daily', 'Daily')}
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1082,25 +1415,79 @@ export const EditProviderForm = ({
       {editData.provider_type === 'swissfood' && (
         <div className="col-span-2 space-y-2">
           <p className="text-sm text-muted-foreground">
-            The Swiss Food Composition Database API is free, public, and
-            requires no credentials. Supported languages for searches and
-            nutritional value labels are <strong>English (en)</strong>,{' '}
-            <strong>German (de)</strong>, <strong>French (fr)</strong>, and{' '}
-            <strong>Italian (it)</strong>.
+            <Trans
+              i18nKey="settings.editProviderForm.theSwissFoodCompositionDatabase2"
+              defaults={
+                'The Swiss Food Composition Database API is free, public, and requires no credentials. Supported languages for searches and nutritional value labels are <strong>English (en)</strong>, <strong2>German (de)</strong2>, <strong3>French (fr)</strong3>, and <strong4>Italian (it)</strong4>.'
+              }
+              components={{
+                strong: <strong />,
+                strong2: <strong />,
+                strong3: <strong />,
+                strong4: <strong />,
+              }}
+            />
           </p>
           <p className="text-sm text-muted-foreground">
-            If your active language in SparkyFitness is not supported, the API
-            queries will default to English. For more details, see the official
-            portal at{' '}
-            <a
-              href="https://naehrwertdaten.ch/en/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline font-medium"
-            >
-              Swiss Food Composition Database
-            </a>
-            .
+            <Trans
+              i18nKey="settings.editProviderForm.ifYourActiveLanguageIn2"
+              defaults={
+                'If your active language in SparkyFitness is not supported, the API queries will default to English. For more details, see the official portal at <link>Swiss Food Composition Database</link>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://naehrwertdaten.ch/en/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+              }}
+            />
+          </p>
+        </div>
+      )}
+
+      {editData.provider_type === 'canadian-nutrient-file' && (
+        <div className="col-span-2 space-y-2">
+          <p className="text-sm text-muted-foreground">
+            <Trans
+              i18nKey="settings.editProviderForm.theCanadianNutrientFileCNF2"
+              defaults={
+                'The Canadian Nutrient File (CNF) contains information published by Health Canada under the <link>Open Government Licence – Canada</link>. It is free, public, and requires no credentials. Supported languages are <strong>English (en)</strong> and <strong2>French (fr)</strong2>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://open.canada.ca/en/open-government-licence-canada"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+                strong: <strong />,
+                strong2: <strong />,
+              }}
+            />
+          </p>
+          <p className="text-sm text-muted-foreground">
+            <Trans
+              i18nKey="settings.editProviderForm.forMoreDetailsSeeThe2"
+              defaults={
+                'For more details, see the official portal at <link>Canadian Nutrient File (Health Canada)</link>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://open.canada.ca/data/en/dataset/1b6139bd-ed7e-4043-bc28-ff00e10f3109"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+              }}
+            />
           </p>
         </div>
       )}
@@ -1108,18 +1495,22 @@ export const EditProviderForm = ({
       {editData.provider_type === 'free-exercise-db' && (
         <div className="col-span-2 space-y-2">
           <p className="text-sm text-muted-foreground">
-            The Free Exercise DB provider is public, free, and requires no
-            credentials. It fetches exercise data directly from the community
-            repository at{' '}
-            <a
-              href="https://github.com/yuhonas/free-exercise-db"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline font-medium"
-            >
-              yuhonas/free-exercise-db on GitHub
-            </a>
-            .
+            <Trans
+              i18nKey="settings.editProviderForm.theFreeExerciseDBProvider2"
+              defaults={
+                'The Free Exercise DB provider is public, free, and requires no credentials. It fetches exercise data directly from the community repository at <link>yuhonas/free-exercise-db on GitHub</link>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://github.com/yuhonas/free-exercise-db"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+              }}
+            />
           </p>
         </div>
       )}
@@ -1127,17 +1518,86 @@ export const EditProviderForm = ({
       {editData.provider_type === 'wger' && (
         <div className="col-span-2 space-y-2">
           <p className="text-sm text-muted-foreground">
-            The wger provider is public, free, and requires no credentials. It
-            fetches workout and exercise data directly from the official{' '}
-            <a
-              href="https://wger.de/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline font-medium"
+            <Trans
+              i18nKey="settings.editProviderForm.theWgerProviderIsPublic2"
+              defaults={
+                'The wger provider is public, free, and requires no credentials. It fetches workout and exercise data directly from the official <link>wger Project Website</link>.'
+              }
+              components={{
+                link: (
+                  <a
+                    href="https://wger.de/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-medium"
+                  />
+                ),
+              }}
+            />
+          </p>
+        </div>
+      )}
+
+      {editData.provider_type === 'coros_mcp' && (
+        <div className="col-span-2 space-y-4">
+          <div>
+            <Label htmlFor="edit_coros_region">
+              {t(
+                'settings.foodExerciseDataProviders.coros.regionLabel',
+                'COROS Region'
+              )}
+            </Label>
+            <Select
+              value={editData.base_url || 'https://mcpus.coros.com/mcp'}
+              onValueChange={(val) =>
+                setEditData((prev) => ({ ...prev, base_url: val }))
+              }
             >
-              wger Project Website
-            </a>
-            .
+              <SelectTrigger id="edit_coros_region" className="w-full">
+                <SelectValue
+                  placeholder={t(
+                    'settings.editProviderForm.selectRegion',
+                    'Select region'
+                  )}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="https://mcpus.coros.com/mcp">
+                  {t(
+                    'settings.foodExerciseDataProviders.coros.regionUs',
+                    'United States (mcpus.coros.com)'
+                  )}
+                </SelectItem>
+                <SelectItem value="https://mcpeu.coros.com/mcp">
+                  <Trans
+                    i18nKey="settings.editProviderForm.europeMcpeuCorosComNot"
+                    defaults={
+                      'Europe (mcpeu.coros.com) <span>(not yet tested)</span>'
+                    }
+                    components={{
+                      span: <span className="text-xs text-muted-foreground" />,
+                    }}
+                  />
+                </SelectItem>
+                <SelectItem value="https://mcpcn.coros.com/mcp">
+                  <Trans
+                    i18nKey="settings.editProviderForm.mainlandChinaMcpcnCorosCom"
+                    defaults={
+                      'Mainland China (mcpcn.coros.com) <span>(not yet tested)</span>'
+                    }
+                    components={{
+                      span: <span className="text-xs text-muted-foreground" />,
+                    }}
+                  />
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'settings.foodExerciseDataProviders.coros.infoText',
+              "No API keys needed. You'll sign in with your COROS account. Your SparkyFitness address must be https:// (or localhost) for COROS to accept the connection."
+            )}
           </p>
         </div>
       )}
@@ -1149,15 +1609,20 @@ export const EditProviderForm = ({
             setEditData((prev) => ({ ...prev, is_active: checked }))
           }
         />
-        <Label>Activate this provider</Label>
+        <Label>
+          {t(
+            'settings.editProviderForm.activateThisProvider',
+            'Activate this provider'
+          )}
+        </Label>
       </div>
       {/* Public sharing switch removed */}
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>
-          Save Changes
+          {t('common.saveChanges', 'Save Changes')}
         </Button>
         <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
+          {t('common.cancel', 'Cancel')}
         </Button>
       </div>
     </form>

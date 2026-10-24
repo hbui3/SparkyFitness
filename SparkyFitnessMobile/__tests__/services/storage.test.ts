@@ -16,6 +16,7 @@ import {
   loadCollapsedCategories,
   clearServerConfigCache,
   clearSessionToken,
+  takeIdentityChangeServerConfigIds,
   ServerConfig,
 } from '../../src/services/storage';
 import { CATEGORY_ORDER } from '../../src/HealthMetrics';
@@ -358,6 +359,63 @@ describe('storage', () => {
       await expect(setActiveServerConfig('id')).rejects.toThrow(
         'Storage error'
       );
+    });
+  });
+
+  describe('takeIdentityChangeServerConfigIds', () => {
+    beforeEach(async () => {
+      // Module state: drain what earlier tests left behind.
+      await takeIdentityChangeServerConfigIds();
+    });
+
+    test('returns the configs switched away from and the active one, once', async () => {
+      await setActiveServerConfig('config-a');
+      await setActiveServerConfig('config-b');
+      await setActiveServerConfig('config-c');
+
+      expect((await takeIdentityChangeServerConfigIds()).sort()).toEqual([
+        'config-a',
+        'config-b',
+        'config-c',
+      ]);
+      expect(await takeIdentityChangeServerConfigIds()).toEqual(['config-c']);
+    });
+
+    test('returns the active config when signing in again keeps its id', async () => {
+      await setActiveServerConfig('config-a');
+      await takeIdentityChangeServerConfigIds();
+      await setActiveServerConfig('config-a');
+
+      expect(await takeIdentityChangeServerConfigIds()).toEqual(['config-a']);
+    });
+
+    test('remembers the active config when deleting it clears the active id', async () => {
+      const config: ServerConfig = {
+        id: 'config-a',
+        url: 'https://a.com',
+        apiKey: 'k1',
+      };
+      await saveServerConfig(config);
+      await setActiveServerConfig('config-a');
+      await takeIdentityChangeServerConfigIds();
+
+      await deleteServerConfig('config-a');
+
+      expect(await takeIdentityChangeServerConfigIds()).toEqual(['config-a']);
+    });
+
+    test('keeps the outgoing configs when reading the active one fails', async () => {
+      await setActiveServerConfig('config-a');
+      await setActiveServerConfig('config-b');
+      jest
+        .spyOn(AsyncStorage, 'getItem')
+        .mockRejectedValueOnce(new Error('disk'));
+
+      await expect(takeIdentityChangeServerConfigIds()).rejects.toThrow('disk');
+      expect((await takeIdentityChangeServerConfigIds()).sort()).toEqual([
+        'config-a',
+        'config-b',
+      ]);
     });
   });
 

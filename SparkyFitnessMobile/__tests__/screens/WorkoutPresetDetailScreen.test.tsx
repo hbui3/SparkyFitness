@@ -7,7 +7,10 @@ import WorkoutPresetDetailScreen from '../../src/screens/WorkoutPresetDetailScre
 import { usePreferences, useCreateWorkoutPreset } from '../../src/hooks';
 import { useStartLiveWorkout } from '../../src/hooks/useStartLiveWorkout';
 import { loadActiveDraft } from '../../src/services/workoutDraftService';
-import { buildPresetStartExercisesPayload } from '../../src/utils/workoutSession';
+import {
+  buildPresetLiveExerciseConfigs,
+  buildPresetStartExercisesPayload,
+} from '../../src/utils/workoutSession';
 import {
   useAppPreferencesStore,
   __resetAppPreferencesStoreForTests,
@@ -251,12 +254,15 @@ describe('WorkoutPresetDetailScreen', () => {
     expect(startLiveWorkout).toHaveBeenCalledWith({
       name: 'Push Day',
       exercises: buildPresetStartExercisesPayload(preset),
+      exerciseConfigs: buildPresetLiveExerciseConfigs(preset),
       sourcePresetId: 7,
+      workoutFormat: 'standard',
+      timeCapSeconds: null,
     });
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
-  it('duplicates the preset (available even though the fixture profile does not own it) into a private copy with the original exercises/sets', async () => {
+  it('duplicates the preset (available even though the fixture profile does not own it) into a private copy with the original exercises/sets and progression settings', async () => {
     const created = buildPreset({ id: 8, name: 'Push Day (Copy)' });
     const createPresetAsync = jest.fn().mockResolvedValue(created);
     mockUseCreateWorkoutPreset.mockReturnValue({
@@ -271,6 +277,12 @@ describe('WorkoutPresetDetailScreen', () => {
           exercise_id: 'ex-1',
           exercise_name: 'Bench Press',
           image_url: null,
+          progression_mode: 'fixed',
+          rep_goal: 8,
+          increment_type: 'weight',
+          increment_value: 2.5,
+          equipment_brand: 'Rogue',
+          ramp_increment: -4.54,
           sets: [buildSet({ id: 's-1', set_number: 1, reps: 5, weight: 100 })],
         },
       ],
@@ -284,12 +296,20 @@ describe('WorkoutPresetDetailScreen', () => {
       name: 'Push Day (Copy)',
       description: 'Chest, shoulders, triceps',
       is_public: false,
+      workout_format: 'standard',
+      time_cap_seconds: null,
       exercises: [
         {
           exercise_id: 'ex-1',
           image_url: null,
           sort_order: 0,
           superset_group: undefined,
+          progression_mode: 'fixed',
+          rep_goal: 8,
+          increment_type: 'weight',
+          increment_value: 2.5,
+          equipment_brand: 'Rogue',
+          ramp_increment: -4.54,
           sets: [
             {
               set_number: 1,

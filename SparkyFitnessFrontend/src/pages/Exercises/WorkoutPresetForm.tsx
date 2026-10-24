@@ -20,6 +20,7 @@ import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext } from '@dnd-kit/sortable';
 import { SortableExerciseItem } from './SortableExerciseItem';
 import { useWorkoutPresetForm } from '@/hooks/Exercises/useWorkoutPresetForm';
+import { buildExerciseReplaceContext } from '@/utils/exerciseAlternatives';
 
 interface WorkoutPresetFormProps {
   isOpen: boolean;
@@ -43,19 +44,25 @@ const WorkoutPresetForm: React.FC<WorkoutPresetFormProps> = ({
     name,
     description,
     isPublic,
+    workoutFormat,
+    timeCapSeconds,
     exercises,
     isAddExerciseDialogOpen,
     sensors,
     setName,
     setDescription,
     setIsPublic,
+    setWorkoutFormat,
+    setTimeCapSeconds,
     setIsAddExerciseDialogOpen,
     handleAddExercise,
     handleOpenAddExercise,
     handleOpenReplaceExercise,
+    replaceTargetIndex,
     handleRemoveExercise,
     handleDuplicateExercise,
     handleSetChange,
+    handleExerciseFieldChange,
     handleAddSet,
     handleDuplicateSet,
     handleRemoveSet,
@@ -63,6 +70,18 @@ const WorkoutPresetForm: React.FC<WorkoutPresetFormProps> = ({
     handleDragEnd,
     handleSubmit,
   } = useWorkoutPresetForm({ onSave, initialPreset });
+
+  const replaceCandidates = exercises.map((exercise) => ({
+    exerciseId: exercise.exercise_id,
+    exerciseName: exercise.exercise_name,
+  }));
+  const replaceForTarget =
+    replaceTargetIndex === null
+      ? undefined
+      : buildExerciseReplaceContext(
+          replaceCandidates[replaceTargetIndex],
+          replaceCandidates
+        );
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -103,6 +122,72 @@ const WorkoutPresetForm: React.FC<WorkoutPresetFormProps> = ({
                 </Label>
               </div>
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label
+                  htmlFor="workoutFormat"
+                  className="text-xs font-semibold"
+                >
+                  {t('workoutPresetForm.formatLabel', 'Workout Format')}
+                </Label>
+                <select
+                  id="workoutFormat"
+                  value={workoutFormat}
+                  onChange={(e) =>
+                    setWorkoutFormat(e.target.value as typeof workoutFormat)
+                  }
+                  className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="standard">
+                    {t('workoutPresetForm.formatStandard', 'Standard')}
+                  </option>
+                  <option value="interval">
+                    {t('workoutPresetForm.formatInterval', 'Interval / HIIT')}
+                  </option>
+                  <option value="tabata">
+                    {t('workoutPresetForm.formatTabata', 'Tabata')}
+                  </option>
+                  <option value="emom">
+                    {t('workoutPresetForm.formatEmom', 'EMOM')}
+                  </option>
+                  <option value="amrap">
+                    {t('workoutPresetForm.formatAmrap', 'AMRAP')}
+                  </option>
+                  <option value="for_time">
+                    {t('workoutPresetForm.formatForTime', 'For Time')}
+                  </option>
+                </select>
+              </div>
+
+              {(workoutFormat === 'amrap' ||
+                workoutFormat === 'for_time' ||
+                workoutFormat === 'emom') && (
+                <div className="space-y-1">
+                  <Label htmlFor="timeCap" className="text-xs font-semibold">
+                    {t('workoutPresetForm.timeCapLabel', 'Time Cap (minutes)')}
+                  </Label>
+                  <Input
+                    id="timeCap"
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 20"
+                    value={
+                      timeCapSeconds != null
+                        ? Math.floor(timeCapSeconds / 60)
+                        : ''
+                    }
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setTimeCapSeconds(
+                        !isNaN(val) && val > 0 ? val * 60 : null
+                      );
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
             <div className="space-y-1">
               <Label htmlFor="description" className="text-xs font-semibold">
                 {t('workoutPresetForm.descriptionLabel', 'Description')}
@@ -132,6 +217,7 @@ const WorkoutPresetForm: React.FC<WorkoutPresetFormProps> = ({
               onOpenChange={setIsAddExerciseDialogOpen}
               onExerciseAdded={handleAddExercise}
               mode="preset"
+              replaceFor={replaceForTarget}
             />
 
             <DndContext
@@ -172,6 +258,7 @@ const WorkoutPresetForm: React.FC<WorkoutPresetFormProps> = ({
                         onRemoveSet={handleRemoveSet}
                         onAddSet={handleAddSet}
                         onReorderSets={handleReorderSets}
+                        onExerciseFieldChange={handleExerciseFieldChange}
                         simplified
                       />
                     );

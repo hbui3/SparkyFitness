@@ -1,20 +1,148 @@
 import express from 'express';
+// @ts-expect-error multer does not ship TypeScript declarations in this package.
+import multer from 'multer';
 import { pipeUIMessageStreamToResponse } from 'ai';
 import { authenticate } from '../middleware/authMiddleware.js';
 import chatService from '../services/chatService.js';
 import type { FoodOptionsErrorCategory } from '../services/chatService.js';
+import { transcribeVoiceAudio } from '../services/voiceTranscriptionService.js';
 import globalSettingsRepository from '../models/globalSettingsRepository.js';
 import { resolveIsAdmin } from '../utils/adminCheck.js';
 import {
   assertOutboundUrlShapeAndLiteralAllowed,
-  deriveAiNetworkPolicy,
+  resolveAiNetworkPolicy,
   OutboundUrlBlockedError,
 } from '../utils/outboundUrlPolicy.js';
 import {
   testAiServiceConnectionRequestSchema,
   normalizeChatToolCategories,
+  aiServiceSettingsMutatorSchema,
+  MAX_VOICE_UPLOAD_BYTES,
+  voiceAudioMimeTypeSchema,
+  voiceTranscriptionRequestSchema,
 } from '@workspace/shared';
 const router = express.Router();
+const voiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_VOICE_UPLOAD_BYTES,
+    files: 1,
+    fields: 2,
+    // Busboy emits partsLimit when reaching this count, including the final boundary.
+    parts: 4,
+    fieldSize: 1024,
+  },
+}).single('audio');
+
+const receiveVoiceUpload: express.RequestHandler = (req, res, next) => {
+  voiceUpload(req, res, (error: unknown) => {
+    if (!error) return next();
+    const tooLarge =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'LIMIT_FILE_SIZE';
+    res.status(tooLarge ? 413 : 400).json({
+      error: tooLarge
+        ? 'Audio must be no larger than 10 MB.'
+        : 'Invalid audio upload.',
+    });
+  });
+};
+
+/**
+ * @swagger
+ * /chat/transcribe:
+ *   post:
+ *     summary: Transcribe a short voice recording (maximum 10 MB)
+ *     description: Audio stays in memory and is sent only to the selected voice provider. No chat message or diary entry is created.
+ *     tags: [AI & Insights]
+ *     security:
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [audio, service_config_id]
+ *             properties:
+ *               audio:
+ *                 type: string
+ *                 format: binary
+ *               service_config_id:
+ *                 type: string
+ *                 format: uuid
+ *               mime_type:
+ *                 type: string
+ *                 enum: [audio/mp4, audio/m4a, audio/aac, audio/mpeg, audio/wav, audio/webm, audio/ogg]
+ *     responses:
+ *       200:
+ *         description: Transcribed text and model name
+ *       400:
+ *         description: Invalid upload or voice configuration
+ *       401:
+ *         description: Authentication required
+ *       403:
+ *         description: Outbound network policy denied the request
+ *       404:
+ *         description: AI configuration is unavailable to the authenticated user
+ *       413:
+ *         description: Audio exceeds 10 MB
+ *       502:
+ *         description: Transcription provider failed or returned invalid output
+ *       504:
+ *         description: Transcription timed out
+ */
+router.post(
+  '/transcribe',
+  authenticate,
+  receiveVoiceUpload,
+  async (req, res, next) => {
+    const uploadedFile = (
+      req as typeof req & { file?: { buffer: Buffer; mimetype: string } }
+    ).file;
+    const parsed = voiceTranscriptionRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'A valid service_config_id and audio MIME type are required.',
+      });
+    }
+    if (!uploadedFile?.buffer.length) {
+      return res.status(400).json({ error: 'An audio file is required.' });
+    }
+    const mimeType = voiceAudioMimeTypeSchema.safeParse(
+      parsed.data.mime_type ?? uploadedFile.mimetype
+    );
+    if (!mimeType.success) {
+      return res.status(400).json({ error: 'Unsupported audio format.' });
+    }
+
+    const controller = new AbortController();
+    const abort = () => {
+      if (!res.writableFinished) controller.abort();
+    };
+    res.once('close', abort);
+    try {
+      const isAdmin = await resolveIsAdmin(req.user, req.authenticatedUserId);
+      const result = await transcribeVoiceAudio({
+        audio: uploadedFile.buffer,
+        mimeType: mimeType.data,
+        serviceConfigId: parsed.data.service_config_id,
+        // AI credentials belong to the actor, never to a switched family member.
+        userId: req.authenticatedUserId,
+        isAdmin,
+        signal: controller.signal,
+      });
+      return res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    } finally {
+      res.removeListener('close', abort);
+    }
+  }
+);
+
 /**
  * @swagger
  * /chat:
@@ -85,6 +213,13 @@ router.post('/', authenticate, async (req, res, next) => {
       if (!service_data) {
         return res.status(400).json({ error: 'service_data is required.' });
       }
+      if (
+        !aiServiceSettingsMutatorSchema.shape.reasoning_effort.safeParse(
+          service_data.reasoning_effort
+        ).success
+      ) {
+        return res.status(400).json({ error: 'Invalid reasoning effort.' });
+      }
       // service_type and service_name are only required when creating a new record (no id)
       if (!service_data.id) {
         if (!service_data.service_type) {
@@ -102,11 +237,12 @@ router.post('/', authenticate, async (req, res, next) => {
       // AI request at a private/internal address (localhost, RFC1918, link-local,
       // cloud metadata). The admin is the trusted operator, so their own
       // self-hosted URLs (e.g. local Ollama) are allowed; an operator who wants
-      // regular users to reach a shared private AI service opts in explicitly
-      // with ALLOW_PRIVATE_NETWORK_AI=true.
+      // regular users to reach a shared private AI service opts in explicitly,
+      // either with the admin `allow_private_network_ai` toggle or
+      // ALLOW_PRIVATE_NETWORK_AI=true.
       if (service_data.custom_url) {
         const isAdmin = await resolveIsAdmin(req.user, req.authenticatedUserId);
-        const networkPolicy = deriveAiNetworkPolicy(
+        const networkPolicy = await resolveAiNetworkPolicy(
           { source: 'user' },
           isAdmin
         );
@@ -823,6 +959,7 @@ const FOOD_OPTIONS_ERROR_HTTP_STATUS: Record<FoodOptionsErrorCategory, number> =
     private_network_forbidden: 403,
     unsupported_provider: 422,
     unsupported_media: 422, // unreachable (no images sent); required for exhaustiveness
+    image_too_large: 422, // unreachable (no images sent); required for exhaustiveness
     refused: 422,
     truncated: 422,
     no_content: 422,

@@ -1,3 +1,4 @@
+import AllergenBadges from '../AllergenBadges';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
@@ -5,6 +6,7 @@ import Button from '../ui/Button';
 import MealLibraryRow from '../MealLibraryRow';
 import VerifiedBadge from '../VerifiedBadge';
 import FoodResultRow from './FoodResultRow';
+import type { FoodRowSelection } from './FoodResultRow';
 import FoodThumbnail from '../FoodThumbnail';
 import { useFoodImageSourceContext } from '../FoodImageSourceProvider';
 import { externalFoodImage } from '../../utils/foodImages';
@@ -104,6 +106,7 @@ const OnlineResultRow: React.FC<OnlineResultRowProps> = ({
               ) : null}
             </View>
           ) : null}
+          <AllergenBadges allergens={item.allergens} traces={item.traces} />
         </View>
         <View className="items-end">
           {loadingFoodId === item.id ? (
@@ -308,6 +311,9 @@ interface FoodSearchResultRowProps {
   onResetOwnershipFilter: () => void;
   getProviderColor: (providerId?: string | null) => string;
   onSelectFood: (item: FoodInfoItem) => void;
+  /** Multi-select affordance for LOCAL food rows only (#1980 request 2);
+   * meals and online provider results never receive it. */
+  selection?: FoodRowSelection;
   onSelectOnlineFood: (
     item: ExternalFoodItem,
     providerId?: string
@@ -318,6 +324,7 @@ interface FoodSearchResultRowProps {
 
 const FoodSearchResultRow: React.FC<FoodSearchResultRowProps> = ({
   row,
+  selection,
   profileId,
   favoriteKeys,
   favoriteGold,
@@ -342,6 +349,7 @@ const FoodSearchResultRow: React.FC<FoodSearchResultRowProps> = ({
           isFavorite={favoriteKeys.has(landingKey('food', row.food.id))}
           favoriteGold={favoriteGold}
           onSelect={onSelectFood}
+          selection={selection}
         />
       );
     case 'meal':

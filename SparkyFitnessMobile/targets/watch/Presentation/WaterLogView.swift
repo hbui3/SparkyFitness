@@ -15,11 +15,15 @@ struct WaterLogView: View {
     /// The row awaiting a yes/no answer. Non-nil means the confirmation is up.
     @State private var pendingDeletion: WaterLogEntry?
 
-    /// Rows the wearer has confirmed deleting, hidden immediately rather than
-    /// waiting for the phone to write and push back — same optimistic
-    /// treatment a tap gets on the Water page. If a delete fails, the phone
-    /// re-pushes and the row reappears (see `handleWaterDelete` there).
-    @State private var deletedIds: Set<String> = []
+    /// Rows whose delete the phone has confirmed — gone, pending only the
+    /// push that drops them from the log itself.
+    private var deletedIds: Set<String> { store.deletedWaterEntryIds }
+
+    /// Rows the wearer has confirmed but the phone hasn't written yet. Drawn
+    /// dimmed rather than hidden: the same honesty the bottle's queued line
+    /// buys on the Water page — you can see what hasn't synced instead of a
+    /// finished state that may reverse.
+    private var deletingIds: Set<String> { store.deletingWaterEntryIds }
 
     private var water: WaterSnapshot? {
         guard let snapshot = store.context.water, snapshot.isToday else { return nil }
@@ -44,7 +48,7 @@ struct WaterLogView: View {
                 }
             }
         }
-        .navigationTitle("Today")
+        .navigationTitle(String(localized: "watch.water.today", defaultValue: "Today"))
         // Inline, so the title sits on the same line as the back chevron
         // rather than eating a whole row of a screen this small.
         .navigationBarTitleDisplayMode(.inline)
@@ -54,14 +58,6 @@ struct WaterLogView: View {
         .sheet(item: $pendingDeletion) { entry in
             confirmation(for: entry)
         }
-        // Whenever the phone pushes a new log, that list is the authority and
-        // the optimistic hiding has done its job. Clearing here is what makes
-        // a FAILED delete self-correct: the phone re-pushes the unchanged log,
-        // this drops the id, and the row comes back rather than staying
-        // invisible on a screen that no longer matches the server.
-        .onChange(of: water?.log ?? []) {
-            deletedIds.removeAll()
-        }
     }
 
     private var emptyState: some View {
@@ -69,7 +65,7 @@ struct WaterLogView: View {
             Image(systemName: "drop")
                 .font(.system(size: 22))
                 .foregroundStyle(.secondary)
-            Text("Nothing logged yet today")
+            Text(String(localized: "watch.water.empty", defaultValue: "Nothing logged yet today"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -78,7 +74,13 @@ struct WaterLogView: View {
     }
 
     private func row(_ entry: WaterLogEntry) -> some View {
-        Button {
+        let isDeleting = deletingIds.contains(entry.id)
+        return Button {
+            // Tapping again while one is already in flight would queue a second
+            // delete for the same row, which the phone would then report as a
+            // failure against a row that is legitimately gone.
+            guard !isDeleting else { return }
+            Haptics.tap()
             pendingDeletion = entry
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -100,9 +102,12 @@ struct WaterLogView: View {
             }
         }
         .buttonStyle(.plain)
+        .opacity(isDeleting ? 0.4 : 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(entry.name), \(amountText(entry)), at \(entry.time)")
-        .accessibilityHint("Opens a prompt to delete this entry")
+        .accessibilityLabel(String(localized: "watch.water.entryAccessibility", defaultValue: "\(entry.name), \(amountText(entry)), at \(entry.time)"))
+        .accessibilityHint(
+            isDeleting ? "Deleting, waiting for your phone" : "Opens a prompt to delete this entry"
+        )
     }
 
     /// Formatted in the account's configured water unit, the same way the
@@ -113,7 +118,7 @@ struct WaterLogView: View {
 
     private func confirmation(for entry: WaterLogEntry) -> some View {
         VStack(spacing: 10) {
-            Text("Delete this entry?")
+            Text(String(localized: "watch.water.deleteEntryConfirm", defaultValue: "Delete this entry?"))
                 .font(.system(size: 15, weight: .semibold))
                 .multilineTextAlignment(.center)
             Text("\(entry.name) · \(amountText(entry))")
@@ -123,12 +128,14 @@ struct WaterLogView: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 8) {
-                Button("No") {
+                Button(String(localized: "watch.common.no", defaultValue: "No")) {
+                    Haptics.tap()
                     pendingDeletion = nil
                 }
                 .buttonStyle(.bordered)
 
-                Button("Yes") {
+                Button(String(localized: "watch.common.yes", defaultValue: "Yes")) {
+                    Haptics.tap()
                     delete(entry)
                 }
                 .buttonStyle(.borderedProminent)
@@ -139,8 +146,11 @@ struct WaterLogView: View {
     }
 
     private func delete(_ entry: WaterLogEntry) {
-        deletedIds.insert(entry.id)
-        session.sendWaterDelete(entryId: entry.id)
+        // One id, recorded before it is sent, so the phone's acknowledgement
+        // has something on this side to settle — and so a delete that never
+        // reaches the phone is resent rather than quietly undoing itself.
+        let clientId = store.recordWaterDelete(entryId: entry.id)
+        session.sendWaterDelete(entryId: entry.id, clientId: clientId)
         pendingDeletion = nil
     }
 }

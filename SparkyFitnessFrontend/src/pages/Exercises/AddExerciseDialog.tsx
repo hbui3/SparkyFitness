@@ -16,6 +16,8 @@ import { toast } from '@/hooks/use-toast';
 import { Exercise } from '@/types/exercises';
 import { useAddCustomExerciseForm } from '@/hooks/Exercises/useAddCustomExerciseForm';
 import AddCustomExerciseForm from './AddCustomExerciseForm';
+import ExerciseAlternativesPanel from './ExerciseAlternativesPanel';
+import type { ExerciseReplaceContext } from '@/utils/exerciseAlternatives';
 
 interface AddExerciseDialogProps {
   open: boolean;
@@ -26,7 +28,10 @@ interface AddExerciseDialogProps {
   ) => void;
   onWorkoutPresetSelected?: (preset: WorkoutPreset) => void; // New prop for selecting a workout preset
   mode: 'preset' | 'workout-plan' | 'diary' | 'database-manager';
-  initialTab?: 'my-exercises' | 'workout-preset' | 'online' | 'custom';
+  initialTab?:
+    'suggested' | 'my-exercises' | 'workout-preset' | 'online' | 'custom';
+  /** Set when replacing an exercise: adds a ranked "Suggested" tab. */
+  replaceFor?: ExerciseReplaceContext;
 }
 
 type AddExerciseDialogTab = NonNullable<AddExerciseDialogProps['initialTab']>;
@@ -38,12 +43,26 @@ const AddExerciseDialog = ({
   mode,
   onWorkoutPresetSelected,
   initialTab,
+  replaceFor,
 }: AddExerciseDialogProps) => {
   const { t } = useTranslation();
   const customForm = useAddCustomExerciseForm(onExerciseAdded, onOpenChange);
-  const [activeTab, setActiveTab] = useState(
-    initialTab ?? (mode === 'database-manager' ? 'online' : 'my-exercises')
-  );
+  const openingTab: AddExerciseDialogTab =
+    initialTab ??
+    (replaceFor
+      ? 'suggested'
+      : mode === 'database-manager'
+        ? 'online'
+        : 'my-exercises');
+  const [activeTab, setActiveTab] = useState<AddExerciseDialogTab>(openingTab);
+  // The tabs are controlled (so "Search all exercises" can switch them), so
+  // reset to the opening tab each time the dialog opens — the same dialog
+  // serves both Add and Replace.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setActiveTab(openingTab);
+  }
 
   const tabsListClass = 'h-10 flex w-full justify-center flex-wrap';
 
@@ -53,10 +72,12 @@ const AddExerciseDialog = ({
   ) => {
     toast({
       title: t('common.success', 'Success'),
-      description: t(
-        'exercise.addExerciseDialog.addSuccess',
-        'Exercise added successfully'
-      ),
+      description: replaceFor
+        ? t('exercise.addExerciseDialog.replaceSuccess', 'Exercise replaced')
+        : t(
+            'exercise.addExerciseDialog.addSuccess',
+            'Exercise added successfully'
+          ),
     });
     onExerciseAdded(exercise, sourceMode); // Pass the selected exercise and source mode
     onOpenChange(false);
@@ -70,7 +91,9 @@ const AddExerciseDialog = ({
       >
         <DialogHeader>
           <DialogTitle className="text-center">
-            {t('exercise.addExerciseDialog.title', 'Add Exercise')}
+            {replaceFor
+              ? t('exercise.addExerciseDialog.replaceTitle', 'Replace Exercise')
+              : t('exercise.addExerciseDialog.title', 'Add Exercise')}
           </DialogTitle>
           <DialogDescription className="text-center">
             {t(
@@ -80,10 +103,15 @@ const AddExerciseDialog = ({
           </DialogDescription>
         </DialogHeader>
         <Tabs
-          defaultValue={activeTab}
+          value={activeTab}
           onValueChange={(value) => setActiveTab(value as AddExerciseDialogTab)}
         >
           <TabsList className={tabsListClass}>
+            {replaceFor && (
+              <TabsTrigger value="suggested">
+                {t('exercise.addExerciseDialog.suggestedTab', 'Suggested')}
+              </TabsTrigger>
+            )}
             {mode !== 'database-manager' && (
               <TabsTrigger value="my-exercises">
                 {t('exercise.addExerciseDialog.myExercisesTab', 'My Exercises')}
@@ -104,6 +132,17 @@ const AddExerciseDialog = ({
               {t('exercise.addExerciseDialog.addCustomTab', 'Add Custom')}
             </TabsTrigger>
           </TabsList>
+          {replaceFor && (
+            <TabsContent value="suggested">
+              <div className="pt-4">
+                <ExerciseAlternativesPanel
+                  replaceFor={replaceFor}
+                  onSelect={handleExerciseSelect}
+                  onSearchAll={() => setActiveTab('my-exercises')}
+                />
+              </div>
+            </TabsContent>
+          )}
           {mode !== 'database-manager' && (
             <TabsContent value="my-exercises">
               <div className="pt-4">

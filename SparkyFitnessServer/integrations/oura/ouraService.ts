@@ -3,6 +3,7 @@ import { getSystemClient } from '../../db/poolManager.js';
 import { encrypt, decrypt, ENCRYPTION_KEY } from '../../security/encryption.js';
 import { log } from '../../config/logging.js';
 import { logRawResponse } from '../../utils/diagnosticLogger.js';
+import { withProviderTokenLock } from '../../models/externalProviderRepository.js';
 
 const OURA_API_BASE_URL = 'https://api.ouraring.com';
 const OURA_AUTHORIZE_URL = 'https://cloud.ouraring.com/oauth/authorize';
@@ -126,7 +127,7 @@ async function getAuthorizationUrl(userId: string, redirectUri: string) {
       app_id_tag,
       ENCRYPTION_KEY
     );
-    const scope = 'personal daily heartrate workout spo2 heart_health';
+    const scope = 'personal daily heartrate workout spo2 heart_health stress';
     const state = userId;
     return `${OURA_AUTHORIZE_URL}?response_type=code&client_id=${clientId}&scope=${encodeURIComponent(scope)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
   } finally {
@@ -245,91 +246,94 @@ async function exchangeCodeForTokens(
 async function refreshAccessToken(userId: string) {
   const client = await getSystemClient();
   try {
-    const providerResult = await client.query(
-      `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
+    return await withProviderTokenLock(client, async () => {
+      const providerResult = await client.query(
+        `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
                     encrypted_refresh_token, refresh_token_iv, refresh_token_tag
              FROM external_data_providers
-             WHERE user_id = $1 AND provider_type = 'oura'`,
-      [userId]
-    );
-    if (providerResult.rows.length === 0) {
-      throw new Error('Oura credentials not found for token refresh.');
-    }
-    const {
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-    } = providerResult.rows[0];
-    if (!encrypted_refresh_token) {
-      throw new Error('No Oura refresh token stored for user.');
-    }
-    const clientId = await decrypt(
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      ENCRYPTION_KEY
-    );
-    const clientSecret = await decrypt(
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      ENCRYPTION_KEY
-    );
-    const refreshToken = await decrypt(
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-      ENCRYPTION_KEY
-    );
-    const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString(
-      'base64'
-    );
-    const params = new URLSearchParams();
-    params.append('grant_type', 'refresh_token');
-    params.append('refresh_token', refreshToken as string);
-    const response = await axios.post(OURA_TOKEN_URL, params, {
-      headers: {
-        Authorization: `Basic ${authHeader}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-    });
-    const {
-      access_token,
-      refresh_token: newRefreshToken,
-      expires_in,
-      scope,
-    } = response.data;
-    const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
-    const encryptedNewRefreshToken = await encrypt(
-      newRefreshToken,
-      ENCRYPTION_KEY
-    );
-    const tokenExpiresAt = new Date(Date.now() + expires_in * 1000);
-    const updateQuery = `
+             WHERE user_id = $1 AND provider_type = 'oura'
+             FOR UPDATE`,
+        [userId]
+      );
+      if (providerResult.rows.length === 0) {
+        throw new Error('Oura credentials not found for token refresh.');
+      }
+      const {
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+      } = providerResult.rows[0];
+      if (!encrypted_refresh_token) {
+        throw new Error('No Oura refresh token stored for user.');
+      }
+      const clientId = await decrypt(
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        ENCRYPTION_KEY
+      );
+      const clientSecret = await decrypt(
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        ENCRYPTION_KEY
+      );
+      const refreshToken = await decrypt(
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+        ENCRYPTION_KEY
+      );
+      const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString(
+        'base64'
+      );
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('refresh_token', refreshToken as string);
+      const response = await axios.post(OURA_TOKEN_URL, params, {
+        headers: {
+          Authorization: `Basic ${authHeader}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
+      const {
+        access_token,
+        refresh_token: newRefreshToken,
+        expires_in,
+        scope,
+      } = response.data;
+      const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
+      const encryptedNewRefreshToken = await encrypt(
+        newRefreshToken,
+        ENCRYPTION_KEY
+      );
+      const tokenExpiresAt = new Date(Date.now() + expires_in * 1000);
+      const updateQuery = `
             UPDATE external_data_providers
             SET encrypted_access_token = $1, access_token_iv = $2, access_token_tag = $3,
                 encrypted_refresh_token = $4, refresh_token_iv = $5, refresh_token_tag = $6,
                 scope = $7, token_expires_at = $8, updated_at = NOW()
             WHERE user_id = $9 AND provider_type = 'oura'
         `;
-    await client.query(updateQuery, [
-      encryptedAccessToken.encryptedText,
-      encryptedAccessToken.iv,
-      encryptedAccessToken.tag,
-      encryptedNewRefreshToken.encryptedText,
-      encryptedNewRefreshToken.iv,
-      encryptedNewRefreshToken.tag,
-      scope,
-      tokenExpiresAt,
-      userId,
-    ]);
-    return access_token as string;
+      await client.query(updateQuery, [
+        encryptedAccessToken.encryptedText,
+        encryptedAccessToken.iv,
+        encryptedAccessToken.tag,
+        encryptedNewRefreshToken.encryptedText,
+        encryptedNewRefreshToken.iv,
+        encryptedNewRefreshToken.tag,
+        scope,
+        tokenExpiresAt,
+        userId,
+      ]);
+      return access_token as string;
+    });
   } catch (error) {
     log(
       'error',

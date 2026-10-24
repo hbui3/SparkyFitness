@@ -109,7 +109,8 @@ async function getAccessibleUsers(userId: string) {
            (fa.access_permissions->>'can_manage_diary')::boolean = TRUE OR
            (fa.access_permissions->>'can_manage_checkin')::boolean = TRUE OR
            (fa.access_permissions->>'can_view_reports')::boolean = TRUE OR
-           (fa.access_permissions->>'can_manage_medications')::boolean = TRUE
+           (fa.access_permissions->>'can_manage_medications')::boolean = TRUE OR
+           (fa.access_permissions->>'can_manage_symptoms')::boolean = TRUE
          )`,
       [userId]
     );
@@ -118,6 +119,12 @@ async function getAccessibleUsers(userId: string) {
     client.release();
   }
 }
+/** The profile fields sleep scoring reads (age and gender). */
+export interface SleepUserProfile {
+  date_of_birth?: string | null;
+  gender?: string | null;
+}
+
 async function getUserProfile(userId: string) {
   const client = await getClient(userId); // User-specific operation
   try {

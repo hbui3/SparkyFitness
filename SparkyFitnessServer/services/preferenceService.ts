@@ -5,6 +5,7 @@ import {
   isValidTimeZone,
   SUPPORTED_TIME_FORMATS,
   MAX_GOAL_MODE_PERCENTAGE,
+  MAX_GOAL_MODE_WEEKLY_CHANGE_KG,
   CALORIE_SAFETY_FLOOR_MODES,
   MIN_CALORIE_SAFETY_FLOOR,
   MAX_CALORIE_SAFETY_FLOOR,
@@ -12,13 +13,17 @@ import {
   CHART_SCALE_MODES,
   DEFAULT_CHART_SCALE_MODE,
   type UserPreferencesMutator,
+  userPreferencesMutatorSchema,
 } from '@workspace/shared';
 
 /** The subset of preference fields `validateGoalMode` inspects. */
 type GoalModePreferenceInput = Partial<
   Pick<
     UserPreferencesMutator,
-    'goal_mode' | 'goal_mode_calculation_method' | 'goal_mode_custom_percentage'
+    | 'goal_mode'
+    | 'goal_mode_calculation_method'
+    | 'goal_mode_custom_percentage'
+    | 'goal_mode_weekly_change_kg'
   >
 >;
 type CalorieSafetyFloorPreferenceInput = Partial<
@@ -30,9 +35,26 @@ type CalorieSafetyFloorPreferenceInput = Partial<
 type ChartScaleModePreferenceInput = Partial<
   Pick<UserPreferencesMutator, 'chart_scale_mode'>
 >;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function validateTimezone(preferenceData: any) {
+
+function validateAdaptiveActivity(preferences: UserPreferencesMutator): void {
   if (
+    !userPreferencesMutatorSchema.shape.adaptive_activity_separate.safeParse(
+      preferences.adaptive_activity_separate
+    ).success
+  ) {
+    throw Object.assign(
+      new Error('adaptive_activity_separate must be a boolean.'),
+      {
+        status: 400,
+      }
+    );
+  }
+}
+async function validateTimezone(
+  preferenceData: Pick<UserPreferencesMutator, 'timezone'>
+) {
+  if (
+    preferenceData.timezone !== undefined &&
     preferenceData.timezone !== null &&
     !isValidTimeZone(preferenceData.timezone)
   ) {
@@ -68,6 +90,7 @@ async function validateGoalMode(preferenceData: GoalModePreferenceInput) {
       'lean_bulk',
       'bulk',
       'manual',
+      'weekly',
     ];
     if (!validGoalModes.includes(preferenceData.goal_mode)) {
       throw Object.assign(
@@ -100,6 +123,22 @@ async function validateGoalMode(preferenceData: GoalModePreferenceInput) {
       throw Object.assign(
         new Error(
           `Invalid goal_mode_custom_percentage: '${preferenceData.goal_mode_custom_percentage}'. Must be an integer between -${MAX_GOAL_MODE_PERCENTAGE} and ${MAX_GOAL_MODE_PERCENTAGE}.`
+        ),
+        { status: 400 }
+      );
+    }
+  }
+  if (preferenceData.goal_mode_weekly_change_kg !== undefined) {
+    const rate = preferenceData.goal_mode_weekly_change_kg;
+    if (
+      typeof rate !== 'number' ||
+      !Number.isFinite(rate) ||
+      Math.abs(rate) > MAX_GOAL_MODE_WEEKLY_CHANGE_KG ||
+      Math.round(rate * 1000) / 1000 !== rate
+    ) {
+      throw Object.assign(
+        new Error(
+          `Invalid goal_mode_weekly_change_kg: '${rate}'. Must be a number between -${MAX_GOAL_MODE_WEEKLY_CHANGE_KG} and ${MAX_GOAL_MODE_WEEKLY_CHANGE_KG}, with at most three decimal places.`
         ),
         { status: 400 }
       );
@@ -158,25 +197,27 @@ async function validateChartScaleMode(
 }
 function getDefaultPreferences() {
   return {
+    voice_input_enabled: true,
+    active_voice_ai_service_id: null,
     calorie_goal_adjustment_mode: 'dynamic',
     language: DEFAULT_LANGUAGE,
+    adaptive_activity_separate: false,
     show_net_carbs: false,
     timezone: null,
     time_format: 'h:mm A',
     calorie_safety_floor_mode: 'standard',
     calorie_safety_floor_value: DEFAULT_CUSTOM_CALORIE_SAFETY_FLOOR,
     chart_scale_mode: DEFAULT_CHART_SCALE_MODE,
+    goal_mode_weekly_change_kg: 0,
   };
 }
 async function updateUserPreferences(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  authenticatedUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  targetUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  preferenceData: any
+  authenticatedUserId: string,
+  targetUserId: string,
+  preferenceData: UserPreferencesMutator
 ) {
   try {
+    validateAdaptiveActivity(preferenceData);
     await validateTimezone(preferenceData);
     await validateTimeFormat(preferenceData);
     await validateGoalMode(preferenceData);
@@ -224,18 +265,34 @@ async function deleteUserPreferences(
     throw error;
   }
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getUserPreferences(authenticatedUserId: any, targetUserId: any) {
+const OWNER_ONLY_PREFERENCE_FIELDS = [
+  'max_heart_rate',
+  'resting_heart_rate',
+  'hr_zone_method',
+  'hr_zone_custom_floors',
+] as const;
+async function getUserPreferences(
+  authenticatedUserId: string | undefined,
+  targetUserId: string
+) {
   try {
     const preferences =
       await preferenceRepository.getUserPreferences(targetUserId);
     if (!preferences) {
       return getDefaultPreferences();
     }
-    return {
+    const result = {
       ...preferences,
       time_format: preferences.time_format ?? 'h:mm A',
     };
+    // Heart rate zone settings are owner-only: a switched delegate reads the
+    // rest of the preferences but never these.
+    if (authenticatedUserId && authenticatedUserId !== targetUserId) {
+      for (const field of OWNER_ONLY_PREFERENCE_FIELDS) {
+        delete result[field];
+      }
+    }
+    return result;
   } catch (error) {
     log(
       'error',
@@ -276,24 +333,24 @@ async function bootstrapUserTimezone(
 }
 
 async function upsertUserPreferences(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  authenticatedUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  preferenceData: any
+  authenticatedUserId: string,
+  preferenceData: UserPreferencesMutator
 ) {
   try {
+    validateAdaptiveActivity(preferenceData);
     await validateTimezone(preferenceData);
     await validateTimeFormat(preferenceData);
     await validateGoalMode(preferenceData);
     await validateCalorieSafetyFloor(preferenceData);
     await validateChartScaleMode(preferenceData);
-    preferenceData.user_id = authenticatedUserId; // Ensure user_id is set from authenticated user
     // Provide a default for calorie_goal_adjustment_mode if it's not present
     if (!preferenceData.calorie_goal_adjustment_mode) {
       preferenceData.calorie_goal_adjustment_mode = 'dynamic';
     }
-    const newPreferences =
-      await preferenceRepository.upsertUserPreferences(preferenceData);
+    const newPreferences = await preferenceRepository.upsertUserPreferences({
+      ...preferenceData,
+      user_id: authenticatedUserId,
+    });
     return newPreferences;
   } catch (error) {
     log(

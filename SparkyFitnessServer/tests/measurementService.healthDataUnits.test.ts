@@ -23,9 +23,14 @@ describe('processHealthData default units (#567)', () => {
     vi.clearAllMocks();
     vi.mocked(loadUserTimezone).mockResolvedValue('UTC');
     measurementRepository.getCustomCategories = vi.fn().mockResolvedValue([]);
+    // A fresh create stores what it was given.
     measurementRepository.createCustomCategory = vi
       .fn()
-      .mockResolvedValue({ id: 'cat-new' });
+      .mockImplementation(async (data) => ({
+        id: 'cat-new',
+        created: true,
+        category: { ...data, id: 'cat-new' },
+      }));
     measurementRepository.bulkUpsertCustomMeasurements = vi
       .fn()
       .mockResolvedValue([{ id: 'entry-1' }]);
@@ -99,6 +104,38 @@ describe('processHealthData default units (#567)', () => {
       total_calories_captured_at: new Date('2025-02-01T00:00:00.000Z'),
     });
     expect(measurementRepository.createCustomCategory).not.toHaveBeenCalled();
+  });
+  it('stores RestingHeartRate in the daily summary and as a custom measurement', async () => {
+    const healthDataArray = [
+      {
+        type: 'RestingHeartRate',
+        value: 58,
+        date: '2025-02-01',
+        source: 'HealthConnect',
+      },
+    ];
+    const result = await measurementService.processHealthData(
+      healthDataArray,
+      userId,
+      actingUserId
+    );
+    expect(result.errors ?? []).toEqual([]);
+    expect(
+      genericHealthRepository.upsertDailyHealthMetrics
+    ).toHaveBeenCalledWith(userId, actingUserId, {
+      user_id: userId,
+      entry_date: '2025-02-01',
+      source_provider: 'health_connect',
+      resting_heart_rate: 58,
+    });
+    expect(measurementRepository.createCustomCategory).toHaveBeenCalledTimes(1);
+    const createPayload =
+      // @ts-expect-error TS(2339): Property 'mock' does not exist on type '(categoryD... Remove this comment to see the full error message
+      measurementRepository.createCustomCategory.mock.calls[0][0];
+    expect(createPayload.measurement_type).toBe('bpm');
+    expect(
+      measurementRepository.bulkUpsertCustomMeasurements
+    ).toHaveBeenCalledTimes(1);
   });
   it('applies default unit for distance when unit missing', async () => {
     const healthDataArray = [
@@ -281,9 +318,14 @@ describe('Aggregated health metric default units', () => {
     vi.clearAllMocks();
     vi.mocked(loadUserTimezone).mockResolvedValue('UTC');
     measurementRepository.getCustomCategories = vi.fn().mockResolvedValue([]);
+    // A fresh create stores what it was given.
     measurementRepository.createCustomCategory = vi
       .fn()
-      .mockResolvedValue({ id: 'cat-new' });
+      .mockImplementation(async (data) => ({
+        id: 'cat-new',
+        created: true,
+        category: { ...data, id: 'cat-new' },
+      }));
     measurementRepository.bulkUpsertCustomMeasurements = vi
       .fn()
       .mockResolvedValue([{ id: 'entry-1' }]);

@@ -1,0 +1,139 @@
+name: "Update Umbrel App: Submit"
+
+# Carries an already-merged umbrel/sparkyfitness/ change to the Umbrel App
+# Store PR.
+#
+# Split out of umbrel-app-update.yml so that merging the in-repo PR is a real
+# human review gate: nothing reaches getumbrel/umbrel-apps until a maintainer
+# approves and merges the package change to main. A single combined workflow
+# that opened both PRs in the same run made that in-repo PR decorative.
+#
+# The first submission stays manual (see umbrel/README.md): submission: has to
+# name a PR that doesn't exist yet, and the Umbrel team wants screenshots on
+# it. This workflow only ever patches a package that already exists upstream,
+# so it is a no-op until that first PR has been merged by the Umbrel team.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "umbrel/sparkyfitness/**"
+      - "umbrel/update-package.mjs"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: umbrel-app-submit
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: getumbrel/umbrel-apps
+
+jobs:
+  submit:
+    name: Submit to the Umbrel App Store
+    runs-on: ubuntu-latest
+    # Authenticates with UMBREL_APPS_TOKEN; needs no scope on this repository.
+    permissions: {}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check for the App Store token
+        id: token
+        env:
+          UMBREL_APPS_TOKEN: ${{ secrets.UMBREL_APPS_TOKEN }}
+        run: |
+          if [ -z "${UMBREL_APPS_TOKEN}" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::UMBREL_APPS_TOKEN is not set; skipping the App Store submission."
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Submit
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UMBREL_APPS_TOKEN }}
+          # For update-package.mjs's own GitHub API calls (release lookup),
+          # not for anything git/gh does against umbrel-apps. Raises that call
+          # off the unauthenticated 60/hour limit; it carries no permissions
+          # this job doesn't already have (permissions: {} above).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          fork_owner=$(gh api user --jq .login)
+          version=$(sed -n 's/^version: "\(.*\)"$/\1/p' umbrel/sparkyfitness/umbrel-app.yml)
+          branch="sparkyfitness-${version}"
+
+          if ! gh api "repos/${fork_owner}/umbrel-apps" >/dev/null 2>&1; then
+            echo "No ${fork_owner}/umbrel-apps fork yet; creating it."
+            gh repo fork "${UPSTREAM}" --clone=false
+            # Forking is asynchronous: the API can 404 for a few seconds after
+            # gh repo fork returns. Poll rather than push into a fork that
+            # isn't there yet.
+            for _ in $(seq 1 30); do
+              gh api "repos/${fork_owner}/umbrel-apps" >/dev/null 2>&1 && break
+              sleep 2
+            done
+            gh api "repos/${fork_owner}/umbrel-apps" >/dev/null
+          fi
+
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${UPSTREAM}.git" upstream
+          cd upstream
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ ! -d sparkyfitness ]; then
+            echo "sparkyfitness/ does not exist upstream yet -- the first submission is a manual PR (see umbrel/README.md). Nothing to do."
+            exit 0
+          fi
+
+          git checkout -b "${branch}"
+          # Patch in place rather than replacing the directory: this keeps
+          # whatever the Umbrel team has since added (gallery images, an icon,
+          # a category change) and only touches version/releaseNotes/images.
+          node ../umbrel/update-package.mjs --version "${version}" --target "$(pwd)/sparkyfitness"
+
+          git add sparkyfitness
+          if git diff --cached --quiet; then
+            echo "Upstream already carries ${version}; nothing to submit."
+            exit 0
+          fi
+          git commit -m "sparkyfitness: update to ${version}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${fork_owner}/umbrel-apps.git" "${branch}"
+
+          # gh's --jq takes exactly one filter expression (no --arg support),
+          # so fork_owner is interpolated directly. Safe: GitHub logins are
+          # restricted to alphanumerics and hyphens, so this can't break out
+          # of the double-quoted jq string.
+          existing=$(gh pr list --repo "${UPSTREAM}" --head "${branch}" --state open \
+            --json url,headRepositoryOwner \
+            --jq ".[] | select(.headRepositoryOwner.login == \"${fork_owner}\") | .url" | head -1)
+          if [ -n "${existing}" ]; then
+            echo "Reusing existing pull request ${existing}"
+            pr_url="${existing}"
+          else
+            pr_url=$(gh pr create --repo "${UPSTREAM}" \
+              --head "${fork_owner}:${branch}" \
+              --base master \
+              --title "sparkyfitness: update to ${version}" \
+              --body "Updates the SparkyFitness package to [\`${version}\`](https://github.com/CodeWithCJ/SparkyFitness/releases/tag/${version}).
+
+          - Upstream project: https://github.com/CodeWithCJ/SparkyFitness
+          - Images: \`codewithcj/sparkyfitness\`, \`codewithcj/sparkyfitness_server\` and \`codewithcj/sparkyfitness_garmin\` on Docker Hub, built for \`linux/amd64\` and \`linux/arm64\` by the project's release workflow
+          - Changes: \`version\`, \`releaseNotes\`, and re-pinned image digests only -- everything else in the package is left as maintained upstream
+
+          Opened automatically after the corresponding change was reviewed and merged in the upstream project. \`npm run lint:apps -- sparkyfitness --check-images\` passes.")
+            echo "Opened ${pr_url}"
+          fi
+
+          echo "App Store pull request: ${pr_url}" >> "$GITHUB_STEP_SUMMARY"

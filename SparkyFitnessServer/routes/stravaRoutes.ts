@@ -1,3 +1,4 @@
+import { resolveMockDataOptions } from '../utils/mockDataOptions.js';
 import express from 'express';
 import authMiddleware from '../middleware/authMiddleware.js';
 import checkPermissionMiddleware from '../middleware/checkPermissionMiddleware.js';
@@ -5,6 +6,10 @@ import stravaIntegrationService from '../integrations/strava/stravaService.js';
 import stravaService from '../services/stravaService.js';
 import { log } from '../config/logging.js';
 import requireSelfActor from '../middleware/requireSelfMiddleware.js';
+import {
+  SYNC_ALREADY_RUNNING_RESPONSE,
+  startProviderSync,
+} from '../services/providerSyncClaim.js';
 const router = express.Router();
 // All Strava routes require authentication, and — when acting in a switched
 // family context — diary access to the active user.
@@ -68,16 +73,31 @@ router.post('/sync', async (req, res) => {
   try {
     const userId = req.userId;
     const { startDate, endDate } = req.body;
+    const { dataSource, saveMockData } = await resolveMockDataOptions(
+      req.body,
+      req.authenticatedUserId
+    );
     log(
       'info',
-      `[stravaRoutes] Manual sync triggered for user ${userId}${startDate ? ` from ${startDate}` : ''}${endDate ? ` to ${endDate}` : ''}`
+      `[stravaRoutes] Manual sync triggered for user ${userId}${startDate ? ` from ${startDate}` : ''}${endDate ? ` to ${endDate}` : ''}${dataSource ? ` (Source: ${dataSource})` : ''}`
     );
-    const result = await stravaService.syncStravaData(
-      userId,
-      'manual',
-      startDate,
-      endDate
+    const started = await startProviderSync(
+      { userId, providerType: 'strava' },
+      () =>
+        stravaService.syncStravaData(
+          userId,
+          'manual',
+          startDate,
+          endDate,
+          dataSource,
+          saveMockData
+        )
     );
+    if (!started) {
+      res.status(409).json(SYNC_ALREADY_RUNNING_RESPONSE);
+      return;
+    }
+    const result = await started.running;
     res.json(result);
   } catch (error) {
     // @ts-expect-error TS(2571): Object is of type 'unknown'.

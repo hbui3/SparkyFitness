@@ -12,6 +12,7 @@ import {
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { getEnergyUnitString } from '@/utils/nutritionCalculations';
 import { CONVERSION_FACTORS, kgToLbs } from '@/utils/unitConversions';
+import { formatWeeklyGoalRateWithUnit } from '@/utils/weeklyWeightGoal';
 import {
   getBmrAlgorithmLabel,
   getBodyFatAlgorithmLabel,
@@ -24,6 +25,7 @@ import {
   FAT_KCAL_PER_KG,
   LEAN_TISSUE_KCAL_PER_KG,
   ADAPTIVE_TDEE_CLAMP_KCAL,
+  isAdaptiveActivitySeparated,
   type CalorieTargetResult,
 } from '@workspace/shared';
 
@@ -48,6 +50,10 @@ interface AdaptiveTdeeData {
   wasClamped?: boolean;
   clampMin?: number;
   clampMax?: number;
+  activityAdjustedTdee?: number;
+  rawActivityAdjustedTdee?: number;
+  averageActivityCalories?: number;
+  activityDaysOfData?: number;
 }
 
 interface CalorieTargetBreakdownProps {
@@ -69,11 +75,13 @@ interface CalorieTargetBreakdownProps {
   goalMode: string;
   goalModeCalculationMethod: string;
   goalModeCustomPercentage: number;
+  goalModeWeeklyChangeKg?: number;
   calorieGoalAdjustmentMode: string;
   rawManualGoal: number;
   adjustedManualGoal: number;
   activityMultiplier: number;
   bmrSource?: string;
+  adaptiveActivitySeparate?: boolean;
 }
 
 export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
@@ -94,13 +102,15 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
   goalMode,
   goalModeCalculationMethod,
   goalModeCustomPercentage,
+  goalModeWeeklyChangeKg = 0,
   calorieGoalAdjustmentMode,
   rawManualGoal,
   adjustedManualGoal,
   activityMultiplier,
   bmrSource,
+  adaptiveActivitySeparate = false,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { energyUnit, convertEnergy, weightUnit = 'kg' } = usePreferences();
   const bmrAlgorithmLabel = getBmrAlgorithmLabel(t, bmrAlgorithm);
   const bodyFatAlgorithmLabel = getBodyFatAlgorithmLabel(t, bodyFatAlgorithm);
@@ -128,10 +138,20 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
     trendMassUnit === 'lbs' ? kgToLbs(kg) : kg;
 
   const isAdaptiveMethod = goalModeCalculationMethod === 'adaptive';
+  const activitySeparated = isAdaptiveActivitySeparated(
+    calorieGoalAdjustmentMode,
+    goalModeCalculationMethod,
+    adaptiveActivitySeparate
+  );
   // Same label matrix as the CalculationSettings Live Preview (shared t() keys):
   // the baseline is only a TDEE under the adaptive method.
   let baselineLabel: string;
-  if (isAdaptiveMethod) {
+  if (activitySeparated) {
+    baselineLabel = t(
+      'settings.goalMode.baselineActivityExcluded',
+      'Adaptive baseline (activity excluded)'
+    );
+  } else if (isAdaptiveMethod) {
     baselineLabel = previewResult.insufficientHistory
       ? t('settings.goalMode.baselineEstimatedTdee', 'Estimated TDEE')
       : t(
@@ -836,10 +856,13 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
                 <ul className="list-disc pl-4 space-y-0.5 text-sm">
                   <li>
                     {t(
-                      'diary.calculateExplanation.averageDailyIntake',
-                      'Average daily calorie intake:'
-                    )}{' '}
-                    {displayAdaptiveIntake} {getEnergyUnitString(energyUnit)}
+                      'diary.calculateExplanation.averageDailyCalorieIntake',
+                      'Average daily calorie intake: {{displayAdaptiveIntake}} {{energyUnitString}}',
+                      {
+                        displayAdaptiveIntake,
+                        energyUnitString: getEnergyUnitString(energyUnit),
+                      }
+                    )}
                     {adaptiveTdeeData?.windowStartDate &&
                       adaptiveTdeeData?.windowEndDate && (
                         // The average covers only days that were actually logged,
@@ -921,17 +944,19 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
                   )}
                   <li>
                     {t(
-                      'diary.calculateExplanation.calculatedExpenditure',
-                      'Calculated Expenditure (TDEE):'
-                    )}{' '}
-                    {Math.round(
-                      convertEnergy(
-                        adaptiveTdeeData?.tdee || 0,
-                        'kcal',
-                        energyUnit
-                      )
-                    )}{' '}
-                    {getEnergyUnitString(energyUnit)}
+                      'diary.calculateExplanation.calculatedExpenditureTDEE',
+                      'Calculated Expenditure (TDEE): {{energy}} {{energyUnitString}}',
+                      {
+                        energy: Math.round(
+                          convertEnergy(
+                            adaptiveTdeeData?.tdee || 0,
+                            'kcal',
+                            energyUnit
+                          )
+                        ),
+                        energyUnitString: getEnergyUnitString(energyUnit),
+                      }
+                    )}
                     {typeof adaptiveTdeeData?.weightChangeCalories ===
                       'number' &&
                       !adaptiveTdeeData?.wasClamped && (
@@ -1036,6 +1061,61 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
                 )}
               </div>
             )}
+            {activitySeparated && (
+              <div className="mt-2 rounded border border-border/60 bg-muted/40 p-2 space-y-1">
+                {!previewResult.insufficientHistory &&
+                  adaptiveTdeeData?.rawActivityAdjustedTdee != null && (
+                    <p>
+                      {t('diary.calculateExplanation.activityBaselineMath', {
+                        defaultValue:
+                          'Raw full-day TDEE − average activity = raw adaptive baseline: {{total}} − {{activity}} = {{baseline}} {{unit}} ({{days}} days of activity history).',
+                        total: displayAdaptiveRawTdee,
+                        activity:
+                          displayAdaptiveRawTdee -
+                          Math.round(
+                            convertEnergy(
+                              adaptiveTdeeData.rawActivityAdjustedTdee,
+                              'kcal',
+                              energyUnit
+                            )
+                          ),
+                        baseline: Math.round(
+                          convertEnergy(
+                            adaptiveTdeeData.rawActivityAdjustedTdee,
+                            'kcal',
+                            energyUnit
+                          )
+                        ),
+                        unit: getEnergyUnitString(energyUnit),
+                        days: adaptiveTdeeData.activityDaysOfData ?? 0,
+                      })}
+                    </p>
+                  )}
+                {!previewResult.insufficientHistory &&
+                  adaptiveTdeeData?.activityAdjustedTdee != null && (
+                    <p>
+                      {t('diary.calculateExplanation.activityBaselineCapped', {
+                        defaultValue:
+                          'After the BMR-based plausibility cap, the adaptive baseline is {{baseline}} {{unit}}. Goal Mode and your safety floor apply to this baseline.',
+                        baseline: Math.round(
+                          convertEnergy(
+                            adaptiveTdeeData.activityAdjustedTdee,
+                            'kcal',
+                            energyUnit
+                          )
+                        ),
+                        unit: getEnergyUnitString(energyUnit),
+                      })}
+                    </p>
+                  )}
+                <p>
+                  {t(
+                    'diary.calculateExplanation.activitySeparatedCredit',
+                    "Today's steps and workouts are credited separately once, without adding BMR again. Until enough history is available, the baseline uses BMR × your non-workout activity multiplier. Consistent food, weight and activity history improves this estimate."
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1100,18 +1180,23 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
               ) : (
                 <span>
                   {t(
-                    'diary.calculateExplanation.adaptiveTdeeExpenditure',
-                    'Adaptive TDEE (Expenditure)'
-                  )}{' '}
-                  ={' '}
-                  {Math.round(
-                    convertEnergy(
-                      previewResult.baselineTdee,
-                      'kcal',
-                      energyUnit
-                    )
-                  )}{' '}
-                  {getEnergyUnitString(energyUnit)}
+                    activitySeparated
+                      ? 'diary.calculateExplanation.activityExcludedBaselineValue'
+                      : 'diary.calculateExplanation.adaptiveTDEEExpenditure',
+                    activitySeparated
+                      ? 'Adaptive baseline = {{energy}} {{energyUnitString}}'
+                      : 'Adaptive TDEE (Expenditure) = {{energy}} {{energyUnitString}}',
+                    {
+                      energy: Math.round(
+                        convertEnergy(
+                          previewResult.baselineTdee,
+                          'kcal',
+                          energyUnit
+                        )
+                      ),
+                      energyUnitString: getEnergyUnitString(energyUnit),
+                    }
+                  )}
                 </span>
               )
             ) : (
@@ -1119,26 +1204,28 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
                 {calorieGoalAdjustmentMode === 'adaptive' ? (
                   <>
                     {t(
-                      'diary.calculateExplanation.adaptiveManualGoal',
-                      'Adaptive Manual Calorie Goal'
-                    )}{' '}
-                    ={' '}
-                    {Math.round(
-                      convertEnergy(adjustedManualGoal, 'kcal', energyUnit)
-                    )}{' '}
-                    {getEnergyUnitString(energyUnit)}
+                      'diary.calculateExplanation.adaptiveManualCalorieGoal',
+                      'Adaptive Manual Calorie Goal = {{energy}} {{energyUnitString}}',
+                      {
+                        energy: Math.round(
+                          convertEnergy(adjustedManualGoal, 'kcal', energyUnit)
+                        ),
+                        energyUnitString: getEnergyUnitString(energyUnit),
+                      }
+                    )}
                   </>
                 ) : (
                   <>
                     {t(
-                      'diary.calculateExplanation.manualDailyGoal',
-                      'Manual Daily Calorie Goal'
-                    )}{' '}
-                    ={' '}
-                    {Math.round(
-                      convertEnergy(rawManualGoal, 'kcal', energyUnit)
-                    )}{' '}
-                    {getEnergyUnitString(energyUnit)}
+                      'diary.calculateExplanation.manualDailyCalorieGoal',
+                      'Manual Daily Calorie Goal = {{energy}} {{energyUnitString}}',
+                      {
+                        energy: Math.round(
+                          convertEnergy(rawManualGoal, 'kcal', energyUnit)
+                        ),
+                        energyUnitString: getEnergyUnitString(energyUnit),
+                      }
+                    )}
                   </>
                 )}
               </span>
@@ -1164,13 +1251,29 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
                  signed, so formatting them raw double-prints the sign for gain
                  modes ("Deficit (--10%) = --200 kcal"). */
               <span>
-                {goalModeLabel} {adjustmentLabel} ({adjustmentSign}
-                {Math.abs(Math.round(deficitPct * 100))}%) = {adjustmentSign}
-                {Math.abs(
+                {goalModeLabel} {adjustmentLabel} (
+                {goalMode === 'weekly'
+                  ? t('settings.goalMode.weeklyRateWithUnit', {
+                      defaultValue: '{{rate}} / week',
+                      rate: `${
+                        goalModeWeeklyChangeKg < 0
+                          ? '-'
+                          : goalModeWeeklyChangeKg > 0
+                            ? '+'
+                            : ''
+                      }${formatWeeklyGoalRateWithUnit(
+                        goalModeWeeklyChangeKg,
+                        weightUnit,
+                        i18n.resolvedLanguage ?? i18n.language
+                      )}`,
+                    })
+                  : `${adjustmentSign}${Math.abs(Math.round(deficitPct * 100))}%`}
+                ) ={' '}
+                {`${adjustmentSign}${Math.abs(
                   Math.round(
                     convertEnergy(calculatedDeficitAmount, 'kcal', energyUnit)
                   )
-                )}{' '}
+                )}`}{' '}
                 {getEnergyUnitString(energyUnit)}
               </span>
             )}
@@ -1184,18 +1287,26 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
             </span>
             <ul className="list-disc pl-4 space-y-0.5 text-[9px] mt-0.5">
               <li>
-                {t('diary.calculateExplanation.rmrFloor', 'RMR Floor:')}{' '}
-                {displayBmrVal} {getEnergyUnitString(energyUnit)}
+                {t(
+                  'diary.calculateExplanation.rmrFloor2',
+                  'RMR Floor: {{displayBmrVal}} {{energyUnitString}}',
+                  {
+                    displayBmrVal,
+                    energyUnitString: getEnergyUnitString(energyUnit),
+                  }
+                )}
               </li>
               <li>
                 {t(
-                  'diary.calculateExplanation.clinicalFloor',
-                  'Clinical Absolute Floor:'
-                )}{' '}
-                {Math.round(
-                  convertEnergy(absoluteSafetyFloor, 'kcal', energyUnit)
-                )}{' '}
-                {getEnergyUnitString(energyUnit)}
+                  'diary.calculateExplanation.clinicalAbsoluteFloor',
+                  'Clinical Absolute Floor: {{energy}} {{energyUnitString}}',
+                  {
+                    energy: Math.round(
+                      convertEnergy(absoluteSafetyFloor, 'kcal', energyUnit)
+                    ),
+                    energyUnitString: getEnergyUnitString(energyUnit),
+                  }
+                )}
               </li>
               <li>
                 {t(
@@ -1203,7 +1314,9 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
                   'Effective Safety Floor:'
                 )}{' '}
                 {effectiveSafetyFloor === null ? (
-                  t('settings.goalMode.safetyFloorDisabled', 'Disabled')
+                  <span>
+                    {t('settings.goalMode.safetyFloorDisabled', 'Disabled')}
+                  </span>
                 ) : (
                   <>
                     {Math.round(
@@ -1215,7 +1328,7 @@ export const CalorieTargetBreakdown: React.FC<CalorieTargetBreakdownProps> = ({
               </li>
             </ul>
           </div>
-          {isAdaptiveMethod && (
+          {(isAdaptiveMethod || goalMode === 'weekly') && (
             <div className="text-sm text-gray-500 italic mt-0.5">
               {/* computeCalorieTarget already decided this; re-deriving it here
                   drifts if the rounding or floor rules change. */}

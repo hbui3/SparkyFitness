@@ -3,9 +3,11 @@ export const MANUAL_SYNC_PROVIDERS = [
   'fitbit',
   'oura',
   'polar',
+  'coros_mcp',
   'withings',
   'garmin',
   'hevy',
+  'liftosaur',
 ] as const;
 
 export type ManualSyncProvider = (typeof MANUAL_SYNC_PROVIDERS)[number];

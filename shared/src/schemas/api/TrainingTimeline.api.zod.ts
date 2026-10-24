@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 const calendarDaySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -11,7 +11,7 @@ export const trainingTimelineQuerySchema = z
     ({ startDate, endDate }) =>
       (startDate === undefined && endDate === undefined) ||
       (startDate !== undefined && endDate !== undefined),
-    { message: "startDate and endDate must be provided together" },
+    { message: 'startDate and endDate must be provided together' }
   );
 
 export const trainingTimelineItemSchema = z.object({
@@ -19,7 +19,7 @@ export const trainingTimelineItemSchema = z.object({
   date: calendarDaySchema,
   name: z.string(),
   source: z.string(),
-  status: z.enum(["completed", "planned", "missed"]),
+  status: z.enum(['completed', 'planned', 'missed']),
   workoutPresetId: z.number().int().positive().nullable(),
   workoutPlanAssignmentId: z.number().int().positive().nullable(),
   exerciseCount: z.number().int().nonnegative(),
@@ -45,13 +45,13 @@ export const activeTrainingPlanSchema = z.object({
       totalSetCount: z.number().int().nonnegative(),
       warmupSetCount: z.number().int().nonnegative(),
       workingSetCount: z.number().int().nonnegative(),
-    }),
+    })
   ),
 });
 
 export const trainingDaySummarySchema = z.object({
   date: calendarDaySchema,
-  status: z.enum(["completed", "in_progress", "planned", "missed"]),
+  status: z.enum(['completed', 'in_progress', 'planned', 'missed']),
   scheduledWorkoutCount: z.number().int().nonnegative(),
   completedScheduledWorkoutCount: z.number().int().nonnegative(),
   completedWorkoutCount: z.number().int().nonnegative(),

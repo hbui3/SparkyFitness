@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  ensureCatalogNutrients,
   fetchCustomNutrients,
   type UserCustomNutrient,
 } from '../services/api/customNutrientsApi';
@@ -33,4 +34,15 @@ export function useCustomNutrients({
     error: query.error,
     refetch: query.refetch,
   };
+}
+
+/** Creates the custom nutrients a supplement's catalog picks need. */
+export function useEnsureCatalogNutrients() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ensureCatalogNutrients,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: customNutrientsQueryKey });
+    },
+  });
 }

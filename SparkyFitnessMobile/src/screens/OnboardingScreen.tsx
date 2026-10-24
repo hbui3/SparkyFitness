@@ -745,7 +745,10 @@ export default function OnboardingScreen({ navigation }: Props) {
     } else if (authSettings) {
       segments.push({
         key: 'signIn' as const,
-        label: t('auth.passkey', { defaultValue: 'Passkey' }),
+        label:
+          authSettings.passkey?.enabled !== false
+            ? t('auth.passkey', { defaultValue: 'Passkey' })
+            : t('auth.signIn', { defaultValue: 'Sign In' }),
       });
     }
 
@@ -879,34 +882,38 @@ export default function OnboardingScreen({ navigation }: Props) {
                       </View>
                     </Button>
                   ))}
-                <Button
-                  variant="outline"
-                  onPress={handlePasskeyLogin}
-                  disabled={loading}
-                  className="w-full flex-row items-center justify-center p-2.5 rounded-lg border bg-raised"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: borderSubtle,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ marginRight: 8 }}>
-                      <Icon
-                        name="fingerprint"
-                        size={20}
-                        color={accentPrimary}
-                      />
+                {authSettings.passkey?.enabled !== false && (
+                  <Button
+                    variant="outline"
+                    onPress={handlePasskeyLogin}
+                    disabled={loading}
+                    className="w-full flex-row items-center justify-center p-2.5 rounded-lg border bg-raised"
+                    style={{
+                      borderWidth: 1,
+                      borderColor: borderSubtle,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <View
+                      style={{ flexDirection: 'row', alignItems: 'center' }}
+                    >
+                      <View style={{ marginRight: 8 }}>
+                        <Icon
+                          name="fingerprint"
+                          size={20}
+                          color={accentPrimary}
+                        />
+                      </View>
+                      <Text className="text-base font-semibold text-text-primary">
+                        {t('auth.signInWithPasskey', {
+                          defaultValue: 'Sign in with Passkey',
+                        })}
+                      </Text>
                     </View>
-                    <Text className="text-base font-semibold text-text-primary">
-                      {t('auth.signInWithPasskey', {
-                        defaultValue: 'Sign in with Passkey',
-                      })}
-                    </Text>
-                  </View>
-                </Button>
+                  </Button>
+                )}
               </View>
             )}
 

@@ -3,11 +3,13 @@ import {
   addDays,
   todayInZone,
   ENERGY_DENSITY_KCAL_PER_KG,
+  chatScoreToMoodValue,
 } from '@workspace/shared';
 import { log } from '../../config/logging.js';
 import coachRepository from '../../models/coachRepository.js';
 import coachProfileService from '../../services/coachProfileService.js';
 import workoutDeduplicationService from '../../services/workoutDeduplicationService.js';
+import symptomRepository from '../../models/symptomRepository.js';
 import { ERRORS, formatZodError } from './errors.js';
 import { normalizeDayKeywords } from './dates.js';
 import { getResolvedExerciseCaloriesTotal } from '../../services/exerciseCalorieRangeService.js';
@@ -181,6 +183,11 @@ async function get30DayTrends(
     end
   );
 
+  const symptomEntries = await symptomRepository.listSymptomEntries(userId, {
+    fromDate: thirtyDayWindowStart(end),
+    toDate: end,
+  });
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const weights = weightRows.map((r: any) => ({
     date: dayString(r.entry_date),
@@ -201,7 +208,11 @@ async function get30DayTrends(
     },
     mood: {
       entries: mood.entries,
-      avg_mood: Number(Number(mood.avg_mood).toFixed(1)),
+      // On the 1-10 scale these tools speak, keeping the decimal because this
+      // is an average rather than a score someone picked. Deliberately not
+      // `moodValueToChatScore`, which floors at 1: the repository coalesces to
+      // 0 for "no entries", and turning that into a 1 would invent a mood.
+      avg_mood: Number((Number(mood.avg_mood) / 10).toFixed(1)),
     },
     sleep: {
       entries: sleep.entries,
@@ -209,6 +220,13 @@ async function get30DayTrends(
         (Number(sleep.avg_duration_seconds) / 3600).toFixed(1)
       ),
       avg_sleep_score: Number(Number(sleep.avg_sleep_score).toFixed(0)),
+    },
+    symptoms: {
+      entries_logged: symptomEntries.length,
+      symptom_days: new Set(symptomEntries.map((e) => e.entry_date)).size,
+      episodes: symptomEntries.filter(
+        (e) => e.started_at !== null && e.started_at !== undefined
+      ).length,
     },
     biometrics: {
       weight_entries: weights.length,
@@ -272,7 +290,12 @@ async function detectPatterns(
           (sum: number, r: any) => sum + Number(r.mood_value),
           0
         ) / highCalDays.length;
-      if (avgHighCalMood > 7)
+      // The threshold is 7 on the 1-10 scale it was written for, expressed on
+      // the scale the value is stored in. Compared against the stored value as
+      // a bare 7 it was true of every mood on record, so the pattern was
+      // reported whenever the days existed, whatever the moods were. Converting
+      // the average instead would round it, quietly moving the cut to 7.5.
+      if (avgHighCalMood > chatScoreToMoodValue(7))
         patterns.push(
           'High calorie days (>2500) are associated with higher reported mood.'
         );

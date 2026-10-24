@@ -23,6 +23,8 @@ data:
   {{- end }}
   SPARKY_FITNESS_FORCE_EMAIL_LOGIN: {{ .Values.config.forceEmailLogin | quote }}
   SPARKY_FITNESS_DISABLE_EMAIL_LOGIN: {{ .Values.config.disableEmailLogin | quote }}
+  SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN: {{ .Values.config.disablePasskeyLogin | quote }}
+  SPARKY_FITNESS_FORCE_PASSKEY_LOGIN: {{ .Values.config.forcePasskeyLogin | quote }}
   {{- if .Values.config.email.enabled }}
   SPARKY_FITNESS_EMAIL_HOST: {{ .Values.config.email.host | quote }}
   SPARKY_FITNESS_EMAIL_PORT: {{ .Values.config.email.port | quote }}
@@ -68,25 +70,4 @@ data:
   {{- end }}
   {{- with .Values.config.rateLimiting.maxRequests }}
   SPARKY_FITNESS_API_KEY_RATELIMIT_MAX_REQUESTS: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.developer.fitbitDataSource }}
-  SPARKY_FITNESS_FITBIT_DATA_SOURCE: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.developer.withingsDataSource }}
-  SPARKY_FITNESS_WITHINGS_DATA_SOURCE: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.developer.garminDataSource }}
-  SPARKY_FITNESS_GARMIN_DATA_SOURCE: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.developer.polarDataSource }}
-  SPARKY_FITNESS_POLAR_DATA_SOURCE: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.developer.hevyDataSource }}
-  SPARKY_FITNESS_HEVY_DATA_SOURCE: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.developer.googleHealthDataSource }}
-  SPARKY_FITNESS_GOOGLE_HEALTH_DATA_SOURCE: {{ . | quote }}
-  {{- end }}
-  {{- if .Values.config.developer.saveMockData }}
-  SPARKY_FITNESS_SAVE_MOCK_DATA: "true"
   {{- end }}

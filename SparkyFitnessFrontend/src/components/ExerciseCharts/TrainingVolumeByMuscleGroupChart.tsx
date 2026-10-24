@@ -8,7 +8,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from 'recharts';
 
 interface TrainingVolumeByMuscleGroupChartProps {
@@ -21,6 +20,8 @@ export const TrainingVolumeByMuscleGroupChart = ({
   weightUnit,
 }: TrainingVolumeByMuscleGroupChartProps) => {
   const { t } = useTranslation();
+  const chartData = [...data].sort((a, b) => b.volume - a.volume);
+  const height = Math.min(420, Math.max(180, chartData.length * 32));
 
   return (
     <Card>
@@ -33,7 +34,7 @@ export const TrainingVolumeByMuscleGroupChart = ({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="h-[300px] w-full">
+        <div className="w-full" style={{ height }}>
           <ResponsiveContainer
             width="100%"
             height="100%"
@@ -42,29 +43,36 @@ export const TrainingVolumeByMuscleGroupChart = ({
             debounce={100}
           >
             <BarChart
-              data={data}
-              margin={{ top: 20, right: 30, bottom: 20, left: 20 }}
+              data={chartData}
+              layout="vertical"
+              margin={{ top: 4, right: 12, left: 4, bottom: 4 }}
             >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="muscle" />
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 11 }}
+                tickFormatter={(value: number) => String(Math.round(value))}
+              />
               <YAxis
-                label={{
-                  value: t(
-                    'exerciseReportsDashboard.volumeCurrent',
-                    `Volume (${weightUnit})`,
-                    { weightUnit }
-                  ),
-                  angle: -90,
-                  position: 'insideLeft',
-                  offset: 10,
-                  style: { textAnchor: 'middle' },
-                }}
+                type="category"
+                dataKey="muscle"
+                width={88}
+                interval={0}
+                tick={{ fontSize: 11 }}
               />
               <Tooltip
+                formatter={(value: unknown) => [
+                  `${Math.round(Number(value) || 0)} ${weightUnit}`,
+                  t('exerciseReportsDashboard.volumeCurrent', 'Volume'),
+                ]}
                 contentStyle={{ backgroundColor: 'hsl(var(--background))' }}
               />
-              <Legend />
-              <Bar dataKey="volume" fill="#ff7300" isAnimationActive={false} />
+              <Bar
+                dataKey="volume"
+                fill="#ff7300"
+                isAnimationActive={false}
+                radius={[0, 4, 4, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>

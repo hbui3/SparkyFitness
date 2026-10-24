@@ -18,6 +18,13 @@ import {
 // bound as the editors on web and mobile.
 const notesSchema = z.string().max(NOTES_MAX_LENGTH).optional();
 
+// Keep barcode as a string so leading zeroes survive. This matches the existing
+// barcode lookup contract rather than assuming a single barcode standard.
+const foodBarcodeSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{8,14}$/, 'Barcode must be 8-14 digits');
+
 // Mirrors the web/mobile "Quick Add" checkbox (foods.is_quick_food). Shared by
 // the strict create_food union member and the flat published input schema so
 // both carry the same opt-in-only wording.
@@ -93,7 +100,7 @@ const logFoodSchema = z
       .max(50)
       .optional()
       .describe(
-        "Unit of measurement (e.g., 'g', 'piece', 'serving'); defaults to the food's serving unit"
+        "Consumed unit. Use a concrete matching unit such as 'g' or 'ml', or explicit 'serving' (for example quantity:0.75). Do not put a reference size such as '100 g' in unit."
       ),
     meal_type: mealTypeEnum
       .optional()
@@ -163,12 +170,23 @@ const createFoodSchema = z
     action: z
       .literal('create_food')
       .describe(
-        "Create a food. AI clients: you MUST search the web and populate as many micro-nutrients (fat details, fiber, sugar, sodium, potassium, calcium, iron, vitamins), GI classification, and brand ('Homemade' or 'Traditional' if generic) as possible rather than just core macros. When the user asked to log/eat/add this food, meal_type (or meal_type_id) is REQUIRED so creation and diary logging happen atomically."
+        'Create a food from verified label/source values or an explicitly requested estimate. Preserve unknown nutrients as omitted fields; never invent micros or use an estimate to hide a provider outage.'
       ),
-    food_name: z.string().min(1).max(200).describe('Name of the new food item'),
+    food_name: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe(
+        'Exact product or recipe name, preserving brand, variety and raw/cooked distinctions.'
+      ),
     brand: z.string().max(200).optional().describe('Brand name of the food'),
+    barcode: foodBarcodeSchema
+      .optional()
+      .describe(
+        'Product barcode; stored as a string, including leading zeroes'
+      ),
     notes: notesSchema.describe(
-      'Optional markdown reference note about this food — preparation, how the user orders it, or a recipe. Only set it when the user actually supplied such detail; never invent one.'
+      'Optional markdown reference note for recipes, preparation details, or ingredients. Keep the exact product name in food_name; put preparation details here.'
     ),
     calories: z.coerce.number().min(0).describe('Calories (kcal)'),
     protein: z.coerce.number().min(0).describe('Protein (g)'),
@@ -179,96 +197,117 @@ const createFoodSchema = z
       .min(0)
       .optional()
       .describe(
-        'Saturated fat (g). MANDATORY: Estimate and populate this if total fat > 0 based on typical profile (e.g. animal fats vs plant oils); do not default to 0/empty.'
+        'Saturated fat (g). Include only when supported by the source; omit when unknown.'
       ),
     polyunsaturated_fat: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Polyunsaturated fat (g). MANDATORY: Estimate and populate this if total fat > 0 based on typical profile; do not default to 0/empty.'
+        'Polyunsaturated fat (g). Include only when supported by the source; omit when unknown.'
       ),
     monounsaturated_fat: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Monounsaturated fat (g). MANDATORY: Estimate and populate this if total fat > 0 based on typical profile; do not default to 0/empty.'
+        'Monounsaturated fat (g). Include only when supported by the source; omit when unknown.'
       ),
     trans_fat: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Trans fat (g). MANDATORY: Estimate and populate this if total fat > 0 based on typical profile; do not default to 0/empty.'
+        'Trans fat (g). Include only when supported by the source; omit when unknown.'
       ),
     cholesterol: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Cholesterol (mg). MANDATORY: Estimate and populate this if food is animal-based or has fat; do not default to 0/empty.'
+        'Cholesterol (mg). Include only when supported by the source; omit when unknown.'
       ),
     sodium: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Sodium (mg). MANDATORY: Estimate and populate based on food type and processing; do not default to 0/empty.'
+        'Sodium (mg). Include only when supported by the source; omit when unknown.'
       ),
     potassium: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Potassium (mg). MANDATORY: Estimate and populate based on typical food composition; do not default to 0/empty.'
+        'Potassium (mg). Include only when supported by the source; omit when unknown.'
       ),
     fiber: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Dietary fiber (g). MANDATORY: Estimate and populate if plant-based or contains carbs; do not default to 0/empty.'
+        'Dietary fiber (g). Include only when supported by the source; omit when unknown.'
       ),
     sugar: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Sugars (g). MANDATORY: Estimate and populate if food contains carbs; do not default to 0/empty.'
+        'Sugars (g). Include only when supported by the source; omit when unknown.'
       ),
     vitamin_a: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Vitamin A (% Daily Value). MANDATORY: Estimate and populate based on typical food composition; do not default to 0/empty.'
+        'Vitamin A (% Daily Value). Include only when supported by the source; omit when unknown.'
       ),
     vitamin_c: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Vitamin C (% Daily Value). MANDATORY: Estimate and populate based on typical food composition; do not default to 0/empty.'
+        'Vitamin C (% Daily Value). Include only when supported by the source; omit when unknown.'
       ),
     calcium: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Calcium (% Daily Value). MANDATORY: Estimate and populate based on typical food composition; do not default to 0/empty.'
+        'Calcium (% Daily Value). Include only when supported by the source; omit when unknown.'
       ),
     iron: z.coerce
       .number()
       .min(0)
       .optional()
       .describe(
-        'Iron (% Daily Value). MANDATORY: Estimate and populate based on typical food composition; do not default to 0/empty.'
+        'Iron (% Daily Value). Include only when supported by the source; omit when unknown.'
+      ),
+    caffeine_mg: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'Caffeine (mg) per serving_size. Include only when supported by the source; omit when unknown.'
+      ),
+    alcohol_g: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'Alcohol / pure ethanol (g) per serving_size. Include only when supported by the source; omit when unknown.'
+      ),
+    water_ml: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        "Water content (ml) per serving_size. Only set this for a solid or count-based food with meaningful water content — fruit, vegetables, soup, yogurt. Skip it when the food is already logged in a volume unit (ml, l, fl oz): the app credits that logged volume as water automatically, so setting this too would double it. Never guess for foods where water content isn't meaningful (bread, chips, meat)."
       ),
     gi: giIndexEnum
       .optional()
       .describe(
-        'Glycemic Index classification. MANDATORY: Classify as low, medium, or high based on carb composition.'
+        'Glycemic Index classification. Include only when supported by the source; omit when unknown.'
       ),
     quantity: z.coerce
       .number()
@@ -431,13 +470,23 @@ const updateEntrySchema = z
     }
   );
 
+const setFoodBarcodeSchema = z
+  .object({
+    action: z.literal('set_food_barcode'),
+    food_id: uuidSchema.describe('Food UUID whose product metadata is updated'),
+    barcode: foodBarcodeSchema.describe(
+      'Product barcode; stored as a string, including leading zeroes'
+    ),
+  })
+  .strict();
+
 const updateFoodVariantSchema = z
   .object({
     action: z.literal('update_food_variant'),
     food_id: uuidSchema
       .optional()
       .describe(
-        'Food UUID. Used to find the default variant when variant_id is not provided.'
+        'Food UUID from search_food. Required unless variant_id is provided. Do not call update_food_variant with only nutrient fields.'
       ),
     variant_id: uuidSchema
       .optional()
@@ -528,6 +577,25 @@ const updateFoodVariantSchema = z
       .min(0)
       .optional()
       .describe('Updated iron (% Daily Value)'),
+    caffeine_mg: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe('Updated caffeine (mg) per serving_size'),
+    alcohol_g: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'Updated alcohol / pure ethanol (g) per serving_size. Informational only — never added to calories.'
+      ),
+    water_ml: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'Updated water content (ml) per serving_size. Skip when the food is logged in a volume unit (ml, l, fl oz) — that logged volume is already credited as water automatically.'
+      ),
     gi: giIndexEnum
       .optional()
       .describe('Updated Glycemic Index classification'),
@@ -578,14 +646,18 @@ const saveAsMealTemplateSchema = z
       .string()
       .min(1)
       .max(200)
-      .describe('Name for the new meal template'),
+      .describe(
+        'Short, concise name for the meal template (2-4 words max, e.g. "Chicken Rice Bowl")'
+      ),
     description: z
       .string()
       .max(1000)
       .optional()
-      .describe('Description for the meal template'),
+      .describe(
+        'Short tag or label (under 50 chars). Put recipe steps, instructions, or long details in notes, not description'
+      ),
     notes: notesSchema.describe(
-      'Optional markdown reference note for the meal template, e.g. a recipe. Only set it when the user actually supplied one.'
+      'Optional markdown reference note for the meal template (recipes, preparation instructions). Put detailed info here.'
     ),
   })
   .strict();
@@ -667,6 +739,7 @@ export const manageFoodSchema = z.discriminatedUnion('action', [
   setFoodNotesSchema,
   deleteFoodSchema,
   updateEntrySchema,
+  setFoodBarcodeSchema,
   updateFoodVariantSchema,
   copyFromYesterdaySchema,
   saveAsMealTemplateSchema,
@@ -697,6 +770,7 @@ export const manageFoodInput = z.object({
       'delete_food',
       'update_entry',
       'set_food_notes',
+      'set_food_barcode',
       'update_food_variant',
       'copy_from_yesterday',
       'save_as_meal_template',
@@ -724,9 +798,14 @@ export const manageFoodInput = z.object({
     .string()
     .optional()
     .describe(
-      'Internal food UUID — alternative to food_name. NOT the External ID from lookup_food_nutrition results.'
+      'Internal food UUID — alternative to food_name. NOT the External ID from lookup_food_nutrition results. For update_food_variant, required: run search_food first and pass this id (no food_name fallback).'
     ),
-  variant_id: z.string().optional().describe('Food variant UUID'),
+  variant_id: z
+    .string()
+    .optional()
+    .describe(
+      'Food variant UUID. For update_food_variant, an alternative to food_id; one of the two is required.'
+    ),
   external_id: z
     .string()
     .max(100)
@@ -756,6 +835,9 @@ export const manageFoodInput = z.object({
     .max(200)
     .optional()
     .describe('Brand name — for create_food'),
+  barcode: foodBarcodeSchema
+    .optional()
+    .describe('Product barcode for create_food or set_food_barcode'),
   // serving
   quantity: z.coerce
     .number()
@@ -852,6 +934,27 @@ export const manageFoodInput = z.object({
   vitamin_c: z.coerce.number().min(0).optional().describe('Vitamin C (% DV)'),
   calcium: z.coerce.number().min(0).optional().describe('Calcium (% DV)'),
   iron: z.coerce.number().min(0).optional().describe('Iron (% DV)'),
+  caffeine_mg: z.coerce
+    .number()
+    .min(0)
+    .optional()
+    .describe(
+      'Caffeine (mg) — for create_food/update_food_variant, per serving_size'
+    ),
+  alcohol_g: z.coerce
+    .number()
+    .min(0)
+    .optional()
+    .describe(
+      'Alcohol / pure ethanol (g) — for create_food/update_food_variant, per serving_size. Informational only, never added to calories.'
+    ),
+  water_ml: z.coerce
+    .number()
+    .min(0)
+    .optional()
+    .describe(
+      'Water content (ml) — for create_food/update_food_variant, per serving_size. Skip when the food is logged in a volume unit (ml, l, fl oz); that logged volume is already credited as water automatically.'
+    ),
   gi: giIndexEnum.optional().describe('Glycemic index classification'),
   // entry / diary management
   entry_id: uuidSchema.optional().describe('Diary entry UUID'),

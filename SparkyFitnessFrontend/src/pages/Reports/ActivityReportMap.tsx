@@ -12,9 +12,13 @@ L.Icon.Default.mergeOptions({
 
 interface ActivityReportMapProps {
   polylineData?: { lat: number; lon: number }[];
+  height?: number;
 }
 
-const ActivityReportMap = ({ polylineData }: ActivityReportMapProps) => {
+const ActivityReportMap = ({
+  polylineData,
+  height = 400,
+}: ActivityReportMapProps) => {
   const { t } = useTranslation();
   if (!polylineData || polylineData.length === 0) {
     return (
@@ -27,10 +31,11 @@ const ActivityReportMap = ({ polylineData }: ActivityReportMapProps) => {
   const endPoint = positions[positions.length - 1];
 
   return (
-    <div style={{ height: '400px', width: '100%' }}>
+    <div style={{ height: `${height}px`, width: '100%' }}>
       <MapContainer
         center={startPoint}
         zoom={13}
+        keyboard={false}
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer

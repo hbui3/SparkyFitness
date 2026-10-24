@@ -32,6 +32,15 @@ import {
   resolveExerciseImageSrc,
   filterValidExerciseImages,
 } from '@/utils/exercises';
+import {
+  cancelSpeech,
+  isSpeechSynthesisSupported,
+  pauseSpeech,
+  pickDefaultSpeechVoice,
+  resumeSpeech,
+  speakText,
+  subscribeToSpeechVoices,
+} from '@/utils/speechNarrator';
 
 interface ExercisePlaybackModalProps {
   isOpen: boolean;
@@ -97,31 +106,16 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
         loggingLevel,
         `[speakInstruction] Speaking instruction ${index}: "${text}"`
       );
-      if (!('speechSynthesis' in window)) {
+      if (!isSpeechSynthesisSupported()) {
         warn(loggingLevel, 'Speech Synthesis not supported in this browser.');
         return;
       }
-      const synth = window.speechSynthesis;
 
-      // Cancel any ongoing speech before starting a new one
-      if (synth && typeof synth.cancel === 'function') {
-        synth.cancel();
-      }
+      const voice = selectedVoiceURI
+        ? voices.find((v) => v.voiceURI === selectedVoiceURI)
+        : undefined;
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US'; // Default language
-      utterance.rate = 1; // Normal speed
-      utterance.pitch = 1; // Normal pitch
-
-      if (selectedVoiceURI) {
-        const voice = voices.find((v) => v.voiceURI === selectedVoiceURI);
-        if (voice) {
-          utterance.voice = voice;
-          utterance.lang = voice.lang;
-        }
-      }
-
-      utterance.onend = () => {
+      const onEnd = () => {
         debug(
           loggingLevel,
           `[speakInstruction.onend] Instruction ${index} finished. isPlayingRef.current: ${isPlayingRef.current}`
@@ -142,16 +136,19 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
         }
       };
 
-      speechRef.current = utterance;
       if (!isMuted) {
         debug(
           loggingLevel,
           `[speakInstruction] Attempting to speak instruction ${index}. Muted: ${isMuted}`
         );
-        if (synth && typeof synth.speak === 'function') {
-          synth.speak(utterance);
-        }
-      } else {
+      }
+      // Cancels any ongoing speech first; builds but does not play when muted.
+      speechRef.current = speakText(text, {
+        voice,
+        muted: isMuted,
+        onEnd,
+      });
+      if (isMuted) {
         info(
           loggingLevel,
           `[speakInstruction] Not speaking instruction ${index} because muted.`
@@ -188,24 +185,14 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
   const pausePlayback = useCallback(() => {
     info(loggingLevel, '[pausePlayback] Pausing playback.');
     setIsPlaying(false);
-    if (
-      'speechSynthesis' in window &&
-      typeof window.speechSynthesis.pause === 'function'
-    ) {
-      window.speechSynthesis.pause();
-    }
+    pauseSpeech();
     stopImageSlideshow();
   }, [stopImageSlideshow, loggingLevel]);
 
   const resumePlayback = useCallback(() => {
     info(loggingLevel, '[resumePlayback] Resuming playback.');
-    if (
-      'speechSynthesis' in window &&
-      window.speechSynthesis.paused &&
-      typeof window.speechSynthesis.resume === 'function'
-    ) {
+    if (resumeSpeech()) {
       setIsPlaying(true);
-      window.speechSynthesis.resume();
       startImageSlideshow();
     } else if (instructions.length > 0 && !isPlayingRef.current) {
       info(
@@ -241,12 +228,7 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
     );
     setIsMuted((prev) => {
       const newMutedState = !prev;
-      if (
-        'speechSynthesis' in window &&
-        typeof window.speechSynthesis.cancel === 'function'
-      ) {
-        window.speechSynthesis.cancel(); // Always cancel current speech
-      }
+      cancelSpeech(); // Always cancel current speech
       debug(
         loggingLevel,
         `[toggleMute] Speech cancelled. New muted state: ${newMutedState}. isPlayingRef.current: ${isPlayingRef.current}`
@@ -274,22 +256,12 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
     if (isOpen && exercise) {
       startImageSlideshow();
     } else {
-      if (
-        'speechSynthesis' in window &&
-        typeof window.speechSynthesis.cancel === 'function'
-      ) {
-        window.speechSynthesis.cancel();
-      }
+      cancelSpeech();
       stopImageSlideshow();
     }
 
     return () => {
-      if (
-        'speechSynthesis' in window &&
-        typeof window.speechSynthesis.cancel === 'function'
-      ) {
-        window.speechSynthesis.cancel();
-      }
+      cancelSpeech();
       stopImageSlideshow();
     };
   }, [isOpen, exercise, startImageSlideshow, stopImageSlideshow]);
@@ -309,12 +281,7 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
         loggingLevel,
         '[useEffect - currentInstructionIndex/isPlaying] Not playing, cancelling speech.'
       );
-      if (
-        'speechSynthesis' in window &&
-        typeof window.speechSynthesis.cancel === 'function'
-      ) {
-        window.speechSynthesis.cancel();
-      }
+      cancelSpeech();
     }
   }, [
     currentInstructionIndex,
@@ -329,14 +296,12 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
       loggingLevel,
       '[useEffect - voice loading] Initializing voice loading.'
     );
-    const synth =
-      'speechSynthesis' in window ? window.speechSynthesis : undefined;
-    if (!synth) {
+    if (!isSpeechSynthesisSupported()) {
       warn(loggingLevel, 'Speech Synthesis not supported in this browser.');
       return;
     }
-    const loadVoices = () => {
-      const availableVoices = synth.getVoices();
+    // Load voices now and again when the browser finishes loading them.
+    return subscribeToSpeechVoices((availableVoices) => {
       setVoices(availableVoices);
       debug(
         loggingLevel,
@@ -344,28 +309,14 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
       );
       // Set a default voice if none is selected, e.g., a female English voice
       if (!selectedVoiceURI && availableVoices.length > 0) {
-        const defaultVoice =
-          availableVoices.find(
-            (voice) => voice.lang === 'en-US' && voice.name.includes('Female')
-          ) ||
-          availableVoices.find((voice) => voice.lang === 'en-US') ||
-          availableVoices[0];
+        const defaultVoice = pickDefaultSpeechVoice(availableVoices);
         setSelectedVoiceURI(defaultVoice?.voiceURI || null);
         info(
           loggingLevel,
           `[useEffect - voice loading] Default voice set: ${defaultVoice?.name}`
         );
       }
-    };
-
-    // Load voices when they are ready
-    synth.onvoiceschanged = loadVoices;
-    loadVoices(); // Call initially in case voices are already loaded
-
-    // Clean up
-    return () => {
-      synth.onvoiceschanged = null;
-    };
+    });
   }, [selectedVoiceURI, loggingLevel]);
 
   const handleNext = useCallback(() => {
@@ -373,12 +324,7 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
       loggingLevel,
       `[handleNext] Current instruction index: ${currentInstructionIndex}`
     );
-    if (
-      'speechSynthesis' in window &&
-      typeof window.speechSynthesis.cancel === 'function'
-    ) {
-      window.speechSynthesis.cancel(); // Stop current speech
-    }
+    cancelSpeech(); // Stop current speech
     const nextIndex = currentInstructionIndex + 1;
     if (nextIndex < instructions.length) {
       setCurrentInstructionIndex(nextIndex);
@@ -406,12 +352,7 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
       loggingLevel,
       `[handlePrevious] Current instruction index: ${currentInstructionIndex}`
     );
-    if (
-      'speechSynthesis' in window &&
-      typeof window.speechSynthesis.cancel === 'function'
-    ) {
-      window.speechSynthesis.cancel(); // Stop current speech
-    }
+    cancelSpeech(); // Stop current speech
     const prevIndex = currentInstructionIndex - 1;
     if (prevIndex >= 0) {
       setCurrentInstructionIndex(prevIndex);
@@ -512,12 +453,7 @@ const ExercisePlaybackModal: React.FC<ExercisePlaybackModalProps> = ({
                   `[Select.onValueChange] Voice changed to: ${value}`
                 );
                 setSelectedVoiceURI(value);
-                if (
-                  'speechSynthesis' in window &&
-                  typeof window.speechSynthesis.cancel === 'function'
-                ) {
-                  window.speechSynthesis.cancel(); // Cancel current speech to apply new voice
-                }
+                cancelSpeech(); // Cancel current speech to apply new voice
                 // If playing, restart speech with new voice
                 if (isPlayingRef.current) {
                   speakInstruction(

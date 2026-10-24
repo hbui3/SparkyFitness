@@ -1,9 +1,9 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachTelegramConnectionsIdSchema = z.string().and(
   z.object({
-    __brand: z.literal("public.coach_telegram_connections"),
-  }),
+    __brand: z.literal('public.coach_telegram_connections'),
+  })
 );
 
 export const coachTelegramConnectionsSchema = z.object({

@@ -1,27 +1,27 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   coachMealPlanningDaySchema,
   coachMealPlanningQuantitySchema,
-} from "./CoachPantryItems.zod.ts";
+} from './CoachPantryItems.zod.ts';
 
 export const coachMealSlotSchema = z.enum([
-  "breakfast",
-  "lunch",
-  "dinner",
-  "snack",
+  'breakfast',
+  'lunch',
+  'dinner',
+  'snack',
 ]);
 
 export const coachMealPlanEntryStatusSchema = z.enum([
-  "planned",
-  "prepared",
-  "eaten_out",
-  "replaced",
-  "skipped",
+  'planned',
+  'prepared',
+  'eaten_out',
+  'replaced',
+  'skipped',
 ]);
 
 export const coachMealSafetyStatusSchema = z.enum([
-  "validated",
-  "needs_user_input",
+  'validated',
+  'needs_user_input',
 ]);
 
 export const coachMealPlanEntriesSchema = z

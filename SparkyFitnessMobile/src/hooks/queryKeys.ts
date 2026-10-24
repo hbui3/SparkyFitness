@@ -1,3 +1,8 @@
+import type {
+  CompareParams,
+  CompareSinceParams,
+} from '../services/api/compareApi';
+
 export const serverConnectionQueryKey = ['serverConnection'] as const;
 
 export const serverConfigsQueryKey = ['serverConfigs'] as const;
@@ -13,6 +18,7 @@ export const familyDailySummaryQueryKey = (
   date: string
 ) => ['familyDailySummary', familyUserId, date] as const;
 
+export const caffeineActiveRootQueryKey = ['caffeineActive'] as const;
 export const caffeineActiveQueryKey = (date: string) =>
   ['caffeineActive', date] as const;
 
@@ -98,7 +104,20 @@ export const allProvidersFoodSearchQueryKey = (
 
 export const mealTypesQueryKey = ['mealTypes'] as const;
 
+export const shoesQueryKey = ['shoes'] as const;
+export const allergenPreferencesQueryKey = ['allergenPreferences'] as const;
+
 export const goalsQueryKey = (date: string) => ['goals', date] as const;
+
+export const goalPresetsQueryKey = ['goalPresets'] as const;
+
+export const weeklyGoalPlansQueryKey = ['weeklyGoalPlans'] as const;
+
+export const goalsRangeQueryKey = (
+  startDate: string,
+  endDate: string,
+  adjust: boolean
+) => ['goalsRange', startDate, endDate, adjust] as const;
 
 export const foodVariantsQueryKey = (foodId: string) =>
   ['foodVariants', foodId] as const;
@@ -106,13 +125,21 @@ export const foodVariantsQueryKey = (foodId: string) =>
 export const measurementsRangeQueryKey = (startDate: string, endDate: string) =>
   ['measurementsRange', startDate, endDate] as const;
 
+export const vo2MaxRangeQueryKeyRoot = ['vo2MaxRange'] as const;
+
+export const vo2MaxRangeQueryKey = (startDate: string, endDate: string) =>
+  [...vo2MaxRangeQueryKeyRoot, startDate, endDate] as const;
+
 export const waterIntakeRangeQueryKey = (startDate: string, endDate: string) =>
   ['waterIntakeRange', startDate, endDate] as const;
 
+export const sleepRangeQueryKeyRoot = ['sleepRange'] as const;
 export const sleepRangeQueryKey = (startDate: string, endDate: string) =>
-  ['sleepRange', startDate, endDate] as const;
+  [...sleepRangeQueryKeyRoot, startDate, endDate] as const;
 
-export const sleepDayQueryKey = (day: string) => ['sleep', 'day', day] as const;
+export const sleepDayQueryKeyRoot = ['sleep'] as const;
+export const sleepDayQueryKey = (day: string) =>
+  [...sleepDayQueryKeyRoot, 'day', day] as const;
 
 // --- Check-in progress photos ---
 /** Root, so an upload/delete can invalidate the gallery and every per-day list. */
@@ -187,6 +214,32 @@ export const exerciseStatsQueryKey = (
     presetId ?? null,
   ] as const;
 
+export const workoutSessionFeedbackQueryKey = (presetEntryId: string) =>
+  ['workoutSessionFeedback', presetEntryId] as const;
+
+export const workoutCoachingSettingsQueryKey = [
+  'workoutCoachingSettings',
+] as const;
+
+/** Root for adaptive suggestions; feedback saves invalidate it. */
+export const workoutSuggestionsQueryKeyRoot = ['workoutSuggestions'] as const;
+
+export const exerciseAlternativesQueryKeyRoot = [
+  'exerciseAlternatives',
+] as const;
+
+export const exerciseAlternativesQueryKey = (
+  exerciseId: string,
+  mode: string,
+  excludeIds: readonly string[]
+) =>
+  [
+    ...exerciseAlternativesQueryKeyRoot,
+    exerciseId,
+    mode,
+    [...excludeIds].sort().join(','),
+  ] as const;
+
 export const exerciseDetailQueryKey = (exerciseId: string) =>
   ['exerciseDetail', exerciseId] as const;
 
@@ -207,11 +260,20 @@ export const exercisesLibraryQueryKey = (searchTerm: string) =>
 export const externalExerciseSearchQueryKey = (
   providerType: string,
   searchTerm: string,
-  providerId?: string
-) => ['externalExerciseSearch', providerType, searchTerm, providerId] as const;
+  providerId?: string,
+  language?: string
+) =>
+  [
+    'externalExerciseSearch',
+    providerType,
+    searchTerm,
+    providerId,
+    language,
+  ] as const;
 
+export const workoutSessionQueryKeyRoot = ['workoutSession'] as const;
 export const workoutSessionQueryKey = (sessionId: string) =>
-  ['workoutSession', sessionId] as const;
+  [...workoutSessionQueryKeyRoot, sessionId] as const;
 
 export const workoutPresetsQueryKey = ['workoutPresets'] as const;
 
@@ -221,9 +283,20 @@ export const workoutPresetSearchQueryKey = (searchTerm: string) =>
 export const workoutPresetsLibraryQueryKey = (searchTerm: string) =>
   ['workoutPresetsLibrary', searchTerm] as const;
 
+export const workoutPlansRootQueryKey = ['workoutPlanTemplates'] as const;
+
+export const workoutPlansQueryKey = ['workoutPlanTemplates', 'list'] as const;
+
+export const activeWorkoutPlanQueryKey = (date: string) =>
+  ['workoutPlanTemplates', 'active', date] as const;
+
 export const activeAiServiceSettingQueryKey = [
   'ai-service-settings',
   'active',
+] as const;
+export const voiceServiceOptionsQueryKey = [
+  'ai-service-settings',
+  'voice-options',
 ] as const;
 export const userAiConfigAllowedQueryKey = [
   'ai-service-settings',
@@ -235,8 +308,14 @@ export const fastingCurrentQueryKey = ['fasting', 'current'] as const;
 export const fastingStatsQueryKey = ['fasting', 'stats'] as const;
 export const fastingHistoryQueryKey = (limit: number, offset: number) =>
   ['fasting', 'history', limit, offset] as const;
+export const fastingPreferencesQueryKey = ['fasting', 'preferences'] as const;
+export const fastingRangeQueryKey = (startDate: string, endDate: string) =>
+  ['fasting', 'range', startDate, endDate] as const;
 
 export const customNutrientsQueryKey = ['customNutrients'] as const;
+export const nutrientGoalPreferencesQueryKey = [
+  'nutrientGoalPreferences',
+] as const;
 export const nutrientDisplayPreferencesQueryKey = [
   'nutrientDisplayPreferences',
 ] as const;
@@ -245,6 +324,40 @@ export const chatHistoryQueryKey = ['chatHistory'] as const;
 
 export const nutritionTrendsQueryKey = (startDate: string, endDate: string) =>
   ['nutritionTrends', startDate, endDate] as const;
+
+/** Every cached food-entry range, whatever its days. */
+export const foodEntriesRangeRootQueryKey = ['foodEntriesRange'] as const;
+
+export const foodEntriesRangeQueryKey = (startDate: string, endDate: string) =>
+  ['foodEntriesRange', startDate, endDate] as const;
+
+export const exerciseDashboardQueryKey = (startDate: string, endDate: string) =>
+  ['exerciseDashboard', startDate, endDate] as const;
+
+export const trainingConsistencyQueryKey = () =>
+  ['trainingConsistency'] as const;
+
+export const trainingLoadRootQueryKey = ['trainingLoad'] as const;
+
+export const trainingLoadQueryKey = (today: string) =>
+  [...trainingLoadRootQueryKey, today] as const;
+
+export const cardioSessionsQueryKey = (
+  startDate: string,
+  endDate: string,
+  unitSystem: 'metric' | 'imperial'
+) => ['cardioSessions', startDate, endDate, unitSystem] as const;
+
+export const personalRecordsQueryKey = (unitSystem: 'metric' | 'imperial') =>
+  ['personalRecords', unitSystem] as const;
+
+export const cardioSessionDetailQueryKey = (
+  part: 'entry' | 'gps' | 'hrZones' | 'distanceSeries',
+  exerciseEntryId: string
+) => ['cardioSessionDetail', part, exerciseEntryId] as const;
+
+export const heartRateSamplesQueryKey = (startDate: string, endDate: string) =>
+  ['heartRateSamples', startDate, endDate] as const;
 
 // --- Cycle & Pregnancy ---
 export const cycleSettingsQueryKey = ['cycleSettings'] as const;
@@ -263,8 +376,35 @@ export const pregnancyOverviewQueryKey = ['pregnancyOverview'] as const;
 export const pregnancyChecklistQueryKey = ['pregnancyChecklist'] as const;
 export const pregnancyPhotosQueryKey = ['pregnancyPhotos'] as const;
 
+export const moodEntriesRootQueryKey = ['moodEntries'] as const;
+export const moodEntriesQueryKey = (startDate: string, endDate: string) =>
+  ['moodEntries', startDate, endDate] as const;
+export const moodRatingsSupportQueryKey = [
+  'moodEntries',
+  'ratingsSupport',
+] as const;
+export const moodCheckinsSupportQueryKey = [
+  'moodEntries',
+  'checkinsSupport',
+] as const;
+export const moodCheckinsQueryKey = (date: string) =>
+  ['moodEntries', 'checkins', date] as const;
+export const moodLegacyDayQueryKey = (date: string) =>
+  ['moodEntries', 'legacyDay', date] as const;
+export const customMoodsQueryKey = ['customMoods'] as const;
+
 export const symptomEntriesQueryKey = (fromDate: string, toDate: string) =>
   ['symptomEntries', fromDate, toDate] as const;
+export const symptomEntriesRootQueryKey = ['symptomEntries'] as const;
+export const symptomEntriesDetailedQueryKey = (
+  fromDate: string,
+  toDate: string
+) => ['symptomEntries', 'detailed', fromDate, toDate] as const;
+export const symptomOngoingQueryKey = ['symptomOngoing'] as const;
+export const symptomDefinitionsQueryKey = ['symptomDefinitions'] as const;
+export const symptomOptionsQueryKey = ['symptomOptions'] as const;
+export const symptomFreeDaysQueryKey = (fromDate: string, toDate: string) =>
+  ['symptomFreeDays', fromDate, toDate] as const;
 
 // --- Medications ---
 export const medicationsRootQueryKey = ['medications'] as const;
@@ -277,3 +417,52 @@ export const medicationEntriesQueryKey = (opts?: {
   toDate?: string;
   medicationId?: string;
 }) => ['medications', 'entries', opts ?? {}] as const;
+// GLP-1 keys live under the medications root so invalidateMedicationEntryCaches
+// (a dose or injection changes the merged entries feed) refreshes them too.
+export const glp1PensQueryKey = (medicationId: string) =>
+  ['medications', 'glp1', 'pens', medicationId] as const;
+export const glp1InjectionsQueryKey = (medicationId: string) =>
+  ['medications', 'glp1', 'injections', medicationId] as const;
+export const glp1TitrationQueryKey = (medicationId: string) =>
+  ['medications', 'glp1', 'titration', medicationId] as const;
+export const glp1SerumCurveQueryKey = (medicationId: string) =>
+  ['medications', 'glp1', 'serumCurve', medicationId] as const;
+export const glp1SiteSuggestionQueryKey = (medicationId: string) =>
+  ['medications', 'glp1', 'siteSuggestion', medicationId] as const;
+
+/** Autocomplete source for the live workout's gym / location prompt. */
+export const workoutLocationsQueryKey = ['workoutLocations'] as const;
+
+export const runningTrendsQueryKey = (startDate: string, endDate: string) =>
+  ['cardioSessions', 'runningTrends', startDate, endDate] as const;
+
+export const runningRecordsQueryKey = () =>
+  ['cardioSessions', 'runningRecords'] as const;
+
+/** The person's run program and place in it (server-backed). */
+export const runProgramQueryKey = ['runProgram'] as const;
+
+/** The person's own saved run programs. */
+export const customRunProgramsQueryKey = ['customRunPrograms'] as const;
+
+export const heartRateZonesQueryKey = ['heartRateZones'] as const;
+
+/** The person's saved routes (summaries). */
+export const routesQueryKey = ['routes'] as const;
+
+/** Whether the server can generate routes (a routing engine is configured). */
+export const routeGenerationCapabilitiesQueryKey = [
+  'routeGeneration',
+  'capabilities',
+] as const;
+
+/** One saved route with its points and cues. */
+export const routeQueryKey = (id: string) => ['routes', id] as const;
+
+/** One Compare answer: the two metrics, how they are paired, and the window. */
+export const compareQueryKey = (p: CompareParams) =>
+  ['compare', p.a, p.b, p.mode, p.timing, p.start, p.end] as const;
+
+/** One since-a-habit-started answer: the habit, the outcome, the start and the line (null = the server's pick). */
+export const compareSinceQueryKey = (p: CompareSinceParams) =>
+  ['compare', 'since', p.a, p.b, p.habitStart, p.line] as const;

@@ -26,6 +26,8 @@ global:
   # -- Master toggle: create ServiceAccounts for all services
   serviceAccount:
     create: true
+  # -- Cluster domain for in-cluster DNS resolution
+  clusterDomain: "cluster.local"
 
 # ========================== 2. APP CONFIGURATION =============================
 # Feature toggles, non-secret runtime settings.
@@ -59,6 +61,10 @@ config:
   forceEmailLogin: true
   # -- Hide email/password login on login page (overridden by forceEmailLogin)
   disableEmailLogin: false
+  # -- Force passkey sign-in and new passkey registration off (overrides the admin switch)
+  disablePasskeyLogin: false
+  # -- Force passkey login on (fail-safe; overrides disablePasskeyLogin and the admin switch)
+  forcePasskeyLogin: false
 
   # -- OIDC authentication (OpenID Connect SSO)
   oidc:
@@ -142,16 +148,6 @@ config:
     windowMs: ""
     maxRequests: ""
 
-  # -- Developer / mock data sources (for development only)
-  developer:
-    fitbitDataSource: ""
-    withingsDataSource: ""
-    garminDataSource: ""
-    polarDataSource: ""
-    hevyDataSource: ""
-    googleHealthDataSource: ""
-    saveMockData: false
-
 # ========================== 3. NETWORKING ====================================
 # -- If enabling this network policy, you should also set `postgresql.networkPolicy.enabled=true`
 # to use HelmForge's built-in NetworkPolicy for the database.
@@ -205,6 +201,9 @@ server:
     # -- Image digest (e.g. "sha256:abc..."). When set, takes precedence over tag.
     digest: ""
     pullPolicy: IfNotPresent
+  # -- Server replica count. Above 1, one replica runs as a separate `-jobs`
+  # Deployment that runs the scheduled jobs and the rest skip them. Change it
+  # here rather than with `kubectl scale`. Requires ReadWriteMany backup/uploads PVCs.
   replicas: 1
   port: 3010
   # -- Deployment update strategy. Default `Recreate` is required when the

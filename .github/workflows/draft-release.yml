@@ -8,6 +8,10 @@ name: Draft release
 # no preamble support, and no workflow can patch a draft afterwards — GitHub does
 # not fire release events for draft releases. So the draft has to be built here.
 #
+# Regular releases are drafted by release-please.yml when its release PR is
+# merged. This workflow is the manual fallback for versions release-please does
+# not produce, such as four-segment hotfixes (v1.7.3.1).
+#
 # Drafts do not create the git tag (GitHub only creates the ref on publish), so
 # running this does not trigger the v* tag workflows. They run on publish, as before.
 

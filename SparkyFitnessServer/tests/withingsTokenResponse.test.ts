@@ -60,6 +60,11 @@ function mockClient() {
   return client;
 }
 
+// First keyword of each statement the refresh sent, e.g. ['BEGIN', 'SELECT', 'COMMIT'].
+function statements(client: ReturnType<typeof mockClient>) {
+  return client.query.mock.calls.map(([sql]) => sql.trim().split(/\s+/)[0]);
+}
+
 beforeEach(async () => {
   vi.clearAllMocks();
   const { decrypt } = await import('../security/encryption.js');
@@ -82,7 +87,7 @@ describe('Withings token response validation', () => {
 
     expect(encrypt).not.toHaveBeenCalled();
     // Only the initial SELECT ran; no UPDATE was issued.
-    expect(client.query).toHaveBeenCalledTimes(1);
+    expect(statements(client)).toEqual(['BEGIN', 'SELECT', 'COMMIT']);
     expect(client.release).toHaveBeenCalled();
   });
 
@@ -106,7 +111,7 @@ describe('Withings token response validation', () => {
     );
 
     expect(encrypt).not.toHaveBeenCalled();
-    expect(client.query).toHaveBeenCalledTimes(1);
+    expect(statements(client)).toEqual(['BEGIN', 'SELECT', 'COMMIT']);
   });
 
   it('does not persist null tokens when the refresh body has only an access token', async () => {
@@ -120,7 +125,7 @@ describe('Withings token response validation', () => {
     );
 
     expect(encrypt).not.toHaveBeenCalled();
-    expect(client.query).toHaveBeenCalledTimes(1);
+    expect(statements(client)).toEqual(['BEGIN', 'SELECT', 'COMMIT']);
   });
 
   it('persists refreshed tokens on a successful response', async () => {
@@ -140,9 +145,21 @@ describe('Withings token response validation', () => {
     await expect(refreshAccessToken(USER_ID)).resolves.toBe('new-access');
 
     expect(encrypt).toHaveBeenCalledTimes(2);
-    // SELECT plus the UPDATE.
-    expect(client.query).toHaveBeenCalledTimes(2);
-    expect(client.query.mock.calls[1][0]).toMatch(/UPDATE/);
+    expect(statements(client)).toEqual(['BEGIN', 'SELECT', 'UPDATE', 'COMMIT']);
+  });
+
+  it('locks the provider row so concurrent refreshes wait for the saved token', async () => {
+    const client = mockClient();
+    vi.mocked(axios.post).mockResolvedValue({
+      data: {
+        status: 0,
+        body: { access_token: 'at', refresh_token: 'rt', expires_in: 10800 },
+      },
+    });
+
+    await refreshAccessToken(USER_ID);
+
+    expect(client.query.mock.calls[1][0]).toMatch(/FOR UPDATE/);
   });
 
   it('rejects a non-zero status during the authorization-code exchange', async () => {

@@ -19,7 +19,10 @@ import StatusView from '../components/StatusView';
 import WorkoutFormExerciseList, {
   type WorkoutFormExerciseListHandle,
 } from '../components/WorkoutFormExerciseList';
-import { useSetEditAccessoryBar } from '../components/SetRowChrome';
+import {
+  SET_ACCESSORY_BAR_HEIGHT,
+  useSetEditAccessoryBar,
+} from '../components/SetRowChrome';
 import CalendarSheet, {
   type CalendarSheetRef,
 } from '../components/CalendarSheet';
@@ -53,6 +56,7 @@ import type {
   CreatePresetSessionRequest,
   UpdatePresetSessionRequest,
 } from '@workspace/shared';
+import { buildExerciseReplaceContext } from '../utils/exerciseReplace';
 
 type Props = RootStackScreenProps<'WorkoutAdd'>;
 
@@ -85,6 +89,7 @@ const WorkoutAddScreen: React.FC<Props> = ({ navigation, route }) => {
     replaceExercise,
     clearExerciseCompletions,
     addSet,
+    addWarmupSets,
     removeSet,
     updateSetField,
     updateSetMeta,
@@ -265,9 +270,15 @@ const WorkoutAddScreen: React.FC<Props> = ({ navigation, route }) => {
   const handleReplaceExercise = useCallback(
     (clientId: string) => {
       setReplaceTarget(clientId);
-      navigation.navigate('ExerciseSearch', { returnKey: route.key });
+      navigation.navigate('ExerciseSearch', {
+        returnKey: route.key,
+        replaceFor: buildExerciseReplaceContext(
+          state.exercises.find((e) => e.clientId === clientId),
+          state.exercises
+        ),
+      });
     },
-    [setReplaceTarget, navigation, route.key]
+    [setReplaceTarget, navigation, route.key, state.exercises]
   );
 
   const handleCancel = useCallback(async () => {
@@ -405,7 +416,8 @@ const WorkoutAddScreen: React.FC<Props> = ({ navigation, route }) => {
         <>
           <KeyboardAwareScrollView
             contentContainerClassName="px-4"
-            bottomOffset={80}
+            // Clear of the set-entry bar riding on top of the keyboard.
+            bottomOffset={SET_ACCESSORY_BAR_HEIGHT + 16}
             keyboardShouldPersistTaps="handled"
             // Set-row taps remount the focused input; stop the keyboard-hide
             // restore scroll so the refocus lands on the tapped cell (see
@@ -512,6 +524,7 @@ const WorkoutAddScreen: React.FC<Props> = ({ navigation, route }) => {
                   setExerciseNotes={setExerciseNotes}
                   onReplaceExercise={handleReplaceExercise}
                   clearExerciseCompletions={clearExerciseCompletions}
+                  addWarmupSets={addWarmupSets}
                   supersetWith={supersetWith}
                   ungroupExercise={ungroupExercise}
                   onReorderExercises={reorderExercises}

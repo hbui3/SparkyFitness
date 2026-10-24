@@ -6,6 +6,8 @@ Follow this checklist whenever you add or change a server database migration —
 
 - [ ] Create the migration in `SparkyFitnessServer/db/migrations/` named `YYYYMMDDHHMMSS_description.sql`.
 - [ ] Do not invent alternate migration mechanisms; server startup applies pending migrations and then reapplies RLS policies.
+- [ ] The runner applies each file and records it in `system.schema_migrations` inside one transaction, so a file contains no `BEGIN;`/`COMMIT;` of its own (`tests/migrationFiles.test.ts` fails otherwise). To commit steps separately (for example `NOT VALID`, then `VALIDATE CONSTRAINT`), write two migration files.
+- [ ] Never use a statement that cannot run inside a transaction block, such as `CREATE INDEX CONCURRENTLY` or `VACUUM`. Startup refuses such a file with an error naming it.
 
 ## 2. Update Row-Level Security (required for every new table)
 
@@ -32,9 +34,9 @@ Follow this checklist whenever you add or change a server database migration —
 
 ## 6. Documentation
 
-- [ ] Update `docs/content/2.features/9.family-friends-sharing.md` (user-facing sharing behavior).
-- [ ] Update `docs/content/8.developer/11.database-security-tiers.md`: add the table with its permission type and classify as Tier 1, Tier 2, or Tier 3.
-- [ ] Update `docs/content/8.developer/4.database.md` table index if adding a new domain category.
+- [ ] Update `docs/src/features/family-friends-sharing.md` (user-facing sharing behavior).
+- [ ] Update `docs/src/developer/database-security-tiers.md`: add the table with its permission type and classify as Tier 1, Tier 2, or Tier 3.
+- [ ] Update `docs/src/developer/database.md` table index if adding a new domain category.
 
 ## 7. Downstream contracts
 

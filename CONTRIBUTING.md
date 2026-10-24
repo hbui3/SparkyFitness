@@ -31,7 +31,7 @@ Every PR must include:
 ### 3. Workflow
 
 1. Fork the repo and create a branch.
-2. Commit your changes.
+2. Commit your changes using [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, …). Release versions are derived from them: `feat:` bumps the minor version, `fix:` the patch, and `feat!:` or a `BREAKING CHANGE:` footer the major.
 3. Submit a PR with the required screenshots and test confirmation.
 
 ### 4. Automated PR Validation

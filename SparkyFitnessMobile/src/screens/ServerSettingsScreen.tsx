@@ -1,3 +1,4 @@
+import { clearBackgroundWater } from '../services/backgroundWater';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -130,6 +131,8 @@ const ServerSettingsScreen: React.FC<ServerSettingsScreenProps> = ({
     try {
       const wasActive = configId === activeConfig?.id;
       await deleteServerConfig(configId);
+      // The shortcut's copy of the login belongs to the server just removed.
+      if (wasActive) await clearBackgroundWater();
       const remaining = await getAllServerConfigs();
       if (wasActive && remaining.length > 0) {
         await setActiveServerConfig(remaining[0].id);

@@ -1,0 +1,26 @@
+import { z } from 'zod/v4';
+
+export const CallbackBodySchema = z.object({
+  code: z.string().min(1, 'code is required'),
+  state: z.string().min(1, 'state is required'),
+});
+
+export type CallbackBody = z.infer<typeof CallbackBodySchema>;
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD');
+
+export const SyncBodySchema = z.object({
+  providerId: z.string().uuid().optional(),
+  startDate: isoDate.optional(),
+  endDate: isoDate.optional(),
+  dataSource: z.string().optional(),
+  saveMockData: z.boolean().optional(),
+});
+
+export type SyncBody = z.infer<typeof SyncBodySchema>;
+
+export const DisconnectBodySchema = z.object({
+  providerId: z.string().uuid().optional(),
+});
+
+export type DisconnectBody = z.infer<typeof DisconnectBodySchema>;

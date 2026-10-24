@@ -55,6 +55,15 @@ describe('classifyByKeywords', () => {
     );
   });
 
+  it('sends correlation questions to reports (sparky_compare_metrics)', () => {
+    expect(
+      classifyByKeywords('is there a correlation between caffeine and focus')
+    ).toContain('reports');
+    expect(classifyByKeywords('does alcohol correlate with my HRV')).toContain(
+      'reports'
+    );
+  });
+
   it('matches new exercise synonyms (swim/bike/yoga)', () => {
     expect(classifyByKeywords('went swimming today')).toContain('exercise');
     expect(classifyByKeywords('did a bike ride')).toContain('exercise');

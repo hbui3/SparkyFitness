@@ -48,12 +48,15 @@ vi.mock('../integrations/strava/stravaService.js', () => ({ default: {} }));
 vi.mock('../services/stravaService.js', () => ({ default: {} }));
 vi.mock('../integrations/withings/withingsService.js', () => ({ default: {} }));
 vi.mock('../services/withingsService.js', () => ({ default: {} }));
+vi.mock('../integrations/coros/corosService.js', () => ({ default: {} }));
+vi.mock('../services/corosService.js', () => ({ default: {} }));
 
 import fitbitRoutes from '../routes/fitbitRoutes.js';
 import ouraRoutes from '../routes/ouraRoutes.js';
 import polarRoutes from '../routes/polarRoutes.js';
 import stravaRoutes from '../routes/stravaRoutes.js';
 import withingsRoutes from '../routes/withingsRoutes.js';
+import corosRoutes from '../routes/corosRoutes.js';
 
 function appWith(mountPath: string, router: express.Router) {
   const app = express();
@@ -68,6 +71,7 @@ const cases: Array<[string, express.Router]> = [
   ['/polar', polarRoutes],
   ['/strava', stravaRoutes],
   ['/withings', withingsRoutes],
+  ['/coros', corosRoutes],
 ];
 
 beforeEach(() => {

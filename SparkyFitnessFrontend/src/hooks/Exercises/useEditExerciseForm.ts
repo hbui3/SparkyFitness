@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { error } from '@/utils/logging';
 import type { Exercise as ExerciseInterface } from '@/types/exercises';
 import {
+  useCreateExerciseMutation,
   useUpdateExerciseMutation,
   useUpdateExerciseEntriesSnapshotMutation,
 } from '@/hooks/Exercises/useExercises';
@@ -18,11 +19,14 @@ export function useEditExerciseForm() {
   const { loggingLevel, energyUnit, convertEnergy } = usePreferences();
 
   const { mutateAsync: updateExercise } = useUpdateExerciseMutation();
+  const { mutateAsync: createExercise } = useCreateExerciseMutation();
   const { mutateAsync: updateExerciseEntriesSnapshot } =
     useUpdateExerciseEntriesSnapshotMutation();
 
-  // Dialog open state
+  // Dialog open state. 'duplicate' reuses the edit form, seeded from an
+  // existing exercise, but saves a new custom exercise instead of updating.
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<'edit' | 'duplicate'>('edit');
   const [selectedExercise, setSelectedExercise] =
     useState<ExerciseInterface | null>(null);
 
@@ -63,6 +67,7 @@ export function useEditExerciseForm() {
   );
 
   const openEditDialog = (exercise: ExerciseInterface) => {
+    setDialogMode('edit');
     setSelectedExercise(exercise);
     setEditExerciseName(exercise.name);
     setEditExerciseCategory(exercise.category || 'general');
@@ -102,6 +107,19 @@ export function useEditExerciseForm() {
     setIsEditDialogOpen(true);
   };
 
+  /**
+   * Open the form pre-filled from any exercise (own, System or public) to
+   * save a copy as a new custom exercise. Images carry over by reference.
+   */
+  const openDuplicateDialog = (
+    exercise: ExerciseInterface,
+    copySuffix: string
+  ) => {
+    openEditDialog(exercise);
+    setDialogMode('duplicate');
+    setEditExerciseName(`${exercise.name} ${copySuffix}`.trim());
+  };
+
   const handleEditExercise = async () => {
     if (!selectedExercise) return;
     try {
@@ -125,6 +143,31 @@ export function useEditExerciseForm() {
         instructions: editExerciseInstructions,
         images: editExerciseImages,
       };
+      if (dialogMode === 'duplicate') {
+        // A copy is always the user's own private custom exercise: never
+        // inherit the original's provider source ids or public sharing.
+        formData.append(
+          'exerciseData',
+          JSON.stringify({
+            ...updatedExerciseData,
+            user_id: user?.id,
+            source: 'custom',
+            source_id: null,
+            is_custom: true,
+            shared_with_public: false,
+          })
+        );
+        newExerciseImageFiles.forEach((file) =>
+          formData.append('images', file)
+        );
+        await createExercise(formData);
+        setIsEditDialogOpen(false);
+        setSelectedExercise(null);
+        setNewExerciseImageFiles([]);
+        setNewExerciseImageUrls([]);
+        return;
+      }
+
       formData.append('exerciseData', JSON.stringify(updatedExerciseData));
       newExerciseImageFiles.forEach((file) => formData.append('images', file));
 
@@ -206,7 +249,9 @@ export function useEditExerciseForm() {
     isEditDialogOpen,
     setIsEditDialogOpen,
     selectedExercise,
+    dialogMode,
     openEditDialog,
+    openDuplicateDialog,
     showSyncConfirmation,
     setShowSyncConfirmation,
     handleSyncConfirmation,

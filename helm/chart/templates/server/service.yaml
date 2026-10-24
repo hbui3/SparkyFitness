@@ -14,4 +14,4 @@ spec:
       name: http
   selector:
     {{- include "sparkyfitness.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: server
+    sparkyfitness.io/server: "true"

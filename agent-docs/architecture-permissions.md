@@ -4,18 +4,18 @@ This doc maps how access control works across the system. Understanding this pre
 
 ## Permission Types
 
-Grants live in `family_access.access_permissions` (JSONB booleans: `can_manage_diary`, `can_manage_checkin`, `can_manage_medications`, `can_view_reports`, `can_view_food_library`, `calorie`). Route/RLS code uses *logical* permission strings mapped onto those keys in `permissionUtils.ts` (`canAccessUserData`) / SQL `can_access_user_data`.
+Grants live in `family_access.access_permissions` (JSONB booleans: `can_manage_diary`, `can_manage_checkin`, `can_manage_medications`, `can_manage_symptoms`, `can_view_reports`, `can_view_food_library`, `calorie`). Route/RLS code uses *logical* permission strings mapped onto those keys in `permissionUtils.ts` (`canAccessUserData`) / SQL `can_access_user_data`.
 
-- **Write:** `diary` (`goals`/`exercise`/`water` alias onto `can_manage_diary`), `checkin`, `medications`.
-- **Read:** `reports` (via `can_view_reports`/`can_manage_diary`/`can_manage_checkin`) and `*_read` variants (`diary_read`, `checkin_read`, `medications_read`).
-- **Inheritance:** a `reports`/`can_view_reports` (or `calorie`) grant adds *read* on `mood`, `goals`, `exercise`, `fasting`, `sleep`, `water`, `symptoms`; write types are not inherited.
-- **Owner-only:** cycle/pregnancy are **not** delegatable (no `checkPermissionMiddleware`; RLS restricts to owner — `routes/v2/cycleRoutes.ts`). There is no `cycle` permission.
+- **Write:** `diary` (`goals`/`exercise`/`water` alias onto `can_manage_diary`), `checkin`, `medications`, `symptoms`.
+- **Read:** `reports` (via `can_view_reports`/`can_manage_diary`/`can_manage_checkin`) and `*_read` variants (`diary_read`, `checkin_read`, `medications_read`, `symptoms_read`).
+- **Inheritance:** a `reports`/`can_view_reports` (or `calorie`) grant adds *read* on `mood`, `goals`, `exercise`, `fasting`, `sleep`, `water`; write types are not inherited. `symptoms_read` lists `can_view_reports` explicitly.
+- **Owner-only:** cycle/pregnancy are **not** delegatable (no `checkPermissionMiddleware`; RLS restricts to owner — `routes/v2/cycleRoutes.ts`). There is no `cycle` permission. Cycle-hub symptoms are stored in `symptom_entries` with `source = 'cycle'`; that table's policy hides those rows from every delegate.
 
 Test: `tests/permissionUtils.test.ts`.
 
 ## Domain → Permission Mapping
 
-**For the authoritative table-to-permission mapping and RLS tier classification, see [`../docs/content/8.developer/11.database-security-tiers.md`](../docs/content/8.developer/11.database-security-tiers.md).** It lists every table, its permission type, and whether it's Tier 1 (owner-only), Tier 2 (owner-write, delegate-read), or Tier 3 (owner-read, delegate-read, external-read).
+**For the authoritative table-to-permission mapping and RLS tier classification, see [`../docs/src/developer/database-security-tiers.md`](../docs/src/developer/database-security-tiers.md).** It lists every table, its permission type, and whether it's Tier 1 (owner-only), Tier 2 (owner-write, delegate-read), or Tier 3 (owner-read, delegate-read, external-read).
 
 Quick reference:
 - **Tier 1** — Credentials, auth, admin data (owner-only, RLS is strict)
@@ -51,4 +51,4 @@ When you add a new domain (e.g., a new feature category):
 3. **Create the route** with `checkPermissionMiddleware(permissionType)` guarding delegated write endpoints.
 4. **Test delegation** with `permissionUtils.test.ts` patterns — write a test proving that read/write is inherited or blocked correctly.
 
-Example: symptom tracking is guarded by the `medications` permission (`routes/v2/symptomRoutes.ts`), and its RLS resolves through `has_medication_access(user_id)`.
+Example: symptom tracking has its own `symptoms` permission (`routes/v2/symptomRoutes.ts`), and its RLS resolves through `has_symptom_access(user_id)` / `has_symptom_read_access(user_id)` (`create_symptom_policy`). It was split from `medications`, with a migration that copied the grant to existing medications delegates.

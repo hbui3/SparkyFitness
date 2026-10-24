@@ -1,15 +1,15 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const adaptiveTrainingRecommendationKindSchema = z.enum([
-  "workout",
-  "recovery",
+  'workout',
+  'recovery',
 ]);
 
 export const adaptiveTrainingRecommendationStatusSchema = z.enum([
-  "planned",
-  "accepted",
-  "skipped",
-  "completed",
+  'planned',
+  'accepted',
+  'skipped',
+  'completed',
 ]);
 
 export const adaptiveTrainingRecommendationsSchema = z.object({

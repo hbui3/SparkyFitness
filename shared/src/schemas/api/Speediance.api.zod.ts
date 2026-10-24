@@ -1,18 +1,18 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-export const speedianceRegionSchema = z.enum(["EU", "Global"]);
+export const speedianceRegionSchema = z.enum(['EU', 'Global']);
 
 const calendarDaySchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected a YYYY-MM-DD calendar day");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD calendar day');
 
 const speedianceRemoteIdSchema = z
   .string()
-  .regex(/^\d+$/, "Expected a numeric Speediance identifier");
+  .regex(/^\d+$/, 'Expected a numeric Speediance identifier');
 
 export const speedianceExerciseSearchRequestSchema = z.object({
   providerId: z.string().uuid().optional(),
-  query: z.string().trim().max(120).optional().default(""),
+  query: z.string().trim().max(120).optional().default(''),
   limit: z.number().int().min(1).max(100).optional().default(50),
 });
 
@@ -38,9 +38,9 @@ export const speedianceExerciseSearchResponseSchema = z.object({
 });
 
 export const speedianceResistanceModeSchema = z.enum([
-  "standard",
-  "chains",
-  "eccentric",
+  'standard',
+  'chains',
+  'eccentric',
 ]);
 
 export const speedianceTemplatePresetSchema = z.union([
@@ -52,12 +52,12 @@ export const speedianceTemplatePresetSchema = z.union([
 ]);
 
 export const speedianceCompletionUnitSchema = z.enum([
-  "repetitions",
-  "seconds",
-  "calories",
+  'repetitions',
+  'seconds',
+  'calories',
 ]);
 
-export const speedianceSetTypeSchema = z.enum(["warmup", "working"]);
+export const speedianceSetTypeSchema = z.enum(['warmup', 'working']);
 
 export const speedianceWorkoutSetSchema = z.object({
   repetitions: z.number().int().min(1).max(99),
@@ -67,7 +67,7 @@ export const speedianceWorkoutSetSchema = z.object({
   calorieTarget: z.number().int().min(1).max(5000).optional(),
   level: z.number().int().min(1).max(10).optional(),
   setType: speedianceSetTypeSchema.optional(),
-  mode: speedianceResistanceModeSchema.optional().default("standard"),
+  mode: speedianceResistanceModeSchema.optional().default('standard'),
   restSeconds: z.number().int().min(0).max(300).optional().default(90),
 });
 
@@ -102,10 +102,10 @@ const speedianceExerciseIdentitySchema = speedianceWorkoutExerciseSchema.omit({
 });
 
 export const speedianceWorkoutTransformationSchema = z.discriminatedUnion(
-  "type",
+  'type',
   [
     z.object({
-      type: z.literal("add_warmups"),
+      type: z.literal('add_warmups'),
       groupIds: z.array(speedianceRemoteIdSchema).max(50).optional(),
       setCount: z.number().int().min(1).max(3).optional().default(1),
       repetitions: z.number().int().min(1).max(30).optional().default(10),
@@ -113,9 +113,9 @@ export const speedianceWorkoutTransformationSchema = z.discriminatedUnion(
       restSeconds: z.number().int().min(0).max(300).optional().default(60),
     }),
     z.object({
-      type: z.literal("adjust_sets"),
+      type: z.literal('adjust_sets'),
       groupId: speedianceRemoteIdSchema,
-      setType: speedianceSetTypeSchema.optional().default("working"),
+      setType: speedianceSetTypeSchema.optional().default('working'),
       setCount: z.number().int().min(1).max(12).optional(),
       repetitions: z.number().int().min(1).max(99).optional(),
       targetRm: z.number().int().min(1).max(30).optional(),
@@ -123,11 +123,11 @@ export const speedianceWorkoutTransformationSchema = z.discriminatedUnion(
       restSeconds: z.number().int().min(0).max(300).optional(),
     }),
     z.object({
-      type: z.literal("replace_exercise"),
+      type: z.literal('replace_exercise'),
       groupId: speedianceRemoteIdSchema,
       replacement: speedianceExerciseIdentitySchema,
     }),
-  ],
+  ]
 );
 
 export const speedianceTransformWorkoutRequestSchema = z.object({
@@ -180,10 +180,10 @@ export const speedianceWorkoutScheduleResponseSchema = z.object({
   code: z.string().min(1),
   date: calendarDaySchema,
   status: z.enum([
-    "scheduled",
-    "already_scheduled",
-    "unscheduled",
-    "already_unscheduled",
+    'scheduled',
+    'already_scheduled',
+    'unscheduled',
+    'already_unscheduled',
   ]),
 });
 
@@ -197,7 +197,7 @@ export const speedianceCreatePlanRequestSchema = z
   .object({
     providerId: z.string().uuid().optional(),
     planName: z.string().trim().min(1).max(100),
-    description: z.string().trim().max(1000).optional().default(""),
+    description: z.string().trim().max(1000).optional().default(''),
     startDate: calendarDaySchema,
     endDate: calendarDaySchema,
     cycleLengthWeeks: z.number().int().min(1).max(8).optional(),
@@ -206,9 +206,9 @@ export const speedianceCreatePlanRequestSchema = z
   .superRefine((value, ctx) => {
     if (value.endDate < value.startDate) {
       ctx.addIssue({
-        code: "custom",
-        message: "endDate must be on or after startDate",
-        path: ["endDate"],
+        code: 'custom',
+        message: 'endDate must be on or after startDate',
+        path: ['endDate'],
       });
     }
     const durationDays =
@@ -217,9 +217,9 @@ export const speedianceCreatePlanRequestSchema = z
       86_400_000;
     if (durationDays > 366) {
       ctx.addIssue({
-        code: "custom",
-        message: "A synchronized Speediance plan cannot exceed 366 days",
-        path: ["endDate"],
+        code: 'custom',
+        message: 'A synchronized Speediance plan cannot exceed 366 days',
+        path: ['endDate'],
       });
     }
   });
@@ -234,7 +234,7 @@ export const speedianceCreatePlanResponseSchema = z.object({
     workoutCount: z.number().int().positive(),
     scheduledDates: z.number().int().nonnegative(),
     failedDates: z.array(
-      z.object({ date: calendarDaySchema, workoutName: z.string() }),
+      z.object({ date: calendarDaySchema, workoutName: z.string() })
     ),
   }),
 });
@@ -254,49 +254,49 @@ export const speedianceWorkoutDeleteResponseSchema = z.object({
 });
 
 export const speedianceManageWorkoutRequestSchema = z.discriminatedUnion(
-  "action",
+  'action',
   [
     z.object({
-      action: z.literal("list"),
+      action: z.literal('list'),
       providerId: z.string().uuid().optional(),
     }),
     z.object({
-      action: z.literal("get"),
+      action: z.literal('get'),
       providerId: z.string().uuid().optional(),
       code: z.string().min(1),
     }),
     z.object({
-      action: z.literal("upsert"),
+      action: z.literal('upsert'),
       workout: speedianceWorkoutDefinitionSchema,
     }),
     z.object({
-      action: z.literal("transform"),
+      action: z.literal('transform'),
       request: speedianceTransformWorkoutRequestSchema,
     }),
     z.object({
-      action: z.literal("schedule"),
+      action: z.literal('schedule'),
       providerId: z.string().uuid().optional(),
       code: z.string().min(1),
       date: calendarDaySchema,
     }),
     z.object({
-      action: z.literal("unschedule"),
+      action: z.literal('unschedule'),
       providerId: z.string().uuid().optional(),
       code: z.string().min(1),
       date: calendarDaySchema,
     }),
     z.object({
-      action: z.literal("create_plan"),
+      action: z.literal('create_plan'),
       plan: speedianceCreatePlanRequestSchema,
     }),
     z.object({
-      action: z.literal("delete"),
+      action: z.literal('delete'),
       providerId: z.string().uuid().optional(),
       id: speedianceRemoteIdSchema,
       code: z.string().min(1),
       confirmName: z.string().trim().min(1).max(100),
     }),
-  ],
+  ]
 );
 
 export const speedianceCreateAndScheduleWorkoutRequestSchema = z.object({
@@ -323,7 +323,7 @@ export const speedianceCreateAndScheduleWorkoutResponseSchema = z.object({
   }),
   schedule: z.object({
     date: calendarDaySchema,
-    status: z.enum(["scheduled", "already_scheduled"]),
+    status: z.enum(['scheduled', 'already_scheduled']),
   }),
 });
 
@@ -340,17 +340,17 @@ export const speedianceSyncRequestSchema = z
       (!value.startDate && value.endDate)
     ) {
       ctx.addIssue({
-        code: "custom",
-        message: "startDate and endDate must be provided together",
-        path: value.startDate ? ["endDate"] : ["startDate"],
+        code: 'custom',
+        message: 'startDate and endDate must be provided together',
+        path: value.startDate ? ['endDate'] : ['startDate'],
       });
     }
 
     if (value.startDate && value.endDate && value.startDate > value.endDate) {
       ctx.addIssue({
-        code: "custom",
-        message: "startDate must be on or before endDate",
-        path: ["startDate"],
+        code: 'custom',
+        message: 'startDate must be on or before endDate',
+        path: ['startDate'],
       });
     }
   });

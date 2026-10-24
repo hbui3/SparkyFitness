@@ -12,6 +12,9 @@ import {
   useDeleteMedicationEntry,
   useLogDose,
 } from '../hooks/useMedications';
+import { useCustomNutrients } from '../hooks/useCustomNutrients';
+import { formatLocalizedNumber } from '../localization';
+import { rowsFromNutrients } from '../utils/supplements';
 import { usePreferences } from '../hooks/usePreferences';
 import { useDiaryDateStore } from '../stores/diaryDateStore';
 import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
@@ -56,6 +59,8 @@ const MedicationDetailScreen: React.FC<MedicationDetailScreenProps> = ({
   const selectedDate = useDiaryDateStore((s) => s.selectedDate);
 
   const { data: med, isLoading } = useMedicationDetail(medicationId);
+  const { customNutrients: customNutrientDefs, isLoading: customLoading } =
+    useCustomNutrients({ enabled: med?.is_supplement === true });
   const { data: entries } = useMedicationEntries({
     fromDate: selectedDate,
     toDate: selectedDate,
@@ -192,6 +197,15 @@ const MedicationDetailScreen: React.FC<MedicationDetailScreenProps> = ({
     },
   });
 
+  // A custom nutrient's unit comes from its definition, so its row waits for
+  // the definitions rather than showing an amount with no unit.
+  const nutrientRows = useMemo(
+    () =>
+      rowsFromNutrients(med?.nutrients, customNutrientDefs).filter(
+        (row) => !(customLoading && row.customName)
+      ),
+    [med?.nutrients, customNutrientDefs, customLoading]
+  );
   const typeLabel = med ? medicationTypeLabel(med.type_id, t) : '';
   const doseLabel = med ? formatDose(med) : null;
   const strengthLabel = med ? formatStrengthPerUnit(med) : null;
@@ -339,6 +353,32 @@ const MedicationDetailScreen: React.FC<MedicationDetailScreenProps> = ({
             </View>
           )}
 
+          {med.is_glp1 && !med.is_supplement && (
+            <TouchableOpacity
+              onPress={() =>
+                navigation.navigate('Glp1Tracker', { medicationId })
+              }
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              className="bg-surface rounded-xl p-4 mb-3 shadow-sm flex-row items-center"
+            >
+              <View className="flex-1">
+                <Text className="text-base font-semibold text-text-primary">
+                  {t('medications.glp1.tracker.title', {
+                    defaultValue: 'GLP-1 tracker',
+                  })}
+                </Text>
+                <Text className="text-sm text-text-muted mt-0.5">
+                  {t('medications.glp1.tracker.subtitle', {
+                    defaultValue:
+                      'Injections, site map, pens, titration and daily check-in',
+                  })}
+                </Text>
+              </View>
+              <Icon name="chevron-forward" size={16} color={textSecondary} />
+            </TouchableOpacity>
+          )}
+
           <View className="bg-surface rounded-xl p-4 mb-3 shadow-sm">
             <View className="flex-row justify-between items-center mb-2">
               <Text className="text-sm font-semibold text-text-secondary">
@@ -425,6 +465,23 @@ const MedicationDetailScreen: React.FC<MedicationDetailScreenProps> = ({
               </Text>
             )}
           </View>
+
+          {med.is_supplement && nutrientRows.length > 0 && (
+            <View className="bg-surface rounded-xl p-4 mb-3 shadow-sm">
+              <Text className="text-sm font-semibold text-text-secondary mb-1">
+                {t('medications.supplement.nutritionTitle', {
+                  defaultValue: 'Nutrition per serving',
+                })}
+              </Text>
+              {nutrientRows.map((row) => (
+                <InfoRow
+                  key={row.id}
+                  label={row.label}
+                  value={`${formatLocalizedNumber(Number(row.value))}${row.unit ? ` ${row.unit}` : ''}`}
+                />
+              ))}
+            </View>
+          )}
 
           {(med.prescriber || med.pharmacy || med.rx_number || med.notes) && (
             <View className="bg-surface rounded-xl p-4 mb-3 shadow-sm">

@@ -12,7 +12,6 @@ import {
   type PermissionRequest,
 } from '../types/healthRecords';
 import { SyncDuration } from './healthkit/preferences';
-import { migrateEnabledMetricPermissionsIfNeeded } from './shared/healthPermissionMigration';
 import {
   enabledWritebackPermissions,
   loadAllEnabledPermissions as loadAllEnabledPermissionsShared,
@@ -30,6 +29,14 @@ try {
 
 export const initHealthConnect = HealthKit.initHealthConnect;
 export const requestHealthPermissions = HealthKit.requestHealthPermissions;
+// HealthKit never reveals which read permissions were granted, so a request
+// either covers everything asked for or nothing.
+export const requestGrantedHealthPermissions = async (
+  permissionsToRequest: PermissionRequest[]
+): Promise<PermissionRequest[]> =>
+  (await HealthKit.requestHealthPermissions(permissionsToRequest))
+    ? permissionsToRequest
+    : [];
 // HealthKit grants unlimited history with the normal read authorization — there is
 // no separate history permission to request (Android Health Connect counterpart).
 export const ensureHistoryReadPermission = async (): Promise<boolean> => true;
@@ -97,19 +104,25 @@ export const saveStringPreference = HealthKitPreferences.saveStringPreference;
 export const loadStringPreference = HealthKitPreferences.loadStringPreference;
 export const saveSyncDuration = HealthKitPreferences.saveSyncDuration;
 export const loadSyncDuration = HealthKitPreferences.loadSyncDuration;
+// iOS asks HealthKit whether any enabled type has never been requested rather than
+// relying on a permission version bump, so a type added to a metric in an update
+// (e.g. caffeine in Nutrition) is requested without one. Android keeps the version.
 export const refreshEnabledMetricPermissions = async (
   healthMetricStates: HealthMetricStates,
   writebackStates: Record<string, boolean> = {}
-): Promise<boolean> =>
-  migrateEnabledMetricPermissionsIfNeeded({
-    healthMetricStates,
-    extraPermissions: enabledWritebackPermissions(writebackStates),
-    metrics: HEALTH_METRICS,
-    loadHealthPreference,
-    saveHealthPreference,
-    requestHealthPermissions,
-    logTag: '[HealthKitService]',
-  });
+): Promise<boolean> => {
+  // Read and write in one request; see shared/healthPermissionSets.
+  const permissions = [
+    ...HEALTH_METRICS.filter(
+      (metric) => healthMetricStates[metric.stateKey]
+    ).flatMap((metric) => metric.permissions),
+    ...enabledWritebackPermissions(writebackStates),
+  ];
+  if (!(await HealthKit.hasUnrequestedHealthPermissions(permissions))) {
+    return true;
+  }
+  return requestHealthPermissions(permissions);
+};
 
 /** Every permission currently enabled (read metrics + writeback), read from storage. */
 export const loadAllEnabledPermissions = (): Promise<PermissionRequest[]> =>
@@ -130,10 +143,12 @@ export {
 
 export const syncHealthData = (
   syncDuration: SyncDuration,
-  healthMetricStates: HealthMetricStates = {}
+  healthMetricStates: HealthMetricStates = {},
+  forceTelemetry = false
 ): Promise<SyncResult> =>
   runForegroundSync(healthReadProvider, syncDuration, healthMetricStates, {
     logTag: '[HealthKitService]',
     emptyMessage: 'No new health data to sync.',
     timeoutLabelPrefix: 'HealthKit query',
+    forceTelemetry,
   });

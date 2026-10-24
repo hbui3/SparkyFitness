@@ -8,7 +8,7 @@ import {
   type JsonSchemaNode,
   type ProviderConfig,
 } from '../ai/providerDispatch.js';
-import { deriveAiNetworkPolicy } from '../utils/outboundUrlPolicy.js';
+import { resolveAiNetworkPolicy } from '../utils/outboundUrlPolicy.js';
 import {
   aiProviderRawResponseSchema,
   isAiConvertibleUnit,
@@ -115,6 +115,7 @@ const DISPATCH_ERROR_TO_THROW = {
   custom_url_missing: () => new NoAiServiceError(),
   unsupported_provider: (d: string) => new ProviderResponseError(d),
   unsupported_media: (d: string) => new ProviderResponseError(d),
+  image_too_large: (d: string) => new ProviderResponseError(d),
   private_network_forbidden: (d: string) => new PrivateNetworkAiUrlError(d),
   timeout: (d: string) => new ProviderResponseError(d),
   upstream_error: (d: string) => new ProviderResponseError(d),
@@ -125,8 +126,7 @@ const DISPATCH_ERROR_TO_THROW = {
 } satisfies Record<DispatchErrorCategory, (detail: string) => Error>;
 
 export async function estimateUnitConversion(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
+  userId: string,
   params: AiUnitConversionRequest,
   actorIsAdmin = false
 ): Promise<AiUnitConversionResponse> {
@@ -182,7 +182,7 @@ export async function estimateUnitConversion(
   // per-provider structured-output strategy, and JSON parsing.
   const result = await dispatchAiRequest({
     provider,
-    networkPolicy: deriveAiNetworkPolicy(aiService, actorIsAdmin),
+    networkPolicy: await resolveAiNetworkPolicy(aiService, actorIsAdmin),
     prompt: buildPrompt({
       foodName: params.foodName,
       brand: params.brand,

@@ -1,7 +1,9 @@
+import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchWaterIntakeRange } from '../services/api/measurementsApi';
+import { fetchGoalsRange } from '../services/api/goalsApi';
 import { useRefetchOnFocus } from './useRefetchOnFocus';
-import { waterIntakeRangeQueryKey } from './queryKeys';
+import { waterIntakeRangeQueryKey, goalsRangeQueryKey } from './queryKeys';
 import { getTodayDate, addDays } from '../utils/dateUtils';
 import {
   RANGE_DAYS,
@@ -22,7 +24,12 @@ export function useHydrationRange({
   const days = RANGE_DAYS[range];
   const startDate = addDays(today, -(days - 1));
 
-  const query = useQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    refetch: refetchData,
+  } = useQuery({
     queryKey: waterIntakeRangeQueryKey(startDate, today),
     queryFn: () => fetchWaterIntakeRange(startDate, today),
     enabled,
@@ -47,12 +54,38 @@ export function useHydrationRange({
     },
   });
 
-  useRefetchOnFocus(query.refetch, enabled);
+  useRefetchOnFocus(refetchData, enabled);
+
+  // Raw (unadjusted) goal, matching the same value the Dashboard's selected-date
+  // hydration widget already reads (`goals.water_goal_ml`, not the adjusted figure).
+  const { data: hydrationGoals, refetch: refetchGoals } = useQuery({
+    queryKey: goalsRangeQueryKey(startDate, today, false),
+    queryFn: () => fetchGoalsRange(startDate, today, false),
+    enabled,
+    select: (goalsByDay) => {
+      const resolvedGoals: (number | null)[] = [];
+      for (let dayOffset = 0; dayOffset < days; dayOffset++) {
+        const day = addDays(today, -(days - 1 - dayOffset));
+        const dailyGoals = goalsByDay[day];
+        resolvedGoals.push(
+          dailyGoals ? (dailyGoals.water_goal_ml ?? null) : null
+        );
+      }
+      return resolvedGoals;
+    },
+  });
+
+  useRefetchOnFocus(refetchGoals, enabled);
+
+  const refetch = useCallback(async () => {
+    await Promise.all([refetchData(), refetchGoals()]);
+  }, [refetchData, refetchGoals]);
 
   return {
-    hydrationData: query.data ?? [],
-    isLoading: query.isLoading,
-    isError: query.isError,
-    refetch: query.refetch,
+    hydrationData: data ?? [],
+    hydrationGoals: hydrationGoals ?? [],
+    isLoading,
+    isError,
+    refetch,
   };
 }

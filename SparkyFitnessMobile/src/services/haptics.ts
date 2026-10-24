@@ -13,3 +13,9 @@ export function fireSelectionHaptic(): void {
   if (!useAppPreferencesStore.getState().hapticsEnabled) return;
   Haptics.selectionAsync().catch(() => {});
 }
+
+/** Medium impact pulse — used for interval phase transitions. */
+export function fireImpactHaptic(): void {
+  if (!useAppPreferencesStore.getState().hapticsEnabled) return;
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+}

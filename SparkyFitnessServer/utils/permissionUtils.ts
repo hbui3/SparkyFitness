@@ -71,6 +71,15 @@ async function canAccessUserData(
               (fa.access_permissions->>'can_view_reports')::boolean = TRUE
             ))
             OR
+            -- Handle mapping for 'symptoms' permission to 'can_manage_symptoms' key
+            ($3 = 'symptoms' AND (fa.access_permissions->>'can_manage_symptoms')::boolean = TRUE)
+            OR
+            -- Handle mapping for 'symptoms_read' permission (read-only symptom data)
+            ($3 = 'symptoms_read' AND (
+              (fa.access_permissions->>'can_manage_symptoms')::boolean = TRUE OR
+              (fa.access_permissions->>'can_view_reports')::boolean = TRUE
+            ))
+            OR
             -- Handle mapping for 'checkin_read' permission (read-only check-in data)
             ($3 = 'checkin_read' AND (
               (fa.access_permissions->>'can_manage_checkin')::boolean = TRUE OR
@@ -94,8 +103,8 @@ async function canAccessUserData(
             ))
             OR
             -- Inheritance: reports permission grants read access to read-only permission types only.
-            -- Write-level permission types (diary, checkin, medications) are NOT inherited from reports.
-            ($3 IN ('mood', 'goals', 'exercise', 'fasting', 'sleep', 'water', 'symptoms') AND (
+            -- Write-level permission types (diary, checkin, medications, symptoms) are NOT inherited from reports.
+            ($3 IN ('mood', 'goals', 'exercise', 'fasting', 'sleep', 'water') AND (
                ((fa.access_permissions->>'reports')::boolean = TRUE OR (fa.access_permissions->>'can_view_reports')::boolean = TRUE)
                OR
                ((fa.access_permissions->>'calorie')::boolean = TRUE)

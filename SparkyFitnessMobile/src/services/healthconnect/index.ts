@@ -15,18 +15,30 @@ import {
   type HCZoneOffset,
   type ReadResult,
 } from '../../types/healthRecords';
+import { toLocalDateString } from '../../utils/dateUtils';
+import { mapHealthConnectSleepStage } from './dataTransformation';
 import { ceilToLocalDayStart, getSyncStartDate } from '../../utils/syncUtils';
 import {
   isClientUnavailableError,
   isQuotaExceededError,
 } from '../shared/quotaError';
-import { type TelemetryRunContext } from '../shared/telemetryBudget';
-import { hasEnrichedSession } from '../shared/enrichedSessionCache';
+import {
+  createGraceWindowClaimLimiter,
+  type TelemetryRunContext,
+} from '../shared/telemetryBudget';
+import {
+  enrichedSessionOrder,
+  hasEnrichedSession,
+  isWithinTelemetryGracePeriod,
+  shouldCacheEnrichedSession,
+} from '../shared/enrichedSessionCache';
 import {
   createConcurrencyLimiter,
   runTasksInBatches,
+  withTimeout,
 } from '../../utils/concurrency';
 import { getErrorMessage } from '../../utils/errors';
+import { loadHealthPreference } from './preferences';
 import { collectSessionTelemetry, sessionCacheKey } from './workoutTelemetry';
 import { deriveActiveCalories } from '@workspace/shared';
 
@@ -74,31 +86,49 @@ export const initHealthConnect = async (): Promise<boolean> => {
   }
 };
 
+const uniquePermissionRequests = (
+  permissions: PermissionRequest[]
+): PermissionRequest[] =>
+  permissions.filter(
+    (permission, index, allPermissions) =>
+      allPermissions.findIndex(
+        (candidate) =>
+          candidate.recordType === permission.recordType &&
+          candidate.accessType === permission.accessType
+      ) === index
+  );
+
+/**
+ * Requests the permissions and returns the requested ones that came back
+ * granted. The person can decline some, and an older Health Connect can't
+ * grant record types it doesn't support, so callers that request many at once
+ * use this to keep what was granted.
+ */
+export const requestGrantedHealthPermissions = async (
+  permissionsToRequest: PermissionRequest[]
+): Promise<PermissionRequest[]> => {
+  const uniquePermissions = uniquePermissionRequests(permissionsToRequest);
+  // Cast to library's Permission type - our PermissionRequest interface is compatible
+  const grantedPermissions = (await requestPermission(
+    uniquePermissions as Parameters<typeof requestPermission>[0]
+  )) as GrantedPermission[];
+  return uniquePermissions.filter((requestedPerm) =>
+    grantedPermissions.some(
+      (grantedPerm) =>
+        grantedPerm.recordType === requestedPerm.recordType &&
+        grantedPerm.accessType === requestedPerm.accessType
+    )
+  );
+};
+
 export const requestHealthPermissions = async (
   permissionsToRequest: PermissionRequest[]
 ): Promise<boolean> => {
   try {
-    const uniquePermissions = permissionsToRequest.filter(
-      (permission, index, allPermissions) =>
-        allPermissions.findIndex(
-          (candidate) =>
-            candidate.recordType === permission.recordType &&
-            candidate.accessType === permission.accessType
-        ) === index
-    );
-
-    // Cast to library's Permission type - our PermissionRequest interface is compatible
-    const grantedPermissions = (await requestPermission(
-      uniquePermissions as Parameters<typeof requestPermission>[0]
-    )) as GrantedPermission[];
-
-    const allGranted = uniquePermissions.every((requestedPerm) =>
-      grantedPermissions.some(
-        (grantedPerm) =>
-          grantedPerm.recordType === requestedPerm.recordType &&
-          grantedPerm.accessType === requestedPerm.accessType
-      )
-    );
+    const uniquePermissions = uniquePermissionRequests(permissionsToRequest);
+    const grantedPermissions =
+      await requestGrantedHealthPermissions(uniquePermissions);
+    const allGranted = grantedPermissions.length === uniquePermissions.length;
 
     if (allGranted) {
       addLog(
@@ -167,6 +197,13 @@ export const ensureHistoryReadPermission = async (): Promise<boolean> => {
 
 const PAGE_SIZE = 5000;
 const MAX_PAGES = 100;
+
+/**
+ * Enrichment runs inside the SleepSession metric's own timeout; each optional
+ * HRV/RHR read gets its own shorter limit, so a slow read cannot fail the sleep
+ * sync or discard the other metric's result.
+ */
+const SLEEP_BIOMETRICS_TIMEOUT_MS = 15_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FALLBACK_DAY_WINDOW_MS = DAY_MS;
 const FALLBACK_HOUR_WINDOW_MS = 60 * 60 * 1000;
@@ -393,10 +430,12 @@ const readHealthRecordsFallback = async (
  */
 let clientUnavailableCount = 0;
 let reconnectAttemptedThisRun = false;
+let inFlightReconnect: Promise<boolean> | null = null;
 
 export function resetClientUnavailableState(): void {
   clientUnavailableCount = 0;
   reconnectAttemptedThisRun = false;
+  inFlightReconnect = null;
 }
 
 export function getClientUnavailableCount(): number {
@@ -405,10 +444,12 @@ export function getClientUnavailableCount(): number {
 
 /**
  * Reconnects once per run and reports whether a retry is worth attempting.
- * A second caller in the same run gets false — the first attempt already
- * settled it, and the client does not become available by asking twice.
+ * Concurrent callers in the same run await the in-flight attempt; a caller
+ * arriving after that attempt has settled gets false (the client does not
+ * become available by asking twice).
  */
 const tryReconnectOnce = async (): Promise<boolean> => {
+  if (inFlightReconnect) return inFlightReconnect;
   if (reconnectAttemptedThisRun) return false;
   reconnectAttemptedThisRun = true;
 
@@ -416,7 +457,22 @@ const tryReconnectOnce = async (): Promise<boolean> => {
     '[HealthConnectService] Health Connect client is unavailable — reconnecting once before giving up.',
     'WARNING'
   );
-  return initHealthConnect();
+  inFlightReconnect = initHealthConnect().finally(() => {
+    inFlightReconnect = null;
+  });
+  return inFlightReconnect;
+};
+
+/** Retries a native aggregation once using the run's shared reconnect attempt. */
+const withClientRecovery = async <T>(read: () => Promise<T>): Promise<T> => {
+  try {
+    return await read();
+  } catch (error) {
+    if (!isClientUnavailableError(error)) throw error;
+    clientUnavailableCount++;
+    if (!(await tryReconnectOnce())) throw error;
+    return read();
+  }
 };
 
 export const readHealthRecordsDetailed = async (
@@ -579,6 +635,27 @@ const formatLocalDay = (date: Date): string => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+/**
+ * Calendar day (YYYY-MM-DD) of an instant at the record's own UTC offset, the
+ * way the server dates a record from its stored offset. Without an offset it
+ * falls back to the device day.
+ */
+const dayAtRecordOffset = (
+  time: string,
+  offset: HCZoneOffset | undefined
+): string => {
+  const totalSeconds = offset?.totalSeconds;
+  const ms = Date.parse(time);
+  if (typeof totalSeconds !== 'number' || !Number.isFinite(ms)) {
+    return toLocalDateString(time);
+  }
+  const shifted = new Date(ms + totalSeconds * 1000);
+  const y = String(shifted.getUTCFullYear()).padStart(4, '0');
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(shifted.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 };
 
@@ -891,17 +968,19 @@ const aggregateByDeviceZone = async (
   type PeriodBucket = { result: unknown; startTime: string; endTime: string };
   let buckets: PeriodBucket[];
   try {
-    buckets = (await aggregateGroupByPeriod({
-      recordType: spec.recordType as Parameters<
-        typeof aggregateGroupByPeriod
-      >[0]['recordType'],
-      timeRangeFilter: {
-        operator: 'between',
-        startTime: startDate.toISOString(),
-        endTime: endDate.toISOString(),
-      },
-      timeRangeSlicer: { period: 'DAYS', length: 1 },
-    })) as unknown as PeriodBucket[];
+    buckets = (await withClientRecovery(() =>
+      aggregateGroupByPeriod({
+        recordType: spec.recordType as Parameters<
+          typeof aggregateGroupByPeriod
+        >[0]['recordType'],
+        timeRangeFilter: {
+          operator: 'between',
+          startTime: startDate.toISOString(),
+          endTime: endDate.toISOString(),
+        },
+        timeRangeSlicer: { period: 'DAYS', length: 1 },
+      })
+    )) as unknown as PeriodBucket[];
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     addLog(
@@ -956,17 +1035,19 @@ const aggregateByRecordOffsets = async (
     };
     let buckets: DurationBucket[];
     try {
-      buckets = (await aggregateGroupByDuration({
-        recordType: spec.recordType as Parameters<
-          typeof aggregateGroupByDuration
-        >[0]['recordType'],
-        timeRangeFilter: {
-          operator: 'between',
-          startTime: new Date(segment.startMs).toISOString(),
-          endTime: new Date(segment.endMs).toISOString(),
-        },
-        timeRangeSlicer: { duration: 'DAYS', length: 1 },
-      })) as unknown as DurationBucket[];
+      buckets = (await withClientRecovery(() =>
+        aggregateGroupByDuration({
+          recordType: spec.recordType as Parameters<
+            typeof aggregateGroupByDuration
+          >[0]['recordType'],
+          timeRangeFilter: {
+            operator: 'between',
+            startTime: new Date(segment.startMs).toISOString(),
+            endTime: new Date(segment.endMs).toISOString(),
+          },
+          timeRangeSlicer: { duration: 'DAYS', length: 1 },
+        })
+      )) as unknown as DurationBucket[];
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       addLog(
@@ -1361,6 +1442,14 @@ type SessionCaloriePair = {
   total?: number;
 };
 
+/**
+ * Selects active session energy after validating basal energy against the
+ * duration-based resting-rate cap. Missing, non-finite, negative, or over-cap
+ * basal values retain the legacy Active/Total fallback. An accepted basal value
+ * may exceed Total; its derived zero is preserved instead of crediting resting
+ * energy as exercise. A positive, session-valid Active value still takes priority
+ * when it exceeds that derived estimate.
+ */
 const selectBasalNormalizedSessionCalories = (
   active: number | undefined,
   total: number | undefined,
@@ -1368,8 +1457,15 @@ const selectBasalNormalizedSessionCalories = (
   durationMs: number
 ): number | undefined => {
   const totalValid = isPositiveCalories(total) ? total : undefined;
+  // Without BMR records Health Connect synthesizes the basal aggregate, and it
+  // can come back far above any real resting rate — 512 kcal over a 66-min
+  // Samsung session, turning 606 total into 94 active (#2382). Basal above the
+  // same per-minute BMR cap the Active/Total check uses is ignored.
+  const basalCap = (durationMs / 60_000) * CALORIE_BMR_KCAL_PER_MIN_CAP;
   const basalValid =
-    basal != null && Number.isFinite(basal) && basal >= 0 ? basal : undefined;
+    basal != null && Number.isFinite(basal) && basal >= 0 && basal <= basalCap
+      ? basal
+      : undefined;
   if (totalValid == null || basalValid == null) {
     return selectSessionCalories(active, total, durationMs);
   }
@@ -1377,14 +1473,15 @@ const selectBasalNormalizedSessionCalories = (
   const reportedActive =
     isPositiveCalories(active) && active <= totalValid ? active : undefined;
   const derivedActive = deriveActiveCalories(totalValid, basalValid);
-  const derivedPositive =
-    derivedActive != null && derivedActive > 0 ? derivedActive : undefined;
 
-  if (derivedPositive == null) {
+  if (derivedActive == null) {
     return selectSessionCalories(active, total, durationMs);
   }
-  if (reportedActive == null) return derivedPositive;
-  return Math.max(reportedActive, derivedPositive);
+  // A plausible basal aggregate can account for all the total energy. That is
+  // a valid zero active estimate, not a missing Android bridge value: falling
+  // back to Total here would label the resting energy as workout calories.
+  if (reportedActive == null) return derivedActive;
+  return Math.max(reportedActive, derivedActive);
 };
 
 const extractSessionCaloriePair = (
@@ -1416,6 +1513,263 @@ export const isPlausibleSessionDistance = (
 ): boolean => {
   if (durationMs <= MIN_DURATION_FOR_DISTANCE_CHECK_MS) return true;
   return meters >= MIN_DISTANCE_FOR_LONG_SESSION_M;
+};
+
+interface SleepEnrichmentWindow {
+  startMs: number;
+  endMs: number;
+  wakeDay: string;
+  asleepMs: number;
+}
+
+const sleepEnrichmentWindow = (
+  record: unknown
+): SleepEnrichmentWindow | null => {
+  const rec = record as {
+    startTime?: unknown;
+    endTime?: unknown;
+    startZoneOffset?: HCZoneOffset;
+    endZoneOffset?: HCZoneOffset;
+    stages?: { startTime: string; endTime: string; stage: number }[];
+  };
+  if (typeof rec.startTime !== 'string' || typeof rec.endTime !== 'string') {
+    return null;
+  }
+  const startMs = Date.parse(rec.startTime);
+  const endMs = Date.parse(rec.endTime);
+  if (
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    endMs <= startMs
+  ) {
+    return null;
+  }
+  // Same "asleep" definition as the SleepSession transformer: light, deep and
+  // REM stages only, falling back to the duration when no stage is recognised.
+  let asleepMs = 0;
+  let hasRecognizedStages = false;
+  for (const stage of rec.stages ?? []) {
+    const stageType = mapHealthConnectSleepStage(stage.stage);
+    if (!stageType) continue;
+    const stageMs = Date.parse(stage.endTime) - Date.parse(stage.startTime);
+    if (!Number.isFinite(stageMs) || stageMs <= 0) continue;
+    hasRecognizedStages = true;
+    if (stageType !== 'awake') asleepMs += stageMs;
+  }
+  return {
+    startMs,
+    endMs,
+    // The server dates a sleep entry from wake_time at the record's offset.
+    wakeDay: dayAtRecordOffset(
+      rec.endTime,
+      rec.endZoneOffset ?? rec.startZoneOffset
+    ),
+    asleepMs: hasRecognizedStages ? asleepMs : endMs - startMs,
+  };
+};
+
+/**
+ * Records of an optional read, or [] with a debug log when the type is not
+ * enabled or the read failed. Uses a single paged read with no day/hour window
+ * fallback: an unpermitted or failing read must cost one native call, not a
+ * split storm. A truncated window would bias the mean/latest value, so any
+ * error (including too many pages) yields [].
+ */
+const readOptionalSleepBiometric = async (
+  recordType: string,
+  enabled: ReadonlySet<string>,
+  start: Date,
+  end: Date
+): Promise<unknown[]> => {
+  if (!enabled.has(recordType)) {
+    addLog(
+      `[HealthConnectService] Skipping ${recordType} for sleep enrichment: sync disabled or read permission not granted`,
+      'DEBUG'
+    );
+    return [];
+  }
+  let result: Awaited<ReturnType<typeof readHealthRecordsOnce>>;
+  try {
+    result = await withTimeout(
+      readHealthRecordsOnce(recordType, start, end),
+      SLEEP_BIOMETRICS_TIMEOUT_MS,
+      `Sleep enrichment ${recordType} read`
+    );
+  } catch (error) {
+    addLog(
+      `[HealthConnectService] Skipping ${recordType} for sleep enrichment: ${getErrorMessage(error)}`,
+      'DEBUG'
+    );
+    return [];
+  }
+  if (result.error) {
+    addLog(
+      `[HealthConnectService] Skipping ${recordType} for sleep enrichment: ${result.error}`,
+      'DEBUG'
+    );
+    return [];
+  }
+  return result.records;
+};
+
+const isSleepBiometricSyncEnabled = async (
+  preferenceKey: string
+): Promise<boolean> => {
+  try {
+    return (await loadHealthPreference<boolean>(preferenceKey)) === true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Attaches overnight HRV (RMSSD mean inside the wake day's longest sleep
+ * session, 1 decimal) and the wake day's latest resting heart rate to every
+ * sleep session of that wake day. Failed, empty or unpermitted reads leave the
+ * fields unset and never fail the sync.
+ */
+export const enrichSleepSessions = async (
+  records: unknown[],
+  telemetry: TelemetryRunContext
+): Promise<unknown[]> => {
+  void telemetry;
+  if (records.length === 0) return records;
+
+  try {
+    const windows = records.map(sleepEnrichmentWindow);
+    const valid = windows.filter((w): w is SleepEnrichmentWindow => w !== null);
+    if (valid.length === 0) return records;
+
+    const primaryByDay = new Map<string, SleepEnrichmentWindow>();
+    for (const w of valid) {
+      const current = primaryByDay.get(w.wakeDay);
+      if (!current || w.asleepMs > current.asleepMs) {
+        primaryByDay.set(w.wakeDay, w);
+      }
+    }
+
+    const minStartMs = Math.min(...valid.map((w) => w.startMs));
+    const maxEndMs = Math.max(...valid.map((w) => w.endMs));
+    const days = [...primaryByDay.keys()].sort();
+    const firstDay = days[0].split('-').map(Number);
+    const lastDay = days[days.length - 1].split('-').map(Number);
+
+    let granted: ReadonlySet<string> = new Set();
+    try {
+      granted = new Set(
+        (await getGrantedPermissions())
+          .filter((p) => p.accessType === 'read')
+          .map((p) => p.recordType)
+      );
+    } catch (error) {
+      addLog(
+        `[HealthConnectService] Sleep HRV/RHR enrichment skipped, permissions unavailable: ${getErrorMessage(error)}`,
+        'DEBUG'
+      );
+    }
+
+    // A metric switched off in the app keeps its Health Connect permission, so
+    // both the permission and the in-app sync toggle must be on.
+    const [hrvEnabled, rhrEnabled] = await Promise.all([
+      isSleepBiometricSyncEnabled('syncHeartRateVariabilityEnabled'),
+      isSleepBiometricSyncEnabled('syncRestingHeartRateEnabled'),
+    ]);
+    const enabled = new Set<string>();
+    if (hrvEnabled && granted.has('HeartRateVariabilityRmssd')) {
+      enabled.add('HeartRateVariabilityRmssd');
+    }
+    if (rhrEnabled && granted.has('RestingHeartRate')) {
+      enabled.add('RestingHeartRate');
+    }
+
+    // Each read carries its own time limit, so one slow metric only drops itself.
+    const [hrvRecords, rhrRecords] = await Promise.all([
+      readOptionalSleepBiometric(
+        'HeartRateVariabilityRmssd',
+        enabled,
+        new Date(minStartMs),
+        new Date(maxEndMs)
+      ),
+      readOptionalSleepBiometric(
+        'RestingHeartRate',
+        enabled,
+        // One extra day each side: wake days are dated at the record's offset,
+        // which can sit a day away from the device's local midnights.
+        new Date(firstDay[0], firstDay[1] - 1, firstDay[2] - 1, 0, 0, 0, 0),
+        new Date(lastDay[0], lastDay[1] - 1, lastDay[2] + 1, 23, 59, 59, 999)
+      ),
+    ]);
+
+    const hrvReadings = hrvRecords.flatMap((r) => {
+      const rec = r as { time?: unknown; heartRateVariabilityMillis?: unknown };
+      const ms = typeof rec.time === 'string' ? Date.parse(rec.time) : NaN;
+      const value = rec.heartRateVariabilityMillis;
+      return Number.isFinite(ms) &&
+        typeof value === 'number' &&
+        Number.isFinite(value) &&
+        value > 0
+        ? [{ ms, value }]
+        : [];
+    });
+
+    const latestRhrByDay = new Map<string, { ms: number; value: number }>();
+    for (const r of rhrRecords) {
+      const rec = r as {
+        time?: unknown;
+        beatsPerMinute?: unknown;
+        zoneOffset?: HCZoneOffset;
+      };
+      const ms = typeof rec.time === 'string' ? Date.parse(rec.time) : NaN;
+      const value = rec.beatsPerMinute;
+      if (
+        !Number.isFinite(ms) ||
+        typeof value !== 'number' ||
+        !Number.isFinite(value) ||
+        value <= 0
+      ) {
+        continue;
+      }
+      const day = dayAtRecordOffset(rec.time as string, rec.zoneOffset);
+      const current = latestRhrByDay.get(day);
+      if (!current || ms > current.ms) latestRhrByDay.set(day, { ms, value });
+    }
+
+    const biometricsByDay = new Map<
+      string,
+      { avg_overnight_hrv?: number; resting_heart_rate?: number }
+    >();
+    for (const [day, primary] of primaryByDay) {
+      const inWindow = hrvReadings.filter(
+        (h) => h.ms >= primary.startMs && h.ms <= primary.endMs
+      );
+      const biometrics: {
+        avg_overnight_hrv?: number;
+        resting_heart_rate?: number;
+      } = {};
+      if (inWindow.length > 0) {
+        const mean =
+          inWindow.reduce((sum, h) => sum + h.value, 0) / inWindow.length;
+        biometrics.avg_overnight_hrv = Math.round(mean * 10) / 10;
+      }
+      const rhr = latestRhrByDay.get(day);
+      if (rhr) biometrics.resting_heart_rate = rhr.value;
+      biometricsByDay.set(day, biometrics);
+    }
+
+    return records.map((record, i) => {
+      const w = windows[i];
+      const biometrics = w ? biometricsByDay.get(w.wakeDay) : undefined;
+      return biometrics && Object.keys(biometrics).length > 0
+        ? { ...(record as Record<string, unknown>), ...biometrics }
+        : record;
+    });
+  } catch (error) {
+    addLog(
+      `[HealthConnectService] Sleep HRV/RHR enrichment skipped: ${getErrorMessage(error)}`,
+      'DEBUG'
+    );
+    return records;
+  }
 };
 
 /**
@@ -1453,7 +1807,24 @@ export const enrichExerciseSessions = async (
   const startedAtMs = Date.now();
   let skippedInvalid = 0;
   let skippedAlreadyCollected = 0;
-  for (const record of byNewest) {
+  const allowGraceWindowClaim = createGraceWindowClaimLimiter(ctx.budget);
+  const deferredGraceSessions: unknown[] = [];
+  // A forced run re-reads cached sessions, so the cache no longer thins the
+  // candidates and the budget alone decides. Taken newest-first that would
+  // pick the same few every run and never reach the rest of the range, so
+  // order by how long ago each was collected: never-collected first, then
+  // least recently collected. Re-read sessions are re-committed to the back
+  // of the cache, so the next forced run continues where this one stopped.
+  const selectionOrder = ctx.force ? await enrichedSessionOrder() : null;
+  const collectionRank = (record: unknown): number => {
+    const key = sessionCacheKey(record);
+    if (!key || !selectionOrder) return -1;
+    return selectionOrder.get(key) ?? -1;
+  };
+  const candidates = selectionOrder
+    ? [...byNewest].sort((a, b) => collectionRank(a) - collectionRank(b))
+    : byNewest;
+  for (const record of candidates) {
     const rec = record as Record<string, unknown>;
     if (typeof rec.startTime !== 'string' || typeof rec.endTime !== 'string') {
       skippedInvalid++;
@@ -1473,11 +1844,32 @@ export const enrichExerciseSessions = async (
     }
     // Already-collected sessions neither consume a slot nor get re-read, so a
     // bounded budget works through the backlog across syncs instead of
-    // re-picking the same newest few every run (#2191).
-    if (await hasEnrichedSession(sessionCacheKey(record))) {
+    // re-picking the same newest few every run (#2191). A forced run re-reads
+    // them anyway — that is the user asking for exactly this window again.
+    if (!ctx.force && (await hasEnrichedSession(sessionCacheKey(record)))) {
       skippedAlreadyCollected++;
       continue;
     }
+    // Sessions inside the grace window come back every sync until their heart
+    // rate lands (#2300), and this loop runs newest-first — so they are capped
+    // at a share of the budget rather than allowed to take all of it, or the
+    // older backlog behind them would never advance (#2191). Deferred, not
+    // dropped: the second pass below returns the reservation if the backlog it
+    // was held for turned out to be empty.
+    if (!allowGraceWindowClaim(isWithinTelemetryGracePeriod(rec.endTime))) {
+      deferredGraceSessions.push(record);
+      continue;
+    }
+    if (!ctx.claim()) break;
+    telemetryAllowed.add(record);
+  }
+
+  // The reservation is a floor for the backlog, not a ceiling on the run. Once
+  // the walk above has offered every backlog session a slot, anything still
+  // unspent goes back to the sessions the cap deferred — otherwise a user with
+  // a drained backlog would collect fewer per run than before the cap existed.
+  // Still newest-first, since that is the order they were deferred in.
+  for (const record of deferredGraceSessions) {
     if (!ctx.claim()) break;
     telemetryAllowed.add(record);
   }
@@ -1656,9 +2048,10 @@ export const enrichExerciseSessions = async (
           if (kcal != null) telemetry.active_calories = kcal;
           enrichedFields.telemetry = telemetry;
         }
-        // Recorded even when the session turned out to have nothing beyond its
-        // summary: the reads that established that are exactly what we must not
-        // repeat every sync. A later edit to the record changes its cache key.
+        // Recorded when the session has telemetry, or when an empty session has
+        // aged past the grace period (so manual/summary-only workouts are not
+        // checked infinitely). Recent empty sessions remain uncached so late-arriving
+        // wearable samples (e.g. from Gadgetbridge, Zepp, etc.) can be collected (#2300).
         //
         // Not recorded when the bundle came back `incomplete` — a failed read is
         // not the same answer as an empty one, and this cache has no expiry, so
@@ -1668,7 +2061,11 @@ export const enrichExerciseSessions = async (
         // route-consent dialog, so collectSessionRoute returns no route for a
         // session awaiting consent — caching that would make the next foreground
         // sync skip it and the route would never be collected at all.
-        if (ctx.interactive && !bundle.incomplete) {
+        const canCache = shouldCacheEnrichedSession(
+          bundle,
+          rec.endTime as string
+        );
+        if (ctx.interactive && !bundle.incomplete && canCache) {
           ctx.stageCollected(sessionCacheKey(record));
         }
       }

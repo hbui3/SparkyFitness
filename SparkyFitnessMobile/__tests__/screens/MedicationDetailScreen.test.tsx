@@ -42,6 +42,18 @@ jest.mock('../../src/stores/diaryDateStore', () => ({
     selector({ selectedDate: '2026-07-29' }),
 }));
 
+const mockCustomNutrients = {
+  customNutrients: [] as { id: string; name: string; unit: string }[],
+  isLoading: false,
+};
+jest.mock('../../src/hooks/useCustomNutrients', () => ({
+  useCustomNutrients: () => mockCustomNutrients,
+  useEnsureCatalogNutrients: () => ({
+    mutateAsync: jest.fn(),
+    isPending: false,
+  }),
+}));
+
 jest.mock('../../src/components/Icon', () => {
   const { View } = require('react-native');
   return {
@@ -212,6 +224,44 @@ describe('MedicationDetailScreen', () => {
     mockUseDeleteMedicationEntry.mockReturnValue({
       mutate: jest.fn(),
     } as unknown as ReturnType<typeof useDeleteMedicationEntry>);
+  });
+
+  describe('supplement nutrition', () => {
+    const supplement = () =>
+      buildMedication({
+        is_supplement: true,
+        nutrients: { vitamin_c: 90.5, custom_nutrients: { Magnesium: 400 } },
+      });
+
+    beforeEach(() => {
+      mockCustomNutrients.customNutrients = [
+        { id: 'n1', name: 'Magnesium', unit: 'mg' },
+      ];
+      mockCustomNutrients.isLoading = false;
+    });
+
+    it('lists each nutrient with its unit', () => {
+      const screen = setupScreen(supplement());
+
+      expect(screen.getByText('Nutrition per serving')).toBeTruthy();
+      expect(screen.getByText('90.5 mg')).toBeTruthy();
+      expect(screen.getByText('400 mg')).toBeTruthy();
+    });
+
+    it('waits for the custom nutrient definitions instead of showing a bare amount', () => {
+      mockCustomNutrients.isLoading = true;
+      const screen = setupScreen(supplement());
+
+      expect(screen.getByText('90.5 mg')).toBeTruthy();
+      expect(screen.queryByText('Magnesium')).toBeNull();
+      expect(screen.queryByText('400')).toBeNull();
+    });
+
+    it('shows no nutrition card for a medication', () => {
+      const screen = setupScreen(buildMedication());
+
+      expect(screen.queryByText('Nutrition per serving')).toBeNull();
+    });
   });
 
   it('leads the hero with the name, then dose and strength', () => {

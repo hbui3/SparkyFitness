@@ -1,8 +1,19 @@
+import { isIgnoredEquipment, normalizeEquipment } from './exerciseTaxonomy.ts';
+
 /**
  * Exercise modality selects which per-set editor clients render
  * (issue #1903 stage 2):
  * - weight_reps: weight + reps inputs (default strength table)
  * - reps_only: reps input, no weight column
+ * - bodyweight_reps: reps plus a signed weight for bodyweight movements —
+ *   positive is load added (+20 kg on a dip belt), negative is assistance
+ *   (−15 kg from a band or machine). Volume and estimated 1RM count the
+ *   lifter's body weight plus that value (see `effectiveLoadKg`).
+ * - weight_duration: weight plus a duration in seconds, for loaded holds
+ *   (weighted plank, wall sit with a plate)
+ * - weight_distance: weight plus a distance, for carries and sled work
+ *   (farmer's walk, yoke, sandbag, sled push). The distance is stored in km
+ *   like every other set distance; clients show metres or yards
  * - duration: single duration-in-seconds input
  * - duration_distance: cardio backed by a single set carrying duration
  *   (seconds) + distance (km); clients render a duration+distance form for
@@ -10,17 +21,20 @@
  *   table for multi-set entries
  */
 export const EXERCISE_MODALITIES = [
-  "weight_reps",
-  "reps_only",
-  "duration",
-  "duration_distance",
+  'weight_reps',
+  'reps_only',
+  'bodyweight_reps',
+  'weight_duration',
+  'weight_distance',
+  'duration',
+  'duration_distance',
 ] as const;
 
 export type ExerciseModality = (typeof EXERCISE_MODALITIES)[number];
 
 export function isExerciseModality(value: unknown): value is ExerciseModality {
   return (
-    typeof value === "string" &&
+    typeof value === 'string' &&
     (EXERCISE_MODALITIES as readonly string[]).includes(value)
   );
 }
@@ -31,22 +45,76 @@ export function isExerciseModality(value: unknown): value is ExerciseModality {
  * (holds are duration-like but never cardio).
  */
 export function isCardioModality(modality: ExerciseModality): boolean {
-  return modality === "duration_distance";
+  return modality === 'duration_distance';
+}
+
+/** Loaded holds: a weight and a duration per set, no reps. */
+export function isWeightDurationModality(modality: ExerciseModality): boolean {
+  return modality === 'weight_duration';
+}
+
+/** Carries and sled work: a weight and a distance per set, no reps. */
+export function isWeightDistanceModality(modality: ExerciseModality): boolean {
+  return modality === 'weight_distance';
 }
 
 /**
- * Derive a modality from an exercise category. The rules must stay in sync
- * with the backfill CASE in the `*_set_duration_seconds_modality_distance.sql`
- * migration.
+ * Whether a set of this modality records reps. The two loaded-effort types
+ * replace reps with a duration or a distance, so a rep count is not entered,
+ * summed or used for volume and estimated 1RM on them.
+ */
+export function modalityRecordsReps(modality: ExerciseModality): boolean {
+  return (
+    modality === 'weight_reps' ||
+    modality === 'reps_only' ||
+    modality === 'bodyweight_reps'
+  );
+}
+
+/** Whether sets of this modality carry a signed added/assisting weight. */
+export function isBodyweightModality(modality: ExerciseModality): boolean {
+  return modality === 'bodyweight_reps';
+}
+
+/**
+ * Derive a modality from an exercise category and, when known, its equipment.
+ * The category rules must stay in sync with the backfill CASE in the
+ * `*_set_duration_seconds_modality_distance.sql` migration; the equipment
+ * rule only applies to exercises created or imported after it.
+ *
+ * Equipment that is recorded and is bodyweight alone (pull-up bar, dip
+ * station, "body only") gives `bodyweight_reps`. Blank equipment does not:
+ * too many custom and cardio exercises leave it empty for that to mean
+ * anything. An unrecognised name is not blank, so it keeps the exercise on
+ * ordinary weight. A bench is an ignored accessory and does not.
  */
 export function deriveExerciseModality(
   category: string | null | undefined,
+  equipment?: readonly (string | null | undefined)[] | string | null
 ): ExerciseModality {
   const normalized = category?.trim().toLowerCase();
-  if (normalized === "cardio") return "duration_distance";
-  if (normalized === "isometric" || normalized === "isometrics")
-    return "duration";
-  return "weight_reps";
+  if (normalized === 'cardio') return 'duration_distance';
+  if (normalized === 'isometric' || normalized === 'isometrics')
+    return 'duration';
+  if (isBodyweightOnlyEquipment(equipment)) return 'bodyweight_reps';
+  return 'weight_reps';
+}
+
+function isBodyweightOnlyEquipment(
+  equipment: readonly (string | null | undefined)[] | string | null | undefined
+): boolean {
+  const values =
+    typeof equipment === 'string' ? [equipment] : (equipment ?? []);
+  const present = values.filter(
+    (value): value is string =>
+      value != null && value.trim() !== '' && !isIgnoredEquipment(value)
+  );
+  // An unknown name is not "no equipment". Dropping it would leave "body
+  // only" and mark a loaded custom attachment as bodyweight.
+  return (
+    present.length > 0 &&
+    present.every((value) => normalizeEquipment(value) === 'body only')
+  );
 }
 
 /**
@@ -58,14 +126,15 @@ export function deriveExerciseModality(
 export function resolveExerciseModality(
   modality: string | null | undefined,
   category: string | null | undefined,
+  equipment?: readonly (string | null | undefined)[] | string | null
 ): ExerciseModality {
   return isExerciseModality(modality)
     ? modality
-    : deriveExerciseModality(category);
+    : deriveExerciseModality(category, equipment);
 }
 
 // Workout sources that support nested exercise editing after creation.
-const EDITABLE_SOURCES = new Set(["manual", "sparky", "workout plan"]);
+const EDITABLE_SOURCES = new Set(['manual', 'sparky', 'workout plan']);
 
 function normalizeSource(source: string | null | undefined): string | null {
   if (source == null) return null;
@@ -80,7 +149,7 @@ function normalizeSource(source: string | null | undefined): string | null {
  * Garmin, Strava, etc.).
  */
 export function canEditGroupedWorkout(
-  source: string | null | undefined,
+  source: string | null | undefined
 ): boolean {
   const normalized = normalizeSource(source);
   if (normalized == null) {

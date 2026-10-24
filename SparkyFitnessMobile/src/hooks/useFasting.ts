@@ -8,6 +8,9 @@ import {
   fetchCurrentFast,
   fetchFastingHistory,
   fetchFastingStats,
+  fetchFastingPreferences,
+  fetchFastingRange,
+  updateFastingPreferences,
   startFast,
   endFast,
   updateFast,
@@ -16,6 +19,7 @@ import {
 import {
   cancelScheduledNotification,
   scheduleFastGoalNotification,
+  scheduleFastPreEndNotification,
 } from '../services/notifications';
 import { addLog } from '../services/LogService';
 import { useAppPreferencesStore } from '../stores/appPreferencesStore';
@@ -23,10 +27,12 @@ import { useRefetchOnFocus } from './useRefetchOnFocus';
 import {
   fastingCurrentQueryKey,
   fastingHistoryQueryKey,
+  fastingPreferencesQueryKey,
+  fastingRangeQueryKey,
   fastingRootQueryKey,
   fastingStatsQueryKey,
 } from './queryKeys';
-import type { FastingLog } from '../types/fasting';
+import type { FastingLog, FastingPreferencesUpdate } from '../types/fasting';
 
 // Fasting changes can shift the calorie picture, so mutations also nudge the
 // dashboard's daily summary. `dailySummaryQueryKey` is `['dailySummary', date]`,
@@ -72,6 +78,42 @@ export function useFastingHistory(
   });
   useRefetchOnFocus(query.refetch, enabled);
   return query;
+}
+
+export function useFastingRange(
+  startDate: string,
+  endDate: string,
+  options?: QueryOptions
+) {
+  const enabled = options?.enabled ?? true;
+  return useQuery({
+    queryKey: fastingRangeQueryKey(startDate, endDate),
+    queryFn: () => fetchFastingRange(startDate, endDate),
+    enabled,
+  });
+}
+
+export function useFastingPreferences(options?: QueryOptions) {
+  return useQuery({
+    queryKey: fastingPreferencesQueryKey,
+    queryFn: fetchFastingPreferences,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useUpdateFastingPreferences() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: FastingPreferencesUpdate) =>
+      updateFastingPreferences(updates),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(fastingPreferencesQueryKey, saved);
+      // Turning auto-calculate on/off or changing the protocol/threshold
+      // changes what `/current`, history, stats and the report return.
+      queryClient.invalidateQueries({ queryKey: fastingRootQueryKey });
+      queryClient.invalidateQueries({ queryKey: dailySummaryRootKey });
+    },
+  });
 }
 
 export function useStartFast() {
@@ -147,6 +189,7 @@ export function useDeleteFast() {
 // schedule path against concurrent calls.
 // ---------------------------------------------------------------------------
 
+const DEFAULT_PRE_END_ALERT_MINUTES = 30;
 const GOAL_NOTIF_STORAGE_KEY = '@Fasting:goalNotificationId';
 const schedulingLock = new Set<string>();
 
@@ -154,6 +197,8 @@ interface StoredGoalNotification {
   fastId: string;
   target: string | null;
   notificationId: string;
+  preEndNotificationId?: string | null;
+  preEndMinutes?: number | null;
   language?: string | null;
 }
 
@@ -164,14 +209,23 @@ async function readStoredGoalNotification(): Promise<StoredGoalNotification | nu
     const parsed = JSON.parse(raw) as Partial<StoredGoalNotification>;
     if (
       typeof parsed?.fastId === 'string' &&
-      typeof parsed?.notificationId === 'string'
+      (typeof parsed?.notificationId === 'string' ||
+        typeof parsed?.preEndNotificationId === 'string')
     ) {
       return {
         fastId: parsed.fastId,
         // `target` was added later; a missing/invalid value reads as null so an
         // upgraded record is treated as stale and rescheduled, not orphaned.
         target: typeof parsed.target === 'string' ? parsed.target : null,
-        notificationId: parsed.notificationId,
+        notificationId: parsed.notificationId ?? '',
+        preEndNotificationId:
+          typeof parsed.preEndNotificationId === 'string'
+            ? parsed.preEndNotificationId
+            : null,
+        preEndMinutes:
+          typeof parsed.preEndMinutes === 'number'
+            ? parsed.preEndMinutes
+            : null,
         language: typeof parsed.language === 'string' ? parsed.language : null,
       };
     }
@@ -182,9 +236,15 @@ async function readStoredGoalNotification(): Promise<StoredGoalNotification | nu
 }
 
 async function clearStoredGoalNotification(
-  notificationId: string | null
+  notificationId: string | null,
+  preEndNotificationId?: string | null
 ): Promise<void> {
-  await cancelScheduledNotification(notificationId);
+  if (notificationId) {
+    await cancelScheduledNotification(notificationId);
+  }
+  if (preEndNotificationId) {
+    await cancelScheduledNotification(preEndNotificationId);
+  }
   try {
     await AsyncStorage.removeItem(GOAL_NOTIF_STORAGE_KEY);
   } catch {
@@ -195,7 +255,12 @@ async function clearStoredGoalNotification(
 /** Cancels and forgets any scheduled goal notification. */
 export async function cancelFastGoalNotification(): Promise<void> {
   const stored = await readStoredGoalNotification();
-  if (stored) await clearStoredGoalNotification(stored.notificationId);
+  if (stored) {
+    await clearStoredGoalNotification(
+      stored.notificationId,
+      stored.preEndNotificationId
+    );
+  }
 }
 
 /**
@@ -207,7 +272,8 @@ export async function cancelFastGoalNotification(): Promise<void> {
  */
 export async function reconcileFastGoalNotification(
   currentFast: FastingLog | null,
-  language?: string
+  language?: string,
+  preEndMinutes: number = DEFAULT_PRE_END_ALERT_MINUTES
 ): Promise<void> {
   // Callers fire this with `void`, so a thrown error (from notification
   // scheduling or AsyncStorage) would surface as an unhandled rejection.
@@ -215,15 +281,27 @@ export async function reconcileFastGoalNotification(
   try {
     let stored = await readStoredGoalNotification();
 
-    // No active fast → cancel any scheduled goal notification.
-    if (!currentFast || currentFast.status !== 'ACTIVE') {
-      if (stored) await clearStoredGoalNotification(stored.notificationId);
+    // No active fast or currently in eating window → cancel any scheduled goal notification.
+    if (
+      !currentFast ||
+      currentFast.status !== 'ACTIVE' ||
+      currentFast.is_eating_window
+    ) {
+      if (stored) {
+        await clearStoredGoalNotification(
+          stored.notificationId,
+          stored.preEndNotificationId
+        );
+      }
       return;
     }
 
     // A stored notification belonging to a different fast is stale — drop it.
     if (stored && stored.fastId !== currentFast.id) {
-      await clearStoredGoalNotification(stored.notificationId);
+      await clearStoredGoalNotification(
+        stored.notificationId,
+        stored.preEndNotificationId
+      );
       stored = null;
     }
 
@@ -232,18 +310,30 @@ export async function reconcileFastGoalNotification(
     // Elapsed-only fast (no goal) → never schedule; drop a lingering id if the
     // target was cleared on this same fast.
     if (!target) {
-      if (stored) await clearStoredGoalNotification(stored.notificationId);
+      if (stored) {
+        await clearStoredGoalNotification(
+          stored.notificationId,
+          stored.preEndNotificationId
+        );
+      }
       return;
     }
 
     // A stored notification whose target no longer matches the active fast's
     // target (e.g. the goal was edited on web / another device) is stale — drop
     // it so we reschedule for the new target time.
+    // Changing the pre-goal warning in Fasting Settings reschedules the same way.
     if (
       stored &&
-      (stored.target !== target || stored.language !== (language ?? null))
+      (stored.target !== target ||
+        stored.language !== (language ?? null) ||
+        (stored.preEndMinutes ?? DEFAULT_PRE_END_ALERT_MINUTES) !==
+          preEndMinutes)
     ) {
-      await clearStoredGoalNotification(stored.notificationId);
+      await clearStoredGoalNotification(
+        stored.notificationId,
+        stored.preEndNotificationId
+      );
       stored = null;
     }
 
@@ -254,14 +344,21 @@ export async function reconcileFastGoalNotification(
     if (schedulingLock.has(currentFast.id)) return;
     schedulingLock.add(currentFast.id);
     try {
-      const notificationId = await scheduleFastGoalNotification(target);
-      if (notificationId) {
+      const [notificationId, preEndNotificationId] = await Promise.all([
+        scheduleFastGoalNotification(target),
+        preEndMinutes > 0
+          ? scheduleFastPreEndNotification(target, preEndMinutes)
+          : Promise.resolve(null),
+      ]);
+      if (notificationId || preEndNotificationId) {
         await AsyncStorage.setItem(
           GOAL_NOTIF_STORAGE_KEY,
           JSON.stringify({
             fastId: currentFast.id,
             target,
-            notificationId,
+            notificationId: notificationId ?? '',
+            preEndNotificationId: preEndNotificationId ?? null,
+            preEndMinutes,
             ...(language !== undefined ? { language } : {}),
           })
         );
@@ -283,7 +380,8 @@ export async function reconcileFastGoalNotification(
 export function useFastingGoalReconciler(
   currentFast: FastingLog | null | undefined,
   isLoading: boolean,
-  refetch: () => void
+  refetch: () => void,
+  preEndMinutes: number = DEFAULT_PRE_END_ALERT_MINUTES
 ): void {
   const notificationsEnabled = useAppPreferencesStore(
     (s) => s.notificationsEnabled
@@ -303,7 +401,11 @@ export function useFastingGoalReconciler(
       void cancelFastGoalNotification();
       return;
     }
-    void reconcileFastGoalNotification(currentFast ?? null, appLocale);
+    void reconcileFastGoalNotification(
+      currentFast ?? null,
+      appLocale,
+      preEndMinutes
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isLoading,
@@ -311,7 +413,9 @@ export function useFastingGoalReconciler(
     currentFast?.id,
     currentFast?.target_end_time,
     currentFast?.status,
+    currentFast?.is_eating_window,
     appLocale,
+    preEndMinutes,
   ]);
 
   // On resume, refetch so a fast started/edited on another device is seen. The

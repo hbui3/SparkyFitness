@@ -213,47 +213,42 @@ function normalizeServingUnit(unit: any) {
   if (SERVING_UNIT_ALIASES[firstWord]) return SERVING_UNIT_ALIASES[firstWord];
   return clean;
 }
-// Reconcile a caller-supplied (quantity, unit) with the variant an entry will be
-// logged against, so the stored entry's unit always matches the variant's own
-// serving_unit.
-//
-// The diary math (frontend calculateFoodEntryNutrition) scales a variant's nutrients
-// by quantity / serving_size and assumes the entry unit is the same unit as
-// serving_size. When a food's variant is measured in a concrete unit (g, ml, ...) but
-// the amount was expressed in whole "servings" (the default when the AI omits a unit),
-// storing unit:"serving" makes that math read "1 serving" as "1 gram". Because
-// 1 serving == the variant's serving_size, convert the serving count into the variant's
-// own unit. Mirrors the convention already used for meal components in foodEntryService
-// (unit === 'serving' => quantity * serving_size).
-function reconcileEntryUnitToVariant(
-  quantity: number,
-  requestedUnit: string | null | undefined,
-  variant:
-    | { serving_size?: number | null; serving_unit?: string | null }
-    | null
-    | undefined
-): { quantity: number; unit: string } {
-  const variantUnit = variant?.serving_unit || 'serving';
-  const requested = requestedUnit || 'serving';
-
-  if (normalizeServingUnit(requested) === normalizeServingUnit(variantUnit)) {
-    // Already dimensionally consistent (e.g. "g" against a gram variant).
-    return { quantity, unit: variantUnit };
-  }
-
-  if (normalizeServingUnit(requested) === 'serving') {
-    // A whole-serving count against a concrete-unit variant: 1 serving is one
-    // serving_size of that unit.
-    const servingSize = Number(variant?.serving_size);
-    const factor =
-      Number.isFinite(servingSize) && servingSize > 0 ? servingSize : 1;
-    return { quantity: quantity * factor, unit: variantUnit };
-  }
-
-  // Some other explicit unit that does not match the variant; leave the caller's
-  // values untouched rather than guessing a conversion.
-  return { quantity, unit: requested };
+export interface NutritionReferenceValues {
+  [nutrient: string]: number | string | null | undefined;
 }
+
+/**
+ * Scales nutrition stored per reference serving to a concrete consumed amount.
+ * Callers must first normalize the entry unit to the reference serving unit;
+ * this function deliberately has no cross-dimension conversion.
+ */
+function scaleNutritionForConsumedAmount(
+  quantity: number,
+  servingSize: number | string | null | undefined,
+  nutrients: NutritionReferenceValues
+): Record<string, number | null> {
+  const parsedServingSize = Number(servingSize);
+  const multiplier =
+    Number.isFinite(parsedServingSize) && parsedServingSize > 0
+      ? quantity / parsedServingSize
+      : null;
+
+  return Object.fromEntries(
+    Object.entries(nutrients).map(([name, value]) => {
+      if (value === null || value === undefined || value === '') {
+        return [name, null];
+      }
+      const numeric = Number(value);
+      return [
+        name,
+        multiplier !== null && Number.isFinite(numeric)
+          ? numeric * multiplier
+          : null,
+      ];
+    })
+  );
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function normalizeBarcode(barcode: any) {
   if (typeof barcode === 'string' && barcode.length === 12) {
@@ -275,7 +270,7 @@ function altBarcode(barcode: string): string | null {
 }
 export { sanitizeCustomNutrients };
 export { normalizeServingUnit };
-export { reconcileEntryUnitToVariant };
+export { scaleNutritionForConsumedAmount };
 export { normalizeBarcode };
 export { altBarcode };
 export { buildAliasIndex };
@@ -283,7 +278,7 @@ export { applyCustomNutrientMatches };
 export default {
   sanitizeCustomNutrients,
   normalizeServingUnit,
-  reconcileEntryUnitToVariant,
+  scaleNutritionForConsumedAmount,
   normalizeBarcode,
   altBarcode,
   buildAliasIndex,

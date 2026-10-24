@@ -2,6 +2,10 @@ import express from 'express';
 import { authenticate } from '../../middleware/authMiddleware.js';
 import { demoGuard } from '../../middleware/demoGuardMiddleware.js';
 import { auth } from '../../auth.js';
+import {
+  API_KEY_SCOPE_PERMISSIONS,
+  createApiKeyBodySchema,
+} from '@workspace/shared';
 const router = express.Router();
 // auth is required lazily within handlers to avoid early initialization issues during migrations
 // const { auth } = require('../../auth');
@@ -25,7 +29,13 @@ const router = express.Router();
  *                 type: string
  *               expiresIn:
  *                 type: number
- *                 description: Expiration time in seconds
+ *                 nullable: true
+ *                 description: Expiration time in seconds (default 1 year; null never expires)
+ *               scope:
+ *                 type: string
+ *                 enum: [read, full]
+ *                 default: full
+ *                 description: "read: the key can only read data (GET requests and read-only MCP tools). full: the key can read and write."
  *     responses:
  *       201:
  *         description: API key generated successfully.
@@ -37,10 +47,14 @@ router.post(
   authenticate,
   demoGuard,
   async (req, res, next) => {
-    const { name, expiresIn } = req.body;
-    if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
+    const parsed = createApiKeyBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid request body',
+        details: parsed.error.flatten().fieldErrors,
+      });
     }
+    const { name, expiresIn, scope } = parsed.data;
     try {
       // @ts-expect-error TS(2339): Property 'createApiKey' does not exist on type 'In... Remove this comment to see the full error message
       const result = await auth.api.createApiKey({
@@ -59,7 +73,11 @@ router.post(
           // an explicit binding rather than a session lookup.
           userId: req.authenticatedUserId,
           name,
-          expiresIn: expiresIn || 31536000, // Default 1 year
+          // Default 1 year when omitted; null creates a key that never expires.
+          expiresIn: expiresIn === undefined ? 31536000 : expiresIn,
+          // Server-only field: Better Auth refuses `permissions` from a client
+          // request, which is why scoped keys are created through this route.
+          permissions: API_KEY_SCOPE_PERMISSIONS[scope],
         },
       });
       res.status(201).json({
@@ -69,6 +87,7 @@ router.post(
           key: result.key, // Only returned on creation
           name: result.name,
           createdAt: result.createdAt,
+          scope,
         },
       });
     } catch (error) {

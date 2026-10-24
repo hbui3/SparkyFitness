@@ -1,42 +1,96 @@
 import { getClient } from '../db/poolManager.js';
 import { log } from '../config/logging.js';
-// @ts-expect-error TS(7016): Could not find a declaration file for module 'pg-f... Remove this comment to see the full error message
+// @ts-expect-error TS(7016): Could not find a declaration file for module 'pg-format'
 import format from 'pg-format';
+import type { PoolClient } from 'pg';
+import { assertSetWeightSign } from '../utils/setWeightSign.js';
 import {
   buildSqlSearch,
   buildSqlExactMatchOrder,
 } from '../utils/dbSearchHelper.js';
+import { parseJsonArrayField } from '../utils/exerciseJsonFields.js';
+
+/** exercises.equipment is JSON text. Warm-up rounding needs a string array. */
+function parsePresetExerciseEquipment<
+  T extends { exercises?: { equipment?: unknown }[] },
+>(row: T | undefined): T | undefined {
+  if (!row?.exercises) return row;
+  for (const exercise of row.exercises) {
+    exercise.equipment = parseJsonArrayField(
+      typeof exercise.equipment === 'string' ? exercise.equipment : null
+    ).filter((item: unknown): item is string => typeof item === 'string');
+  }
+  return row;
+}
+
+async function assertPresetExerciseSetWeights(
+  client: PoolClient,
+  exerciseId: string,
+  sets: readonly { weight?: number | string | null }[] | null | undefined
+) {
+  const result = await client.query(
+    'SELECT modality FROM exercises WHERE id = $1',
+    [exerciseId]
+  );
+  assertSetWeightSign(sets, result.rows[0]?.modality ?? null);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function createWorkoutPreset(presetData: any) {
   const client = await getClient(presetData.user_id); // User-specific operation
   try {
     await client.query('BEGIN');
     const presetResult = await client.query(
-      `INSERT INTO workout_presets (user_id, name, description, is_public)
-       VALUES ($1, $2, $3, $4) RETURNING id, user_id, name, description, is_public`,
+      `INSERT INTO workout_presets (user_id, name, description, is_public, workout_format, time_cap_seconds)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, user_id, name, description, is_public, workout_format, time_cap_seconds`,
       [
         presetData.user_id,
         presetData.name,
         presetData.description,
         presetData.is_public,
+        presetData.workout_format || 'standard',
+        presetData.time_cap_seconds ?? null,
       ]
     );
     const newPreset = { ...presetResult.rows[0], isNew: true };
     if (presetData.exercises && presetData.exercises.length > 0) {
       for (const exercise of presetData.exercises) {
         const exerciseResult = await client.query(
-          `INSERT INTO workout_preset_exercises (workout_preset_id, exercise_id, image_url, sort_order, superset_group)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          `INSERT INTO workout_preset_exercises (
+            workout_preset_id,
+            exercise_id,
+            image_url,
+            sort_order,
+            superset_group,
+            progression_mode,
+            rep_goal,
+            increment_type,
+            increment_value,
+            equipment_brand,
+            ramp_increment
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
           [
             newPreset.id,
             exercise.exercise_id,
             exercise.image_url,
             exercise.sort_order || 0,
             exercise.superset_group ?? null,
+            exercise.progression_mode ?? 'rep_goal',
+            exercise.rep_goal ?? null,
+            exercise.increment_type ?? 'weight',
+            exercise.increment_value ?? 5.0,
+            exercise.equipment_brand ?? null,
+            exercise.ramp_increment ?? null,
           ]
         );
         const newExerciseId = exerciseResult.rows[0].id;
         if (exercise.sets && exercise.sets.length > 0) {
+          await assertPresetExerciseSetWeights(
+            client,
+            exercise.exercise_id,
+            exercise.sets
+          );
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const setsValues = exercise.sets.map((set: any) => [
             newExerciseId,
@@ -68,13 +122,19 @@ async function createWorkoutPreset(presetData: any) {
     client.release();
   }
 }
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getWorkoutPresetByName(userId: any, name: any) {
   const client = await getClient(userId);
   try {
+    // Owner first, then family-shared via can_view_exercise_library. Do not
+    // rely on RLS alone: has_library_access_with_public also allows every
+    // is_public preset, so a name like "Push Day" would resolve to the oldest
+    // public row in the database (and Garmin/Hevy/CSV find-or-create would
+    // attach to it). Public presets are still readable by ID.
     const result = await client.query(
       `SELECT
-        wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.created_at, wp.updated_at,
+        wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.workout_format, wp.time_cap_seconds, wp.created_at, wp.updated_at,
         COALESCE(
           (SELECT json_agg(ex_data)
            FROM (
@@ -84,9 +144,16 @@ async function getWorkoutPresetByName(userId: any, name: any) {
                wpe.image_url,
                wpe.sort_order,
                wpe.superset_group,
+               wpe.progression_mode,
+               wpe.rep_goal,
+               wpe.increment_type,
+               wpe.increment_value,
+               wpe.equipment_brand,
+               wpe.ramp_increment,
                e.name as exercise_name,
                e.category as category,
                e.modality as modality,
+               e.equipment as equipment,
                COALESCE(
                  (SELECT json_agg(set_data ORDER BY set_data.set_number)
                   FROM (
@@ -105,11 +172,19 @@ async function getWorkoutPresetByName(userId: any, name: any) {
           ), '[]'::json
         ) AS exercises
       FROM workout_presets wp
-      WHERE wp.user_id = $1 AND wp.name ILIKE $2
-      GROUP BY wp.id`,
+      WHERE wp.name ILIKE $2
+        AND (
+          wp.user_id = $1
+          OR public.has_family_access(wp.user_id, 'can_view_exercise_library')
+        )
+      GROUP BY wp.id
+      ORDER BY (wp.user_id = $1) DESC, wp.id ASC
+      LIMIT 1`,
       [userId, name]
     );
-    return result.rows[0] ? { ...result.rows[0], isNew: false } : null; // Add isNew: false for existing presets
+    return result.rows[0]
+      ? { ...parsePresetExerciseEquipment(result.rows[0]), isNew: false }
+      : null;
   } finally {
     client.release();
   }
@@ -158,7 +233,7 @@ async function getWorkoutPresets(userId: any, page = 1, limit = 10) {
     const total = parseInt(totalResult.rows[0].count, 10);
     const result = await client.query(
       `SELECT
-         wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.created_at, wp.updated_at,
+         wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.workout_format, wp.time_cap_seconds, wp.created_at, wp.updated_at,
          COALESCE(
            (SELECT json_agg(ex_data)
             FROM (
@@ -167,9 +242,16 @@ async function getWorkoutPresets(userId: any, page = 1, limit = 10) {
                 wpe.exercise_id,
                 wpe.image_url,
                 wpe.superset_group,
+                wpe.progression_mode,
+                wpe.rep_goal,
+                wpe.increment_type,
+                wpe.increment_value,
+                wpe.equipment_brand,
+                wpe.ramp_increment,
                 e.name as exercise_name,
                 e.category as category,
                 e.modality as modality,
+                e.equipment as equipment,
                 COALESCE(
                   (SELECT json_agg(set_data ORDER BY set_data.set_number)
                    FROM (
@@ -194,7 +276,7 @@ async function getWorkoutPresets(userId: any, page = 1, limit = 10) {
       [limit, offset]
     );
     return {
-      presets: result.rows,
+      presets: result.rows.map((row: any) => parsePresetExerciseEquipment(row)),
       total,
       page,
       limit,
@@ -203,13 +285,14 @@ async function getWorkoutPresets(userId: any, page = 1, limit = 10) {
     client.release();
   }
 }
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getWorkoutPresetById(presetId: any, userId: any) {
   const client = await getClient(userId); // User-specific operation (RLS will handle access)
   try {
     const result = await client.query(
       `SELECT
-         wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.created_at, wp.updated_at,
+         wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.workout_format, wp.time_cap_seconds, wp.created_at, wp.updated_at,
          COALESCE(
            (SELECT json_agg(ex_data)
             FROM (
@@ -218,9 +301,16 @@ async function getWorkoutPresetById(presetId: any, userId: any) {
                 wpe.exercise_id,
                 wpe.image_url,
                 wpe.superset_group,
+                wpe.progression_mode,
+                wpe.rep_goal,
+                wpe.increment_type,
+                wpe.increment_value,
+                wpe.equipment_brand,
+                wpe.ramp_increment,
                 e.name as exercise_name,
                 e.category as category,
                 e.modality as modality,
+                e.equipment as equipment,
                 COALESCE(
                   (SELECT json_agg(set_data ORDER BY set_data.set_number)
                    FROM (
@@ -243,7 +333,7 @@ async function getWorkoutPresetById(presetId: any, userId: any) {
        GROUP BY wp.id`,
       [presetId]
     );
-    return result.rows[0];
+    return parsePresetExerciseEquipment(result.rows[0]);
   } finally {
     client.release();
   }
@@ -265,10 +355,20 @@ async function updateWorkoutPreset(
         name = COALESCE($1, name),
         description = COALESCE($2, description),
         is_public = COALESCE($3, is_public),
+        workout_format = COALESCE($4, workout_format),
+        time_cap_seconds = CASE WHEN $5::boolean THEN $6::integer ELSE time_cap_seconds END,
         updated_at = now()
-       WHERE id = $4
+       WHERE id = $7
        RETURNING id`,
-      [updateData.name, updateData.description, updateData.is_public, presetId]
+      [
+        updateData.name,
+        updateData.description,
+        updateData.is_public,
+        updateData.workout_format,
+        updateData.time_cap_seconds !== undefined,
+        updateData.time_cap_seconds ?? null,
+        presetId,
+      ]
     );
     if (result.rows.length > 0 && updateData.exercises !== undefined) {
       // Delete old exercises and sets (cascade will handle sets)
@@ -280,18 +380,41 @@ async function updateWorkoutPreset(
       if (updateData.exercises.length > 0) {
         for (const exercise of updateData.exercises) {
           const exerciseResult = await client.query(
-            `INSERT INTO workout_preset_exercises (workout_preset_id, exercise_id, image_url, sort_order, superset_group)
-             VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+            `INSERT INTO workout_preset_exercises (
+              workout_preset_id,
+              exercise_id,
+              image_url,
+              sort_order,
+              superset_group,
+              progression_mode,
+              rep_goal,
+              increment_type,
+              increment_value,
+              equipment_brand,
+              ramp_increment
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
             [
               presetId,
               exercise.exercise_id,
               exercise.image_url,
               exercise.sort_order || 0,
               exercise.superset_group ?? null,
+              exercise.progression_mode ?? 'rep_goal',
+              exercise.rep_goal ?? null,
+              exercise.increment_type ?? 'weight',
+              exercise.increment_value ?? 5.0,
+              exercise.equipment_brand ?? null,
+              exercise.ramp_increment ?? null,
             ]
           );
           const newExerciseId = exerciseResult.rows[0].id;
           if (exercise.sets && exercise.sets.length > 0) {
+            await assertPresetExerciseSetWeights(
+              client,
+              exercise.exercise_id,
+              exercise.sets
+            );
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const setsValues = exercise.sets.map((set: any) => [
               newExerciseId,
@@ -324,6 +447,7 @@ async function updateWorkoutPreset(
     client.release();
   }
 }
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function deleteWorkoutPreset(presetId: any, userId: any) {
   const client = await getClient(userId); // User-specific operation
@@ -343,6 +467,7 @@ async function deleteWorkoutPreset(presetId: any, userId: any) {
     client.release();
   }
 }
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getWorkoutPresetOwnerId(userId: any, presetId: any) {
   const client = await getClient(userId); // User-specific operation (RLS will handle access)
@@ -356,6 +481,7 @@ async function getWorkoutPresetOwnerId(userId: any, presetId: any) {
     client.release();
   }
 }
+
 async function addExerciseToWorkoutPreset(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   userId: any,
@@ -367,7 +493,12 @@ async function addExerciseToWorkoutPreset(
   imageUrl: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sets: any,
-  sortOrder = 0
+  sortOrder = 0,
+  progressionMode = 'rep_goal',
+  repGoal: number | null = null,
+  incrementType: 'weight' | 'reps' = 'weight',
+  incrementValue: number = 5.0,
+  equipmentBrand: string | null = null
 ) {
   const client = await getClient(userId); // User-specific operation
   try {
@@ -396,14 +527,35 @@ async function addExerciseToWorkoutPreset(
       // If no sets, proceed to add them below
     } else {
       const exerciseResult = await client.query(
-        `INSERT INTO workout_preset_exercises (workout_preset_id, exercise_id, image_url, sort_order)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [workoutPresetId, exerciseId, imageUrl, sortOrder]
+        `INSERT INTO workout_preset_exercises (
+          workout_preset_id,
+          exercise_id,
+          image_url,
+          sort_order,
+          progression_mode,
+          rep_goal,
+          increment_type,
+          increment_value,
+          equipment_brand
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+        [
+          workoutPresetId,
+          exerciseId,
+          imageUrl,
+          sortOrder,
+          progressionMode,
+          repGoal,
+          incrementType,
+          incrementValue,
+          equipmentBrand,
+        ]
       );
       exercisePresetId = exerciseResult.rows[0].id;
     }
 
     if (sets && sets.length > 0) {
+      await assertPresetExerciseSetWeights(client, exerciseId, sets);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const setsValues = sets.map((set: any) => [
         exercisePresetId,
@@ -468,7 +620,7 @@ async function searchWorkoutPresets(
 
     let query = `
       SELECT
-        wp.id, wp.user_id, wp.name, wp.description, wp.is_public,
+        wp.id, wp.user_id, wp.name, wp.description, wp.is_public, wp.workout_format, wp.time_cap_seconds,
         COALESCE(
           (SELECT json_agg(ex_data)
            FROM (
@@ -477,9 +629,16 @@ async function searchWorkoutPresets(
                wpe.exercise_id,
                wpe.image_url,
                wpe.superset_group,
+               wpe.progression_mode,
+               wpe.rep_goal,
+               wpe.increment_type,
+               wpe.increment_value,
+               wpe.equipment_brand,
+               wpe.ramp_increment,
                e.name as exercise_name,
                e.category as category,
                e.modality as modality,
+               e.equipment as equipment,
                COALESCE(
                  (SELECT json_agg(set_data ORDER BY set_data.set_number)
                   FROM (
@@ -508,11 +667,12 @@ async function searchWorkoutPresets(
       selectQueryParams.push(limit);
     }
     const result = await client.query(query, selectQueryParams);
-    return result.rows;
+    return result.rows.map((row: any) => parsePresetExerciseEquipment(row));
   } finally {
     client.release();
   }
 }
+
 export { createWorkoutPreset };
 export { getWorkoutPresets };
 export { getWorkoutPresetById };

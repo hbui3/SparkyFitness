@@ -2,8 +2,14 @@ import cron, { type ScheduledTask } from 'node-cron';
 import backupSettingsRepository from '../models/backupSettingsRepository.js';
 import { performBackup, applyRetentionPolicy } from './backupService.js';
 import { log } from '../config/logging.js';
+import { scheduledJobsDisabled } from '../utils/scheduledJobs.js';
 
 let scheduledTask: ScheduledTask | null = null;
+// The expression scheduledTask runs on, or null when backups are disabled.
+let scheduledExpression: string | null = null;
+let settingsRecheckTask: ScheduledTask | null = null;
+
+const SETTINGS_RECHECK_CRON = '*/5 * * * *';
 
 const clearScheduledTask = (): void => {
   if (scheduledTask) {
@@ -46,12 +52,9 @@ export const buildCronExpression = (
   return `${minute} ${hour} * * ${dowField}`;
 };
 
-const buildNewTask = async (): Promise<ScheduledTask | null> => {
+const readBackupExpression = async (): Promise<string | null> => {
   const settings = await backupSettingsRepository.getBackupSettings();
-  if (!settings?.backup_enabled) {
-    log('info', '[CRON] Scheduled backups disabled — skipping schedule');
-    return null;
-  }
+  if (!settings?.backup_enabled) return null;
   const expr = buildCronExpression(
     settings.backup_time ?? '02:00',
     settings.backup_days ?? []
@@ -61,21 +64,39 @@ const buildNewTask = async (): Promise<ScheduledTask | null> => {
       `[CRON] Invalid backup cron expression: ${expr} — cannot schedule`
     );
   }
-  log('info', `[CRON] Scheduling backup with expression: ${expr}`);
-  return cron.schedule(
-    expr,
-    async () => {
-      const result = await performBackup();
-      if (result.success) await applyRetentionPolicy();
-    },
-    { timezone: 'UTC' }
-  );
+  return expr;
+};
+
+const applyBackupExpression = (expr: string | null): void => {
+  if (expr === null) {
+    log('info', '[CRON] Scheduled backups disabled — skipping schedule');
+  } else {
+    log('info', `[CRON] Scheduling backup with expression: ${expr}`);
+  }
+  const newTask =
+    expr === null
+      ? null
+      : cron.schedule(
+          expr,
+          async () => {
+            const result = await performBackup();
+            if (result.success) await applyRetentionPolicy();
+          },
+          { timezone: 'UTC' }
+        );
+  clearScheduledTask();
+  scheduledTask = newTask;
+  scheduledExpression = expr;
 };
 
 export const scheduleBackups = async (): Promise<void> => {
-  const newTask = await buildNewTask();
-  clearScheduledTask();
-  scheduledTask = newTask;
+  applyBackupExpression(await readBackupExpression());
+};
+
+/** Rebuilds the backup task only when the enabled flag or schedule changed. */
+const refreshBackupSchedule = async (): Promise<void> => {
+  const expr = await readBackupExpression();
+  if (expr !== scheduledExpression) applyBackupExpression(expr);
 };
 
 export const scheduleBackupsOnStartup = async (): Promise<void> => {
@@ -84,8 +105,30 @@ export const scheduleBackupsOnStartup = async (): Promise<void> => {
   } catch (err) {
     log('error', '[CRON] Failed to schedule backups at startup:', err);
   }
+  // When the web instances leave jobs to this one, a schedule saved there only
+  // reaches this instance through this re-check.
+  if (!settingsRecheckTask) {
+    settingsRecheckTask = cron.schedule(
+      SETTINGS_RECHECK_CRON,
+      async () => {
+        try {
+          await refreshBackupSchedule();
+        } catch (err) {
+          log('error', '[CRON] Failed to re-check backup settings:', err);
+        }
+      },
+      { noOverlap: true, timezone: 'UTC' }
+    );
+  }
 };
 
 export const rescheduleBackups = async (): Promise<void> => {
+  if (scheduledJobsDisabled()) {
+    log(
+      'info',
+      '[CRON] Backup settings saved; the scheduled-jobs instance applies them within 5 minutes.'
+    );
+    return;
+  }
   await scheduleBackups();
 };

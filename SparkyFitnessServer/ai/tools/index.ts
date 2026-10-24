@@ -12,7 +12,9 @@ import { buildAskTools } from './askTools.js';
 import { buildCheckinTools } from './checkinTools.js';
 import { buildCustomNutrientTools } from './customNutrientTools.js';
 import { buildWaterContainerTools } from './waterContainerTools.js';
+import { buildCaffeineKineticsTools } from './caffeineKineticsTools.js';
 import { buildCoachTools } from './coachTools.js';
+import { buildCompareTools } from './compareTools.js';
 import { buildEngagementTools } from './engagementTools.js';
 import { buildExerciseStatsTools } from './exerciseStatsTools.js';
 import { buildExerciseTools } from './exerciseTools.js';
@@ -24,6 +26,7 @@ import { buildBarcodeTools } from './barcodeTools.js';
 import { buildDashboardTools } from './dashboardTools.js';
 import { buildFavoritesTools } from './favoritesTools.js';
 import { buildFoodTools } from './foodTools.js';
+import { buildFoodAssistantTools } from './foodAssistantTools.js';
 import { buildGoalTools } from './goalTools.js';
 import { buildHabitTools } from './habitTools.js';
 import { buildMealPlanTools } from './mealPlansTools.js';
@@ -31,6 +34,7 @@ import { buildMealPlanningTools } from './mealPlanningTools.js';
 import { buildMedicationTools } from './medicationTools.js';
 import { buildMemoryTools, COACH_MEMORY_TOOL_NAME } from './memoryTools.js';
 import { buildMealSafetyTools } from './mealSafetyTools.js';
+import { buildSymptomTools } from './symptomTools.js';
 import { ENABLE_TOOLS_TOOL_NAME, buildMetaTools } from './metaTools.js';
 import { buildProfileTools } from './profileTools.js';
 import { buildReportTools } from './reportTools.js';
@@ -40,6 +44,7 @@ import { buildVisionTools } from './visionTools.js';
 import type { FoodPhotoEstimateSink } from './foodPhotoEstimateSink.js';
 import { buildWizardTools } from './wizardTools.js';
 import { buildWorkoutPlanTools } from './workoutPlanTools.js';
+import { buildRunProgramTools } from './runProgramTools.js';
 
 /**
  * Tool surfaces the chatbot can expose:
@@ -66,6 +71,8 @@ type ToolMap = Record<string, Tool>;
  * and logged verbatim); every other builder ignores the argument.
  */
 export interface ToolBuildContext {
+  /** Trusted text from the current user turn, used to authorize lasting memory. */
+  latestUserText?: string;
   foodPhotoEstimateSink?: FoodPhotoEstimateSink;
   /**
    * The image attached to this turn, as a data URL.
@@ -79,6 +86,8 @@ export interface ToolBuildContext {
   latestImageDataUrl?: string | null;
   /** The active AI service config ID from the current chat session, if known. */
   serviceConfigId?: string | null;
+  /** Provider-executed web research, offered within the food category only. */
+  foodResearchTool?: Tool;
 }
 
 const CATEGORY_BUILDERS: Record<
@@ -91,14 +100,19 @@ const CATEGORY_BUILDERS: Record<
     (u, tz) => buildExerciseStatsTools(u, tz),
     (u, tz) => buildWorkoutPlanTools(u, tz),
     (u) => buildSpeedianceTools(u),
+    (u, tz) => buildRunProgramTools(u, tz),
   ],
   food: [
+    (_u, _tz, ctx): ToolMap =>
+      ctx?.foodResearchTool ? { web_search: ctx.foodResearchTool } : {},
     (u, tz) => buildFoodTools(u, tz),
+    (u, _tz, ctx) => buildFoodAssistantTools(u, ctx),
     (u, tz) => buildFavoritesTools(u, tz),
     (u, tz) => buildMealPlanTools(u, tz),
     (u, tz) => buildMealPlanningTools(u, tz),
     (u, tz) => buildCustomNutrientTools(u, tz),
     (u, tz) => buildWaterContainerTools(u, tz),
+    (u, tz) => buildCaffeineKineticsTools(u, tz),
     (u, tz) => buildAllergenTools(u, tz),
     (u, tz) => buildBarcodeTools(u, tz),
     (u) => buildMealSafetyTools(u),
@@ -107,6 +121,7 @@ const CATEGORY_BUILDERS: Record<
     (u, tz) => buildCheckinTools(u, tz),
     (u, tz) => buildProgressPhotoTools(u, tz),
     (u, tz) => buildSleepScienceTools(u, tz),
+    (u, tz) => buildSymptomTools(u, tz),
   ],
   goals: [(u, tz) => buildGoalTools(u, tz)],
   coaching: [
@@ -126,6 +141,7 @@ const CATEGORY_BUILDERS: Record<
   reports: [
     (u, tz) => buildReportTools(u, tz),
     (u, tz) => buildDashboardTools(u, tz),
+    (u, tz) => buildCompareTools(u, tz),
   ],
   medications: [(u, tz) => buildMedicationTools(u, tz)],
 };
@@ -247,7 +263,7 @@ function applyChatProviderTuning(tools: ToolMap): void {
   // runtime parse changes. Chat-only: MCP strips nulls upstream itself.
   for (const name of Object.keys(tools)) {
     const t = tools[name] as Tool & { inputSchema?: unknown };
-    if (t.inputSchema) {
+    if (t.inputSchema instanceof z.ZodType) {
       t.inputSchema = z.preprocess(
         stripNullValues,
         t.inputSchema as z.ZodType

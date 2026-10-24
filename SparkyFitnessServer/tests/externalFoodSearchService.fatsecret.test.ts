@@ -17,7 +17,10 @@ vi.mock('../integrations/fatsecret/fatsecretService.js', () => ({
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
 vi.mock('../services/externalProviderService.js', () => ({
-  default: { getProviderCredentials: vi.fn() },
+  default: {
+    getProviderCredentials: vi.fn(),
+    getExternalDataProviderDetails: vi.fn(),
+  },
 }));
 vi.mock('../services/preferenceService.js', () => ({
   default: { getUserPreferences: vi.fn() },
@@ -37,16 +40,27 @@ vi.mock('../integrations/swissfood/swissFoodService.js', () => ({
   searchSwissFoods: vi.fn(),
 }));
 
-import { getFatSecretNutrients } from '../services/foodIntegrationService.js';
+import {
+  getFatSecretNutrients,
+  searchFatSecretFoods,
+} from '../services/foodIntegrationService.js';
+import externalProviderService from '../services/externalProviderService.js';
 import {
   mapFatSecretFood,
   foodNutrientCache,
   getFatSecretAccessToken,
 } from '../integrations/fatsecret/fatsecretService.js';
 import { log } from '../config/logging.js';
-import { enrichFatSecretResults } from '../services/externalFoodSearchService.js';
+import {
+  enrichFatSecretResults,
+  searchProviderFoods,
+} from '../services/externalFoodSearchService.js';
 
 const mockGetFatSecretNutrients = vi.mocked(getFatSecretNutrients);
+const mockSearchFatSecretFoods = vi.mocked(searchFatSecretFoods);
+const mockGetProviderDetails = vi.mocked(
+  externalProviderService.getExternalDataProviderDetails
+);
 const mockMapFatSecretFood = vi.mocked(mapFatSecretFood);
 const mockGetFatSecretAccessToken = vi.mocked(getFatSecretAccessToken);
 const mockLog = vi.mocked(log);
@@ -335,5 +349,46 @@ describe('enrichFatSecretResults image handling', () => {
 
     expect(result[0]!.image_url).toBeNull();
     expect(result[0]!.default_variant.calories).toBe(250);
+  });
+});
+
+describe('searchProviderFoods FatSecret ranking', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCache.clear();
+    mockGetFatSecretAccessToken.mockResolvedValue('token');
+  });
+
+  it('enriches the results that rank first, not the first five FatSecret returned', async () => {
+    mockGetProviderDetails.mockResolvedValue({
+      is_active: true,
+      app_id: 'app_id',
+      app_key: 'app_key',
+    } as never);
+    const branded = Array.from({ length: 5 }, (_, i) => ({
+      ...makeSearchItem(`branded-${i}`, 500),
+      name: 'Chicken Breast (Value Pack)',
+      brand: 'Acme Foods',
+    }));
+    const plain = { ...makeSearchItem('plain', 165), name: 'Chicken Breast' };
+    mockSearchFatSecretFoods.mockResolvedValue({
+      foods: { food: [...branded, plain] },
+      pagination: { page: 1, pageSize: 20, totalCount: 6, hasMore: false },
+    } as never);
+    mockGetFatSecretNutrients.mockResolvedValue({ food: {} });
+    mockMapFatSecretFood.mockReturnValue(
+      makeDetailResult('x', 370) as ReturnType<typeof mapFatSecretFood>
+    );
+
+    const result = await searchProviderFoods(
+      'user-1',
+      'fatsecret',
+      'chicken breast',
+      { providerId: 'provider-1' }
+    );
+
+    const enrichedIds = mockGetFatSecretNutrients.mock.calls.map((c) => c[0]);
+    expect(enrichedIds).toContain('plain');
+    expect((result.foods[0] as { name: string }).name).toBe('Chicken Breast');
   });
 });

@@ -519,6 +519,98 @@ describe('useExternalFoodSearch', () => {
     });
   });
 
+  test('reports canadian-nutrient-file as a supported provider', () => {
+    const { result } = renderHook(
+      () => useExternalFoodSearch('salmon', 'canadian-nutrient-file'),
+      { wrapper: createQueryWrapper(queryClient) }
+    );
+
+    expect(result.current.isProviderSupported).toBe(true);
+  });
+
+  test('fetches for canadian-nutrient-file provider type without providerId', async () => {
+    mockSearchExternalFoods.mockResolvedValue(
+      makePaginatedResult([
+        {
+          id: 'cnf-1',
+          name: 'Atlantic Salmon',
+          brand: 'Canadian Nutrient File (Health Canada)',
+          calories: 208,
+          protein: 20,
+          carbs: 0,
+          fat: 13,
+          serving_size: 100,
+          serving_unit: 'g',
+          source: 'canadian-nutrient-file',
+        },
+      ])
+    );
+
+    const { result } = renderHook(
+      () => useExternalFoodSearch('salmon', 'canadian-nutrient-file'),
+      { wrapper: createQueryWrapper(queryClient) }
+    );
+
+    await waitFor(() => {
+      expect(mockSearchExternalFoods).toHaveBeenCalledWith(
+        'canadian-nutrient-file',
+        'salmon',
+        1,
+        undefined,
+        undefined
+      );
+      expect(result.current.searchResults).toHaveLength(1);
+      expect(result.current.searchResults[0].source).toBe(
+        'canadian-nutrient-file'
+      );
+    });
+  });
+
+  test('reports livsmedelsverket as a supported provider', () => {
+    const { result } = renderHook(
+      () => useExternalFoodSearch('lax', 'livsmedelsverket'),
+      { wrapper: createQueryWrapper(queryClient) }
+    );
+
+    expect(result.current.isProviderSupported).toBe(true);
+  });
+
+  test('fetches for livsmedelsverket provider type without providerId', async () => {
+    mockSearchExternalFoods.mockResolvedValue(
+      makePaginatedResult([
+        {
+          id: 'slv-1',
+          name: 'Lax kokt',
+          brand: 'Swedish Food Agency (Livsmedelsverket)',
+          calories: 180,
+          protein: 21,
+          carbs: 0,
+          fat: 11,
+          serving_size: 100,
+          serving_unit: 'g',
+          source: 'livsmedelsverket',
+        },
+      ])
+    );
+
+    const { result } = renderHook(
+      () => useExternalFoodSearch('lax', 'livsmedelsverket'),
+      { wrapper: createQueryWrapper(queryClient) }
+    );
+
+    await waitFor(() => {
+      expect(mockSearchExternalFoods).toHaveBeenCalledWith(
+        'livsmedelsverket',
+        'lax',
+        1,
+        undefined,
+        undefined
+      );
+      expect(result.current.searchResults).toHaveLength(1);
+      expect(result.current.searchResults[0].source).toBe('livsmedelsverket');
+    });
+  });
+
   describe('query key', () => {
     test('includes provider type and search term', () => {
       expect(externalFoodSearchQueryKey('openfoodfacts', 'banana')).toEqual([

@@ -6,6 +6,7 @@ import { Text, View } from 'react-native';
 import { useCSSVariable } from 'uniwind';
 
 import {
+  isPlottedSleepStage,
   laneForStageType,
   SLEEP_STAGE_LANES,
   type SleepStageEvent,
@@ -17,18 +18,10 @@ import { localizeSleepStage } from '../utils/sleepLocalization';
 /**
  * The stage vocabulary now lives in `types/sleep`, shared with the Dashboard sleep
  * timeline. Aliased to the hypnogram's original name because here the stages are
- * literally drawn as lanes, and `LANE_INDEX` below reads off this exact ordering.
+ * literally drawn as lanes.
  */
 
 type HypnogramLane = (typeof SLEEP_STAGE_LANES)[number];
-
-const LANE_INDEX: Record<HypnogramLane, number> = {
-  awake: 0,
-  rem: 1,
-  light: 2,
-  deep: 3,
-  other: 4,
-};
 
 /**
  * A stage shorter than this would render as an invisible sliver or, at exactly zero
@@ -61,6 +54,10 @@ const toTimedStage = (stage: SleepStageEvent): TimedStage | null => {
   return { startMs, endMs, stageType: stage.stage_type };
 };
 
+const NAMED_HYPNOGRAM_LANES = SLEEP_STAGE_LANES.filter(
+  (lane) => lane !== 'other'
+);
+
 /**
  * Lays stage events out along a fixed-width timeline.
  *
@@ -68,8 +65,12 @@ const toTimedStage = (stage: SleepStageEvent): TimedStage | null => {
  * jsdom — this pure builder is the only part of the hypnogram that can be tested, so it
  * owns all of the arithmetic and none of the drawing.
  *
- * The window spans the earliest start to the latest end across all events, so the timeline
- * always fills `bounds.width` exactly.
+ * Envelope-only types (`in_bed`, `unknown`) are dropped: HealthKit writes a
+ * bedtime→wake InBed sample that is not a sleep stage, and including it stretched the
+ * axis across hours of gray "Other" while the scored stages bunched at wake.
+ *
+ * The window spans the earliest start to the latest end across the plotted events, so the
+ * timeline always fills `bounds.width` exactly.
  */
 export const buildHypnogramSegments = (
   stages: SleepStageEvent[],
@@ -80,6 +81,7 @@ export const buildHypnogramSegments = (
   // Sorted defensively: the server already orders by `start_time`, but the builder must
   // not silently mislay a timeline if a caller ever hands it an unsorted array.
   const timedStages = stages
+    .filter((stage) => isPlottedSleepStage(stage.stage_type))
     .map(toTimedStage)
     .filter((stage): stage is TimedStage => stage !== null)
     .sort((first, second) => first.startMs - second.startMs);
@@ -116,6 +118,21 @@ export const buildHypnogramSegments = (
 };
 
 /**
+ * Lanes drawn next to the chart. Named stages stay so an empty Deep lane still reads as
+ * "no deep sleep"; Other only appears when a plotted event actually uses it.
+ */
+export const hypnogramLanesToShow = (
+  stages: SleepStageEvent[]
+): readonly HypnogramLane[] => {
+  const showOther = stages.some(
+    (stage) =>
+      isPlottedSleepStage(stage.stage_type) &&
+      laneForStageType(stage.stage_type) === 'other'
+  );
+  return showOther ? SLEEP_STAGE_LANES : NAMED_HYPNOGRAM_LANES;
+};
+
+/**
  * The instants the timeline spans, for the axis labels.
  *
  * Derived rather than read off `stages[0]` and `stages.at(-1)` so the labels stay correct
@@ -125,6 +142,7 @@ export const getHypnogramWindow = (
   stages: SleepStageEvent[]
 ): { startMs: number; endMs: number } | null => {
   const timedStages = stages
+    .filter((stage) => isPlottedSleepStage(stage.stage_type))
     .map(toTimedStage)
     .filter((stage): stage is TimedStage => stage !== null);
   if (timedStages.length === 0) return null;
@@ -138,7 +156,6 @@ export const getHypnogramWindow = (
 const LANE_HEIGHT = 22;
 const LANE_GAP = 4;
 const SEGMENT_RADIUS = 3;
-const CHART_HEIGHT = SLEEP_STAGE_LANES.length * (LANE_HEIGHT + LANE_GAP);
 
 /**
  * Drawn from the existing categorical palette rather than new `--color-sleep-*` tokens,
@@ -172,8 +189,11 @@ const Hypnogram: React.FC<HypnogramProps> = ({ stages, zone }) => {
   const { preferences } = usePreferences();
   const [chartWidth, setChartWidth] = useState(0);
 
+  const visibleLanes = useMemo(() => hypnogramLanesToShow(stages), [stages]);
+  const chartHeight = visibleLanes.length * (LANE_HEIGHT + LANE_GAP);
+
   const laneColors = useCSSVariable(
-    SLEEP_STAGE_LANES.map((lane) => LANE_COLOR_VARIABLES[lane])
+    visibleLanes.map((lane) => LANE_COLOR_VARIABLES[lane])
   ) as string[];
 
   const segments = useMemo(
@@ -181,7 +201,11 @@ const Hypnogram: React.FC<HypnogramProps> = ({ stages, zone }) => {
     [stages, chartWidth]
   );
 
-  if (stages.length === 0) {
+  const hasPlottedStages = stages.some((stage) =>
+    isPlottedSleepStage(stage.stage_type)
+  );
+
+  if (!hasPlottedStages) {
     return (
       <View
         testID="hypnogram-empty"
@@ -211,8 +235,8 @@ const Hypnogram: React.FC<HypnogramProps> = ({ stages, zone }) => {
       </Text>
 
       <View className="flex-row">
-        <View style={{ height: CHART_HEIGHT }} className="justify-around mr-2">
-          {SLEEP_STAGE_LANES.map((lane) => (
+        <View style={{ height: chartHeight }} className="justify-around mr-2">
+          {visibleLanes.map((lane) => (
             <Text
               key={lane}
               className="text-xs text-text-muted"
@@ -225,21 +249,24 @@ const Hypnogram: React.FC<HypnogramProps> = ({ stages, zone }) => {
 
         <View
           className="flex-1"
-          style={{ height: CHART_HEIGHT }}
+          style={{ height: chartHeight }}
           onLayout={(event) => setChartWidth(event.nativeEvent.layout.width)}
         >
           <Canvas style={{ flex: 1 }}>
-            {segments.map((segment, index) => (
-              <RoundedRect
-                key={`${segment.stageType}-${index}`}
-                x={segment.x}
-                y={LANE_INDEX[segment.lane] * (LANE_HEIGHT + LANE_GAP)}
-                width={segment.width}
-                height={LANE_HEIGHT}
-                r={SEGMENT_RADIUS}
-                color={laneColors[LANE_INDEX[segment.lane]]}
-              />
-            ))}
+            {segments.map((segment, index) => {
+              const laneIndex = visibleLanes.indexOf(segment.lane);
+              return (
+                <RoundedRect
+                  key={`${segment.stageType}-${index}`}
+                  x={segment.x}
+                  y={laneIndex * (LANE_HEIGHT + LANE_GAP)}
+                  width={segment.width}
+                  height={LANE_HEIGHT}
+                  r={SEGMENT_RADIUS}
+                  color={laneColors[laneIndex]}
+                />
+              );
+            })}
           </Canvas>
         </View>
       </View>

@@ -23,6 +23,10 @@ import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import {
+  isReadOnlyApiKeyPermissions,
+  type ApiKeyScope,
+} from '@workspace/shared';
+import {
   useApiKeysQuery,
   useCreateApiKeyMutation,
   useDeleteApiKeyMutation,
@@ -38,6 +42,7 @@ export const ApiSettings = () => {
   const [newApiKeyExpiresIn, setNewApiKeyExpiresIn] = useState<number | null>(
     null
   );
+  const [newApiKeyScope, setNewApiKeyScope] = useState<ApiKeyScope>('full');
   const { data: apiKeys = [], isLoading: isFetchingKeys } = useApiKeysQuery(
     user?.id
   );
@@ -59,7 +64,9 @@ export const ApiSettings = () => {
     try {
       const data = await createKey({
         name: newApiKeyDescription || 'New API Key',
-        expiresIn: newApiKeyExpiresIn || undefined,
+        // null = never expires (the server defaults an omitted value to 1 year)
+        expiresIn: newApiKeyExpiresIn,
+        scope: newApiKeyScope,
       });
 
       if (data && data.key) {
@@ -201,7 +208,7 @@ export const ApiSettings = () => {
                 )}
               />
             </div>
-            <div className="space-y-2 w-full sm:w-48">
+            <div className="space-y-2 w-full sm:w-48 sm:shrink-0">
               <Label htmlFor="api-key-expiry">
                 {t('settings.apiKeyManagement.expiresIn', 'Expires In')}
               </Label>
@@ -229,6 +236,27 @@ export const ApiSettings = () => {
                   </SelectItem>
                   <SelectItem value={(60 * 60 * 24 * 365).toString()}>
                     {t('settings.apiKeyManagement.1year', '1 Year')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 w-full sm:w-48 sm:shrink-0">
+              <Label htmlFor="api-key-scope">
+                {t('settings.apiKeyManagement.access', 'Access')}
+              </Label>
+              <Select
+                value={newApiKeyScope}
+                onValueChange={(val) => setNewApiKeyScope(val as ApiKeyScope)}
+              >
+                <SelectTrigger id="api-key-scope">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full">
+                    {t('settings.apiKeyManagement.accessFull', 'Full access')}
+                  </SelectItem>
+                  <SelectItem value="read">
+                    {t('settings.apiKeyManagement.accessRead', 'Read-only')}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -293,6 +321,11 @@ export const ApiSettings = () => {
                         {t('settings.apiKeyManagement.disabled', 'Disabled')}
                       </span>
                     )}
+                    {isReadOnlyApiKeyPermissions(key.permissions) && (
+                      <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded border uppercase font-bold">
+                        {t('settings.apiKeyManagement.accessRead', 'Read-only')}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span className="font-mono text-xs">{key.id}</span>
@@ -306,10 +339,15 @@ export const ApiSettings = () => {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
                     <p>
-                      {t('settings.apiKeyManagement.created', 'Created:')}{' '}
-                      {key.createdAt
-                        ? new Date(key.createdAt).toLocaleDateString()
-                        : 'N/A'}
+                      {t(
+                        'settings.apiKeyManagement.created2',
+                        'Created: {{createdAt}}',
+                        {
+                          createdAt: key.createdAt
+                            ? new Date(key.createdAt).toLocaleDateString()
+                            : 'N/A',
+                        }
+                      )}
                     </p>
                     {key.expiresAt && (
                       <p
@@ -319,14 +357,24 @@ export const ApiSettings = () => {
                             : ''
                         }
                       >
-                        {t('settings.apiKeyManagement.expires', 'Expires:')}{' '}
-                        {new Date(key.expiresAt).toLocaleDateString()}
+                        {t(
+                          'settings.apiKeyManagement.expires2',
+                          'Expires: {{value}}',
+                          {
+                            value: new Date(key.expiresAt).toLocaleDateString(),
+                          }
+                        )}
                       </p>
                     )}
                     {key.updatedAt && (
                       <p>
-                        {t('settings.apiKeyManagement.lastUsed', 'Last Used:')}{' '}
-                        {new Date(key.updatedAt).toLocaleDateString()}
+                        {t(
+                          'settings.apiKeyManagement.lastUsed2',
+                          'Last Used: {{value}}',
+                          {
+                            value: new Date(key.updatedAt).toLocaleDateString(),
+                          }
+                        )}
                       </p>
                     )}
                   </div>

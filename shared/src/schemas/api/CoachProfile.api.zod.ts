@@ -1,6 +1,6 @@
-import { z } from "zod";
-import { coachDietaryPatternSchema } from "../database/CoachProfiles.zod.ts";
-import { coachMemoryCategorySchema } from "../database/CoachMemories.zod.ts";
+import { z } from 'zod';
+import { coachDietaryPatternSchema } from '../database/CoachProfiles.zod.ts';
+import { coachMemoryCategorySchema } from '../database/CoachMemories.zod.ts';
 
 const compactTextSchema = z.string().trim().min(1).max(100);
 const compactTextListSchema = z.array(compactTextSchema).max(50);
@@ -9,10 +9,10 @@ export const coachLocalTimeSchema = z
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 export const proactiveCoachCategorySchema = z.enum([
-  "nutrition",
-  "hydration",
-  "training",
-  "recovery",
+  'nutrition',
+  'hydration',
+  'training',
+  'recovery',
 ]);
 
 const coachProfileInputShape = {
@@ -24,14 +24,14 @@ const coachProfileInputShape = {
   routines: compactTextListSchema,
   coachingNotes: z.string().trim().max(2_000).nullable(),
   adaptiveCheckInsEnabled: z.boolean().default(false),
-  adaptiveStartTime: coachLocalTimeSchema.default("07:00"),
-  adaptiveEndTime: coachLocalTimeSchema.default("20:00"),
+  adaptiveStartTime: coachLocalTimeSchema.default('07:00'),
+  adaptiveEndTime: coachLocalTimeSchema.default('20:00'),
   adaptiveIntervalMinutes: z.number().int().min(30).max(360).default(120),
   proactiveCategories: z
     .array(proactiveCoachCategorySchema)
     .min(1)
     .max(4)
-    .default(["nutrition", "hydration", "training", "recovery"]),
+    .default(['nutrition', 'hydration', 'training', 'recovery']),
   memoryEnabled: z.boolean().default(true),
   autoMemoryEnabled: z.boolean().default(false),
   dailyCheckInEnabled: z.boolean(),
@@ -51,8 +51,8 @@ function validAdaptiveWindow(value: {
 export const updateCoachProfileRequestSchema = z
   .object(coachProfileInputShape)
   .refine(validAdaptiveWindow, {
-    path: ["adaptiveEndTime"],
-    message: "Adaptive end time must be later than start time",
+    path: ['adaptiveEndTime'],
+    message: 'Adaptive end time must be later than start time',
   });
 
 export const coachProfileResponseSchema = z
@@ -65,8 +65,8 @@ export const coachProfileResponseSchema = z
     updatedAt: z.string().datetime().nullable(),
   })
   .refine(validAdaptiveWindow, {
-    path: ["adaptiveEndTime"],
-    message: "Adaptive end time must be later than start time",
+    path: ['adaptiveEndTime'],
+    message: 'Adaptive end time must be later than start time',
   });
 
 export const validateMealSuggestionRequestSchema = z.object({
@@ -74,7 +74,7 @@ export const validateMealSuggestionRequestSchema = z.object({
 });
 
 export const mealValidationViolationSchema = z.object({
-  type: z.enum(["dietary_pattern", "excluded_ingredient", "allergen"]),
+  type: z.enum(['dietary_pattern', 'excluded_ingredient', 'allergen']),
   ingredient: z.string(),
   matchedTerm: z.string(),
   reason: z.string(),
@@ -89,7 +89,7 @@ export const coachMemoryResponseSchema = z.object({
   id: z.string().uuid(),
   category: coachMemoryCategorySchema,
   content: z.string(),
-  source: z.enum(["user", "coach", "import"]),
+  source: z.enum(['user', 'coach', 'import']),
   active: z.boolean(),
   pinned: z.boolean(),
   createdAt: z.string().datetime(),
@@ -109,7 +109,7 @@ export const updateCoachMemoryRequestSchema = z
     active: z.boolean().optional(),
     pinned: z.boolean().optional(),
   })
-  .refine((value) => Object.keys(value).length > 0, "No changes supplied");
+  .refine((value) => Object.keys(value).length > 0, 'No changes supplied');
 
 export const coachTodayStatusResponseSchema = z.object({
   date: z.string(),

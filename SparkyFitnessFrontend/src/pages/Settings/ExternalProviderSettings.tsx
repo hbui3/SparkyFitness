@@ -57,6 +57,8 @@ export interface ExternalDataProvider {
   oura_token_expires?: string | null;
   polar_last_sync_at?: string | null;
   polar_token_expires?: string | null;
+  coros_last_sync_at?: string | null;
+  coros_token_expires?: string | null;
   hevy_last_sync_at?: string | null;
   hevy_connect_status?: 'connected' | 'disconnected';
   speediance_last_sync_at?: string | null;
@@ -65,6 +67,8 @@ export interface ExternalDataProvider {
   igpsport_last_sync_at?: string | null;
   igpsport_connect_status?: 'connected' | 'disconnected';
   igpsport_region?: 'Global' | 'China' | null;
+  liftosaur_last_sync_at?: string | null;
+  liftosaur_connect_status?: 'connected' | 'disconnected';
   strava_last_sync_at?: string | null;
   strava_token_expires?: string | null;
   googlehealth_last_sync_at?: string | null;
@@ -114,7 +118,10 @@ const ExternalProviderSettings = () => {
     <>
       <Separator />
       <h3 className="text-lg font-medium">
-        Configured External Data Providers
+        {t(
+          'settings.externalProviderSettings.configuredExternalDataProviders',
+          'Configured External Data Providers'
+        )}
       </h3>
       <div className="space-y-6">
         <OpenFoodFactsContributionSettingsCard />
@@ -123,7 +130,10 @@ const ExternalProviderSettings = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Database className="h-5 w-5" />
-              External Data Providers
+              {t(
+                'settings.externalProviderSettings.externalDataProviders',
+                'External Data Providers'
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -149,7 +159,10 @@ const ExternalProviderSettings = () => {
               <div className="flex items-end gap-6">
                 <div className="flex-1 space-y-2">
                   <Label htmlFor="food-provider">
-                    Default Food Data Provider
+                    {t(
+                      'settings.externalProviderSettings.defaultFoodDataProvider',
+                      'Default Food Data Provider'
+                    )}
                   </Label>
                   <Select
                     value={resolveSettingsFoodProviderValue(
@@ -179,7 +192,12 @@ const ExternalProviderSettings = () => {
                     }}
                   >
                     <SelectTrigger id="food-provider">
-                      <SelectValue placeholder="Select a food provider" />
+                      <SelectValue
+                        placeholder={t(
+                          'settings.externalProviderSettings.selectAFoodProvider',
+                          'Select a food provider'
+                        )}
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {/* Matches the food-search dropdown, which only offers the
@@ -207,7 +225,10 @@ const ExternalProviderSettings = () => {
               <div className="flex items-end gap-6">
                 <div className="flex-1 space-y-2">
                   <Label htmlFor="barcode-provider">
-                    Default Barcode Provider
+                    {t(
+                      'settings.externalProviderSettings.defaultBarcodeProvider',
+                      'Default Barcode Provider'
+                    )}
                   </Label>
                   <Select
                     value={defaultBarcodeProviderId ?? ''}
@@ -218,7 +239,12 @@ const ExternalProviderSettings = () => {
                     }}
                   >
                     <SelectTrigger id="barcode-provider">
-                      <SelectValue placeholder="Select a barcode provider" />
+                      <SelectValue
+                        placeholder={t(
+                          'settings.externalProviderSettings.selectABarcodeProvider',
+                          'Select a barcode provider'
+                        )}
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {barcodeProviders.map((p) => (
@@ -231,7 +257,10 @@ const ExternalProviderSettings = () => {
                 </div>
                 <div className="flex flex-col items-center gap-2 pb-0.5">
                   <Label htmlFor="barcode-fallback-off">
-                    Open Food Facts Fallback
+                    {t(
+                      'settings.externalProviderSettings.openFoodFactsFallback',
+                      'Open Food Facts Fallback'
+                    )}
                   </Label>
                   <Switch
                     id="barcode-fallback-off"

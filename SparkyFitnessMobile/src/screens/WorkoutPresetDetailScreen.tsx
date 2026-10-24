@@ -25,6 +25,7 @@ import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import { useAppPreferencesStore } from '../stores/appPreferencesStore';
 import { useDiaryDateStore } from '../stores/diaryDateStore';
 import {
+  buildPresetLiveExerciseConfigs,
   buildPresetStartExercisesPayload,
   makeSparseExercise,
   presetExerciseToCardExercise,
@@ -96,8 +97,9 @@ const WorkoutPresetDetailScreen: React.FC<WorkoutPresetDetailScreenProps> = ({
   const metricColumn = useAppPreferencesStore(
     (s) => s.activeWorkoutMetricColumn
   );
+  // Presets store no RPE or RIR; fall both effort columns back to volume.
   const effectiveMetricColumn =
-    metricColumn === 'rpe' ? 'volume' : metricColumn;
+    metricColumn === 'rpe' || metricColumn === 'rir' ? 'volume' : metricColumn;
   const [metricMenu, setMetricMenu] = useState<{
     anchor: AnchorRect;
     clampedToRpe: boolean;
@@ -193,7 +195,10 @@ const WorkoutPresetDetailScreen: React.FC<WorkoutPresetDetailScreenProps> = ({
     void startLiveWorkout({
       name: preset.name,
       exercises: buildPresetStartExercisesPayload(preset),
+      exerciseConfigs: buildPresetLiveExerciseConfigs(preset),
       sourcePresetId: preset.id,
+      workoutFormat: preset.workout_format ?? 'standard',
+      timeCapSeconds: preset.time_cap_seconds ?? null,
     });
   }, [startLiveWorkout, preset]);
 
@@ -281,6 +286,8 @@ const WorkoutPresetDetailScreen: React.FC<WorkoutPresetDetailScreenProps> = ({
         }),
         description: preset.description,
         is_public: false,
+        workout_format: preset.workout_format ?? 'standard',
+        time_cap_seconds: preset.time_cap_seconds ?? null,
         // The list/detail read queries never select wpe.sort_order (see
         // workoutPresetRepository), so exercise.sort_order is always
         // undefined here — every duplicated row would otherwise insert with
@@ -292,6 +299,13 @@ const WorkoutPresetDetailScreen: React.FC<WorkoutPresetDetailScreenProps> = ({
           image_url: exercise.image_url,
           sort_order: index,
           superset_group: exercise.superset_group,
+          // The copy keeps the original's progression and ramp settings.
+          progression_mode: exercise.progression_mode ?? null,
+          rep_goal: exercise.rep_goal ?? null,
+          increment_type: exercise.increment_type ?? null,
+          increment_value: exercise.increment_value ?? null,
+          equipment_brand: exercise.equipment_brand ?? null,
+          ramp_increment: exercise.ramp_increment ?? null,
           sets: exercise.sets.map((set) => ({
             set_number: set.set_number,
             set_type: set.set_type,

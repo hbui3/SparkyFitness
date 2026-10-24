@@ -1,4 +1,5 @@
 import chatRepository from '../models/chatRepository.js';
+import preferenceRepository from '../models/preferenceRepository.js';
 import { log } from '../config/logging.js';
 import {
   dispatchAiRequest,
@@ -6,7 +7,7 @@ import {
   type JsonSchemaNode,
   type ProviderConfig,
 } from '../ai/providerDispatch.js';
-import { deriveAiNetworkPolicy } from '../utils/outboundUrlPolicy.js';
+import { resolveAiNetworkPolicy } from '../utils/outboundUrlPolicy.js';
 import { attachFoodMatches } from './foodPhotoMatchService.js';
 import {
   foodPhotoEstimateResponseSchema,
@@ -29,7 +30,7 @@ const RESPONSE_SCHEMA: JsonSchemaNode = {
     meal_summary: {
       type: 'string',
       description:
-        "Brief one-line description of the meal as identified, e.g. 'Grilled chicken with rice and broccoli'",
+        "Short, concise title of the dish or meal (2-4 words max, e.g. 'Paneer Kadai', 'Chicken Alfredo Pasta', 'Grilled Salmon with Rice'). Do NOT write sentences, paragraphs, or list all side garnishes.",
     },
     overall_confidence: {
       type: 'string',
@@ -40,7 +41,7 @@ const RESPONSE_SCHEMA: JsonSchemaNode = {
     confidence_reason: {
       type: 'string',
       description:
-        "Short explanation of what drove the confidence rating, especially if medium or low. Mention specific uncertainties like 'sauce ingredients unclear' or 'portion depth not visible'.",
+        "Brief 1-sentence explanation of what drove the confidence rating, or empty string. Keep it concise (e.g. 'sauce ingredients unclear').",
     },
     items: {
       type: 'array',
@@ -52,7 +53,7 @@ const RESPONSE_SCHEMA: JsonSchemaNode = {
           name: {
             type: 'string',
             description:
-              "Specific food name, e.g. 'grilled chicken thigh', 'white jasmine rice', 'steamed broccoli'",
+              "Specific food name only, as it would appear on a label or in a diary entry (never a full sentence or photo description), e.g. 'grilled chicken thigh', 'white jasmine rice', 'steamed broccoli'",
           },
           canonical_name: {
             type: 'string',
@@ -291,6 +292,7 @@ const DISPATCH_ERROR_TO_CODE = {
   api_key_missing: 'API_KEY_MISSING',
   custom_url_missing: 'NO_AI_CONFIGURED',
   unsupported_media: 'UNSUPPORTED_MIME_TYPE',
+  image_too_large: 'IMAGE_TOO_LARGE',
   timeout: 'TIMEOUT',
   upstream_error: 'UPSTREAM_ERROR',
   private_network_forbidden: 'PRIVATE_NETWORK_FORBIDDEN',
@@ -300,12 +302,34 @@ const DISPATCH_ERROR_TO_CODE = {
   parse_error: 'PARSE_ERROR',
 } satisfies Record<DispatchErrorCategory, FoodPhotoEstimateErrorCode>;
 
+const languageDisplayNames = new Intl.DisplayNames(['en'], {
+  type: 'language',
+});
+
+function resolveLanguageLabel(rawLanguage?: string | null): string {
+  const trimmed = rawLanguage?.trim();
+  if (!trimmed) return 'English';
+  const tag = trimmed.replaceAll('_', '-');
+  if (/^en(?:-[a-z0-9]+)*$/i.test(tag)) return 'English';
+  try {
+    const displayName = languageDisplayNames.of(tag);
+    if (displayName && displayName.toLowerCase() !== tag.toLowerCase()) {
+      return `${displayName} (${tag})`;
+    }
+  } catch {
+    // Fall through to English when Intl.DisplayNames rejects a non-BCP47 tag.
+  }
+  return 'English';
+}
+
 function buildPrompt(
   description: string,
   weight: string,
-  imageCount: number
+  imageCount: number,
+  language?: string | null
 ): string {
   const multiImage = imageCount > 1;
+  const languageLabel = resolveLanguageLabel(language);
   const intro = multiImage
     ? `You are a nutrition estimation assistant. Analyze the ${imageCount} provided photos and return
 structured nutrition data. The photos all show ONE meal, not separate meals. They may include
@@ -330,15 +354,27 @@ Rules:
     proportionally to your visual estimate, then recalculate nutrition.
   - Break mixed dishes into component ingredients when reasonable (e.g. a
     burrito → tortilla, rice, beans, meat, cheese, salsa).
+  - The "name" field must be ONLY the food name, as it would appear on a label
+    or in a diary entry — never a sentence or a description of the ${visualSource}.
+    Include the brand only when it is printed on the food's own packaging (not on
+    mugs, plates, or restaurant decor). Put plating details and context in
+    "portion_description" and "assumptions" instead.
   - Give every item a canonical_name as well as its display name: the plain
     generic food noun, with preparation adjectives, brands, and quantities
     removed. It is used to look the item up in a food database.
+  - Write all user-facing text fields ("meal_summary", "confidence_reason",
+    item "name", "canonical_name", "portion_description", "preparation",
+    "assumptions", "user_weight_reconciliation", and "clarifying_questions")
+    in ${languageLabel}, including foods whose common name you know in English.
+    Keep enum fields ("overall_confidence" and "item_confidence") in English ("high", "medium", "low").
   - Populate the micronutrients (saturated/poly/mono/trans fat, cholesterol,
     sodium, potassium, calcium, iron, vitamin A, vitamin C) from the typical
     composition of each food. Estimate them; do not default them to 0 just
     because they are not visible. 0 is only correct when it is actually true
     (cholesterol in a plant food, trans fat in a whole food). Sodium in
     particular is rarely 0 in a seasoned, restaurant or processed dish.
+  - meal_summary MUST be a concise 2-4 word dish title (e.g. 'Paneer Kadai', 'Chicken Alfredo Pasta'). Never write sentences, paragraphs, or visual descriptions for meal_summary.
+  - Keep confidence_reason concise (1 short sentence maximum, or empty string).
   - Be explicit about assumptions (oil used, milk type, skin on/off).
   - Lower your confidence when portions are ambiguous or ingredients hidden.
   - Only ask clarifying questions that would materially change the estimate.`;
@@ -383,6 +419,26 @@ function resolveImages(input: EstimateFoodPhotoNutritionInput): PhotoImage[] {
 function ensureTotals(obj: Record<string, unknown>): Record<string, unknown> {
   if (Array.isArray(obj.items)) {
     const items = obj.items as Array<Record<string, unknown>>;
+    for (const item of items) {
+      if (typeof item === 'object' && item !== null) {
+        if (typeof item.assumptions === 'string') {
+          item.assumptions = item.assumptions.trim()
+            ? [item.assumptions.trim()]
+            : [];
+        } else if (!Array.isArray(item.assumptions)) {
+          item.assumptions = [];
+        }
+        if (!item.item_confidence) {
+          item.item_confidence = 'medium';
+        }
+        if (item.portion_description === undefined) {
+          item.portion_description = '';
+        }
+        if (item.preparation === undefined) {
+          item.preparation = '';
+        }
+      }
+    }
     if (!obj.totals || typeof obj.totals !== 'object') {
       let calories = 0;
       let protein = 0;
@@ -422,12 +478,16 @@ function ensureTotals(obj: Record<string, unknown>): Record<string, unknown> {
     if (obj.confidence_reason === undefined) {
       obj.confidence_reason = '';
     }
-    if (typeof obj.meal_summary !== 'string' && items.length > 0) {
-      obj.meal_summary =
+    if (typeof obj.meal_summary === 'string') {
+      obj.meal_summary = cleanMealSummary(obj.meal_summary);
+    } else if (items.length > 0) {
+      obj.meal_summary = cleanMealSummary(
         items
+          .slice(0, 3)
           .map((i) => String(i.name || ''))
           .filter(Boolean)
-          .join(', ') || 'Meal';
+          .join(', ') || 'Meal'
+      );
     }
   }
   return obj;
@@ -507,7 +567,7 @@ function titleCaseFoodName(value: string): string {
       wordIndex += 1;
       // A word the model already capitalised (a brand, an acronym) is left
       // exactly as written.
-      if (/[A-Z]/.test(part)) return part;
+      if (/\p{Lu}/u.test(part)) return part;
       if (
         !isFirstWord &&
         TITLE_CASE_MINOR_WORDS.has(part.replace(/[^a-z]/g, ''))
@@ -516,7 +576,7 @@ function titleCaseFoodName(value: string): string {
       }
       // Capitalise after a hyphen or slash too: "sun-dried" -> "Sun-Dried".
       return part.replace(
-        /(^|[-/])([a-z])/g,
+        /(^|[-/])(\p{Ll})/gu,
         (_match, separator: string, letter: string) =>
           separator + letter.toUpperCase()
       );
@@ -524,11 +584,61 @@ function titleCaseFoodName(value: string): string {
     .join('');
 }
 
+export function cleanMealSummary(summary?: string | null): string {
+  if (!summary || typeof summary !== 'string') return 'Meal';
+  let s = summary.trim();
+  // Remove markdown formatting / wrapping quotes
+  s = s.replace(/^["'`]+|["'`]+$/g, '').trim();
+  // If multiple sentences, take only the first sentence
+  const sentenceMatch = s.match(/^([^.!?\n]+)/);
+  if (sentenceMatch) {
+    s = sentenceMatch[1].trim();
+  }
+  // Strip leading articles like "A ", "An ", "The "
+  s = s.replace(/^(a|an|the)\s+/i, '');
+
+  // Strip narrative / visual descriptive clauses
+  s = s.replace(
+    /,\s*(featuring|garnished with|topped with|seasoned with|mixed with|served with|drizzled with|accompanied by|with a side of|in a|with chunks of).*/i,
+    ''
+  );
+
+  // If still long (> 40 chars) and contains " with ... and ...", simplify secondary sides
+  if (s.length > 40 && /\s+with\s+/i.test(s)) {
+    const parts = s.split(/\s+with\s+/i);
+    const mainDish = parts[0].trim();
+    if (mainDish.length >= 3) {
+      const sides = parts[1].split(/\s+and\s+/i);
+      if (sides.length > 1) {
+        if (mainDish.length > 25) {
+          s = mainDish;
+        } else {
+          s = `${mainDish} with ${sides[0].trim()}`;
+        }
+      }
+    }
+  }
+
+  // Limit word count to at most 4 words
+  const words = s.split(/\s+/);
+  if (words.length > 4) {
+    s = words.slice(0, 4).join(' ');
+  }
+
+  // Remove any trailing commas or punctuation
+  s = s.replace(/[,;:\s-]+$/, '').trim();
+  if (s.length > 0) {
+    s = s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  return s || 'Meal';
+}
+
 function titleCaseItemNames(
   estimate: FoodPhotoEstimateResponse
 ): FoodPhotoEstimateResponse {
   return {
     ...estimate,
+    meal_summary: cleanMealSummary(estimate.meal_summary),
     items: estimate.items.map((item) => ({
       ...item,
       name: titleCaseFoodName(item.name),
@@ -600,6 +710,18 @@ async function estimateFoodPhotoNutrition(
     };
   }
 
+  let userLanguage: string | null | undefined;
+  try {
+    const prefs = await preferenceRepository.getUserPreferences(userId);
+    userLanguage = prefs?.language;
+  } catch (err) {
+    log(
+      'warn',
+      `Food-photo estimation: failed to load language preference for user ${userId}, defaulting to English`,
+      err
+    );
+  }
+
   // Dispatch reads everything from the decrypted backend detail. The helper
   // enforces the supported-provider, api-key, custom-url, and HEIC checks and
   // reports each as a category we map back to a food-photo error code.
@@ -612,11 +734,11 @@ async function estimateFoodPhotoNutrition(
 
   const result = await dispatchAiRequest({
     provider,
-    networkPolicy: deriveAiNetworkPolicy(
+    networkPolicy: await resolveAiNetworkPolicy(
       aiService,
       Boolean(input.actorIsAdmin)
     ),
-    prompt: buildPrompt(description, weightSlot, images.length),
+    prompt: buildPrompt(description, weightSlot, images.length, userLanguage),
     images,
     jsonSchema: RESPONSE_SCHEMA,
     schemaName: SCHEMA_NAME,

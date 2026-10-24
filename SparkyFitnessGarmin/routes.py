@@ -38,6 +38,7 @@ from service import (
     get_dates_in_range,
     grams_to_kg,
     map_garmin_stress_to_mood,
+    mock_filename,
     meters_to_km,
     project_daily_calorie_metrics,
     safe_convert,
@@ -129,10 +130,10 @@ async def garmin_resume_login(request: Request):
 
         garmin = item["garmin"]
 
-        garmin.prompt_mfa = lambda: mfa_code
-        garmin.return_on_mfa = False
-
-        garmin.login()
+        # Answer the challenge this login is waiting on. Calling login() again
+        # would start a new sign-in, and Garmin would email the user a second
+        # code they never need.
+        garmin.resume_login(None, mfa_code)
 
         tokens = json.loads(garmin.client.dumps())
 
@@ -158,9 +159,19 @@ async def get_health_and_wellness(request_data: HealthAndWellnessRequest):
     start_date = request_data.start_date
     end_date = request_data.end_date
 
-    filename = "health_and_wellness_data.json"
+    # syncGarminData splits a request into seven-day chunks, so a single
+    # fixed filename would keep only the last chunk on capture and replay
+    # that one chunk for every iteration. Key the bundle by its range.
+    filename = mock_filename("health_and_wellness_data", start_date, end_date)
 
-    if GARMIN_DATA_SOURCE == "local":
+    data_source = (request_data.data_source or GARMIN_DATA_SOURCE).lower()
+    save_mock_data = (
+        request_data.save_mock_data
+        if request_data.save_mock_data is not None
+        else SAVE_MOCK_DATA
+    )
+
+    if data_source == "local":
         local_data = _load_from_local_file(filename)
         if local_data:
             logger.info(
@@ -170,7 +181,7 @@ async def get_health_and_wellness(request_data: HealthAndWellnessRequest):
         else:
             raise HTTPException(
                 status_code=404,
-                detail=f"Local data not found for {start_date} to {end_date}. Please set GARMIN_DATA_SOURCE to 'garmin' to fetch and save data.",
+                detail=f"Local data not found for {start_date} to {end_date}. Run a sync with 'Save provider responses locally' enabled first to capture it.",
             )
 
     try:
@@ -269,6 +280,9 @@ async def get_health_and_wellness(request_data: HealthAndWellnessRequest):
             ):
                 steps_value = None
                 summary_data = None
+                # Stamped before the fetch so request-start order wins at the
+                # Node side's total_calories upsert gate.
+                summary_captured_at = datetime.now(timezone.utc)
                 try:
                     summary_data = garmin.get_user_summary(current_date)
                     logger.info(
@@ -402,6 +416,9 @@ async def get_health_and_wellness(request_data: HealthAndWellnessRequest):
                                     "total_calories": total_kcal,
                                     "active_calories": active_kcal,
                                     "bmr_calories": bmr_kcal,
+                                    "captured_at": summary_captured_at.isoformat(
+                                        timespec="milliseconds"
+                                    ),
                                     "resting_heart_rate": resting_hr,
                                     "avg_stress_level": avg_stress,
                                     "max_stress_level": max_stress,
@@ -463,7 +480,11 @@ async def get_health_and_wellness(request_data: HealthAndWellnessRequest):
             if "hydration" in metric_types_to_fetch:
                 try:
                     hydration_data = garmin.get_hydration_data(current_date)
-                    if hydration_data and hydration_data.get("valueInML") is not None:
+                    if (
+                        hydration_data
+                        and hydration_data.get("valueInML") is not None
+                        and hydration_data.get("valueInML") > 0
+                    ):
                         health_data["hydration"].append(
                             {
                                 "date": current_date,
@@ -1537,7 +1558,7 @@ async def get_health_and_wellness(request_data: HealthAndWellnessRequest):
         logger.info("[GARMIN_SYNC] ===================================")
 
         # Save data to local file if capture is enabled
-        if SAVE_MOCK_DATA:
+        if save_mock_data:
             _save_to_local_file(
                 filename,
                 {
@@ -1585,9 +1606,19 @@ async def get_activities_and_workouts(request_data: ActivitiesAndWorkoutsRequest
     end_date = request_data.end_date
     activity_type = request_data.activity_type
 
-    filename = "activities_and_workouts_data.json"
+    # syncGarminData splits a request into seven-day chunks, so a single
+    # fixed filename would keep only the last chunk on capture and replay
+    # that one chunk for every iteration. Key the bundle by its range.
+    filename = mock_filename("activities_and_workouts_data", start_date, end_date)
 
-    if GARMIN_DATA_SOURCE == "local":
+    data_source = (request_data.data_source or GARMIN_DATA_SOURCE).lower()
+    save_mock_data = (
+        request_data.save_mock_data
+        if request_data.save_mock_data is not None
+        else SAVE_MOCK_DATA
+    )
+
+    if data_source == "local":
         local_data = _load_from_local_file(filename)
         if local_data:
             logger.info(
@@ -1597,7 +1628,7 @@ async def get_activities_and_workouts(request_data: ActivitiesAndWorkoutsRequest
         else:
             raise HTTPException(
                 status_code=404,
-                detail=f"Local data not found for {start_date} to {end_date}. Please set GARMIN_DATA_SOURCE to 'garmin' to fetch and save data.",
+                detail=f"Local data not found for {start_date} to {end_date}. Run a sync with 'Save provider responses locally' enabled first to capture it.",
             )
 
     try:
@@ -1759,7 +1790,7 @@ async def get_activities_and_workouts(request_data: ActivitiesAndWorkoutsRequest
         )
 
         # Save data to local file if capture is enabled
-        if SAVE_MOCK_DATA:
+        if save_mock_data:
             _save_to_local_file(
                 filename,
                 {
@@ -1803,9 +1834,19 @@ async def get_nutrition_diary(request_data: NutritionDiaryRequest):
     start_date = request_data.start_date
     end_date = request_data.end_date
 
-    filename = "nutrition_diary_data.json"
+    # syncGarminData splits a request into seven-day chunks, so a single
+    # fixed filename would keep only the last chunk on capture and replay
+    # that one chunk for every iteration. Key the bundle by its range.
+    filename = mock_filename("nutrition_diary_data", start_date, end_date)
 
-    if GARMIN_DATA_SOURCE == "local":
+    data_source = (request_data.data_source or GARMIN_DATA_SOURCE).lower()
+    save_mock_data = (
+        request_data.save_mock_data
+        if request_data.save_mock_data is not None
+        else SAVE_MOCK_DATA
+    )
+
+    if data_source == "local":
         local_data = _load_from_local_file(filename)
         if local_data:
             logger.info(
@@ -1815,7 +1856,7 @@ async def get_nutrition_diary(request_data: NutritionDiaryRequest):
         else:
             raise HTTPException(
                 status_code=404,
-                detail=f"Local data not found for {start_date} to {end_date}. Please set GARMIN_DATA_SOURCE to 'garmin' to fetch and save data.",
+                detail=f"Local data not found for {start_date} to {end_date}. Run a sync with 'Save provider responses locally' enabled first to capture it.",
             )
 
     try:
@@ -1856,7 +1897,7 @@ async def get_nutrition_diary(request_data: NutritionDiaryRequest):
             "new_tokens": json.loads(garmin.client.dumps()),
         }
 
-        if SAVE_MOCK_DATA:
+        if save_mock_data:
             _save_to_local_file(filename, result)
 
         return result

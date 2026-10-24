@@ -24,7 +24,9 @@ import {
   importFitFiles,
   getExerciseById,
   getBodyMapSvg,
+  BODY_MAP_SVG_VERSION,
 } from '@/api/Exercises/exerciseService';
+import type { BodyFigure } from '@workspace/shared';
 import i18n from '@/i18n';
 import {
   getActivityDetails,
@@ -87,7 +89,10 @@ export const exerciseDeletionImpactOptions = (exerciseId: string | null) => ({
   enabled: !!exerciseId,
   staleTime: 0,
   meta: {
-    errorMessage: 'Could not fetch deletion impact. Please try again.',
+    errorMessage: i18n.t(
+      'hooks.useExercises.couldNotFetchDeletionImpact',
+      'Could not fetch deletion impact. Please try again.'
+    ),
   },
 });
 // --- Mutations ---
@@ -326,7 +331,11 @@ export const activityDetailsOptions = (
   queryFn: () => getActivityDetails(exerciseEntryId, providerName),
   enabled: Boolean(exerciseEntryId && providerName),
   meta: {
-    errorMessage: `Failed to fetch ${providerName} activity details.`,
+    errorMessage: i18n.t(
+      'hooks.useExercises.failedToFetchActivityDetails',
+      'Failed to fetch {{providerName}} activity details.',
+      { providerName }
+    ),
   },
 });
 
@@ -337,13 +346,16 @@ export const useActivityDetailsQuery = (
   return useQuery(activityDetailsOptions(exerciseEntryId, providerName));
 };
 
-export const useBodyMapSvgQuery = () => {
+export const useBodyMapSvgQuery = (figure: BodyFigure = 'male') => {
   return useQuery({
-    queryKey: assetKeys.svg('muscle-male'),
-    queryFn: getBodyMapSvg,
+    queryKey: assetKeys.svg(`muscle-${figure}-${BODY_MAP_SVG_VERSION[figure]}`),
+    queryFn: () => getBodyMapSvg(figure),
     staleTime: Infinity,
     meta: {
-      errorMessage: 'Error fetching body map SVG',
+      errorMessage: i18n.t(
+        'hooks.useExercises.errorFetchingBodyMapSVG',
+        'Error fetching body map SVG'
+      ),
     },
   });
 };

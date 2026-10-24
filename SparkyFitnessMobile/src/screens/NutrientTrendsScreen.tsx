@@ -5,29 +5,27 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useScreenHeader } from '../hooks/useScreenHeader';
 import { getAppLocale, formatLocalizedNumber } from '../localization';
+import { useNutritionTrends } from '../hooks/useNutritionTrends';
+import { useFoodEntriesRange } from '../hooks/useFoodEntriesRange';
 import {
-  useNutritionTrends,
+  trendRangeBounds,
+  trendRangeSegments,
   type TrendRange,
-} from '../hooks/useNutritionTrends';
+} from '../utils/trendRange';
 import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import { useActiveWorkoutBarPadding } from '../components/ActiveWorkoutBar';
-import SegmentedControl, { type Segment } from '../components/SegmentedControl';
+import SegmentedControl from '../components/SegmentedControl';
 import StatusView from '../components/StatusView';
 import NutrientBarChart from '../components/NutrientBarChart';
+import NutrientTopSourcesCard from '../components/NutrientTopSourcesCard';
+import { formatTooltipDate } from '../components/charts/chartFormatting';
 import type { RootStackScreenProps } from '../types/navigation';
 
 type NutrientTrendsScreenProps = RootStackScreenProps<'NutrientTrends'>;
 
-const RANGE_SEGMENTS = (
-  t: (key: string, options: { defaultValue: string }) => string
-): Segment<TrendRange>[] => [
-  { key: '7d', label: t('ranges.7d', { defaultValue: '7d' }) },
-  { key: '30d', label: t('ranges.30d', { defaultValue: '30d' }) },
-  { key: '90d', label: t('ranges.90d', { defaultValue: '90d' }) },
-];
-
 const NutrientTrendsScreen: React.FC<NutrientTrendsScreenProps> = ({
   route,
+  navigation,
 }) => {
   const { t } = useTranslation();
   const { nutrientKey, nutrientLabel, unit, goal } = route.params;
@@ -35,6 +33,12 @@ const NutrientTrendsScreen: React.FC<NutrientTrendsScreenProps> = ({
   const activeWorkoutBarPadding = useActiveWorkoutBarPadding('stack');
   const usesNativeHeader = useNativeIOSHeadersActive();
   const [range, setRange] = useState<TrendRange>('7d');
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
+  const handleRangeChange = (next: TrendRange) => {
+    setRange(next);
+    setSelectedDay(null);
+  };
 
   const header = useScreenHeader({
     title: t('nutrientTrends.title', {
@@ -45,6 +49,8 @@ const NutrientTrendsScreen: React.FC<NutrientTrendsScreenProps> = ({
   });
 
   const { data, isLoading, isError } = useNutritionTrends({ range });
+  const { startDate, endDate } = trendRangeBounds(range);
+  const sources = useFoodEntriesRange({ startDate, endDate });
 
   // Map historical trend data to extract values for this specific nutrient
   const chartData = useMemo(() => {
@@ -128,9 +134,9 @@ const NutrientTrendsScreen: React.FC<NutrientTrendsScreenProps> = ({
         {/* Segmented Range Control */}
         <View className="mb-4">
           <SegmentedControl
-            segments={RANGE_SEGMENTS(t)}
+            segments={trendRangeSegments(t)}
             activeKey={range}
-            onSelect={setRange}
+            onSelect={handleRangeChange}
           />
         </View>
 
@@ -143,6 +149,8 @@ const NutrientTrendsScreen: React.FC<NutrientTrendsScreenProps> = ({
           nutrientLabel={nutrientLabel}
           unit={unit}
           goal={goal}
+          onSelectDay={setSelectedDay}
+          selectedDay={selectedDay}
         />
 
         {/* Statistics Summary Card */}
@@ -221,6 +229,21 @@ const NutrientTrendsScreen: React.FC<NutrientTrendsScreenProps> = ({
             </>
           ) : null}
         </View>
+
+        <NutrientTopSourcesCard
+          entries={sources.data}
+          isLoading={sources.isLoading}
+          isError={sources.isError}
+          nutrientKey={nutrientKey}
+          nutrientLabel={nutrientLabel}
+          unit={unit}
+          selectedDay={selectedDay}
+          selectedDayLabel={selectedDay ? formatTooltipDate(selectedDay) : ''}
+          onClearDay={() => setSelectedDay(null)}
+          onViewEntry={(entry) =>
+            navigation.navigate('FoodEntryView', { entry })
+          }
+        />
       </ScrollView>
     </View>
   );

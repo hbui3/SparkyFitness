@@ -1,7 +1,6 @@
 import measurementRepository from '../../models/measurementRepository.js';
 import exerciseEntryRepository from '../../models/exerciseEntry.js';
 import exerciseRepository from '../../models/exercise.js';
-import activityDetailsRepository from '../../models/activityDetailsRepository.js';
 import sleepRepository from '../../models/sleepRepository.js';
 import { log } from '../../config/logging.js';
 import { localDateToDay, todayInZone } from '@workspace/shared';
@@ -636,7 +635,12 @@ async function processFitbitActivities(
       avg_heart_rate: activity.averageHeartRate || null,
       notes: `Synced from Fitbit. Steps: ${activitySteps}${activity.duration ? `. Original duration: ${activity.duration}ms` : ''}`,
       entry_source: 'Fitbit',
-      source_id: activity.logId ? activity.logId.toString() : null,
+      // This source skips the manual duplicate check, so without a source_id
+      // createExerciseEntry finds no existing entry and every re-sync would
+      // save the activity again.
+      source_id: activity.logId
+        ? activity.logId.toString()
+        : `fitbit-activity-${activity.startTime}`,
       sets: [
         {
           set_number: 1,
@@ -646,21 +650,24 @@ async function processFitbitActivities(
         },
       ],
     };
-    const newEntry = await exerciseEntryRepository.createExerciseEntry(
+    // Written with the entry so a re-sync replaces the detail instead of
+    // adding another copy.
+    await exerciseEntryRepository.createExerciseEntry(
       userId,
       entryData,
       createdByUserId,
-      'Fitbit'
+      'Fitbit',
+      null,
+      {
+        activityDetail: {
+          provider_name: 'Fitbit',
+          detail_type: 'full_activity_data',
+          detail_data: activity,
+          created_by_user_id: String(createdByUserId),
+          updated_by_user_id: String(createdByUserId),
+        },
+      }
     );
-    if (newEntry && newEntry.id) {
-      await activityDetailsRepository.createActivityDetail(userId, {
-        exercise_entry_id: newEntry.id,
-        provider_name: 'Fitbit',
-        detail_type: 'full_activity_data',
-        detail_data: activity,
-        created_by_user_id: createdByUserId,
-      });
-    }
   }
   // Step Fallback Optimization: Fetch all measurements in one range query to avoid queries-in-a-loop
   const dates = Object.keys(stepsPerDay).sort();

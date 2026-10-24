@@ -1,4 +1,5 @@
 ### 💙 Support SparkyFitness
+
 If SparkyFitness has been useful to you & your family, please consider [sponsoring on GitHub](https://github.com/sponsors/CodeWithCJ) or supporting via [Ko-fi](https://ko-fi.com/sparkyapps). Your support helps cover recurring costs such as AI coding tools, development infrastructure, and Apple & Google Developer memberships to keep the project actively maintained.
 
 ---
@@ -13,3 +14,5 @@ If SparkyFitness has been useful to you & your family, please consider [sponsori
 ## 🚀 Key Highlights
 
 <!-- Add key release highlights here -->
+
+- **Adaptive calorie budgets:** Dynamic Goal and Percentage Earn-Back no longer add activity calories or optional BMR credit to an Adaptive target a second time. Remaining calories may be lower after upgrading because these duplicate credits are removed. Recorded activity remains visible, and Manual targets retain their existing earn-back behavior.

@@ -81,32 +81,6 @@ interface NutrientTotals {
   [key: string]: number | undefined;
 }
 
-export const calculateTotalTonnage = (
-  entries: {
-    sets: {
-      weight: number | string | null;
-      reps: number | string | null;
-    }[];
-  }[]
-) => {
-  return entries.reduce((totalTonnage, entry) => {
-    return (
-      totalTonnage +
-      entry.sets.reduce((entryTonnage, set) => {
-        const weight =
-          typeof set.weight === 'string'
-            ? parseFloat(set.weight)
-            : (set.weight ?? 0);
-        const reps =
-          typeof set.reps === 'string'
-            ? parseInt(set.reps, 10)
-            : (set.reps ?? 0);
-        return entryTonnage + weight * reps;
-      }, 0)
-    );
-  }, 0);
-};
-
 // Utility function to get comparison dates
 export const getComparisonDates = (
   startDate: string,

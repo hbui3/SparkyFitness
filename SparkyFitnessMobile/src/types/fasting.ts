@@ -18,6 +18,10 @@ export interface FastingLog {
   status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | null;
   created_at: string | null;
   updated_at: string | null;
+  is_auto_calculated?: boolean;
+  start_meal_name?: string;
+  is_eating_window?: boolean;
+  eating_window_remaining_minutes?: number;
 }
 
 /**
@@ -30,3 +34,23 @@ export interface FastingStats {
   total_minutes_fasted: string | number | null;
   average_duration_minutes: string | number | null;
 }
+
+/**
+ * `/api/fasting/preferences`. Mirrors the shared `UserFastingPreferences`
+ * schema with string-free primitives (the mobile client never sees `Date`s).
+ */
+export interface FastingPreferences {
+  id?: string;
+  user_id: string;
+  auto_calculate: boolean;
+  default_protocol: string;
+  target_fasting_hours: number;
+  target_eating_hours: number;
+  calorie_threshold: number;
+  pre_end_alert_minutes: number;
+  eating_window_alert: boolean;
+}
+
+export type FastingPreferencesUpdate = Partial<
+  Omit<FastingPreferences, 'id' | 'user_id'>
+>;

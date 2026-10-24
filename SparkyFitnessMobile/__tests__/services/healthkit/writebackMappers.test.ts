@@ -141,6 +141,42 @@ describe('foodEntryToNutrientSamples', () => {
       expect(s.endDate.getTime()).toBe(s.startDate.getTime());
     });
   });
+
+  it('uses entry_time when provided on the food entry', () => {
+    const descriptor = foodEntryToNutrientSamples(
+      { ...baseEntry, entry_time: '14:25' },
+      NOW
+    )!;
+    expect(descriptor.start.getHours()).toBe(14);
+    expect(descriptor.start.getMinutes()).toBe(25);
+    expect(descriptor.start.getSeconds()).toBe(0);
+  });
+
+  it('handles entry_time with seconds', () => {
+    const descriptor = foodEntryToNutrientSamples(
+      { ...baseEntry, entry_time: '14:25:45' },
+      NOW
+    )!;
+    expect(descriptor.start.getHours()).toBe(14);
+    expect(descriptor.start.getMinutes()).toBe(25);
+    expect(descriptor.start.getSeconds()).toBe(45);
+  });
+
+  it('falls back to meal default time when entry_time is absent or invalid', () => {
+    const lunchDescriptor = foodEntryToNutrientSamples(
+      { ...baseEntry, meal_type: 'lunch', entry_time: null },
+      NOW
+    )!;
+    expect(lunchDescriptor.start.getHours()).toBe(12);
+    expect(lunchDescriptor.start.getMinutes()).toBe(30);
+
+    const invalidTimeDescriptor = foodEntryToNutrientSamples(
+      { ...baseEntry, meal_type: 'breakfast', entry_time: 'invalid-time' },
+      NOW
+    )!;
+    expect(invalidTimeDescriptor.start.getHours()).toBe(8);
+    expect(invalidTimeDescriptor.start.getMinutes()).toBe(0);
+  });
 });
 
 describe('waterMlToSample', () => {

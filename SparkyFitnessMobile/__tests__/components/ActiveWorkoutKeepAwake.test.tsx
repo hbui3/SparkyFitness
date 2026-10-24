@@ -84,4 +84,18 @@ describe('ActiveWorkoutKeepAwake', () => {
     });
     expect(mockRelease).toHaveBeenCalledTimes(1);
   });
+
+  it('holds the wake lock during a workout while guided mode is on', () => {
+    // Guided narration runs on JS timers, which a locked screen suspends.
+    useAppPreferencesStore.setState({ guidedWorkoutEnabled: true });
+    act(() => {
+      useActiveWorkoutStore.setState({ sessionId: 'session-1' });
+    });
+    render(<ActiveWorkoutKeepAwake />);
+    expect(mockAcquire).toHaveBeenCalledTimes(1);
+    act(() => {
+      useAppPreferencesStore.setState({ guidedWorkoutEnabled: false });
+    });
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+  });
 });

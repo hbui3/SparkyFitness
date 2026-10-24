@@ -278,7 +278,6 @@
     "editPresetTooltip": "Editar este treino predefinido",
     "deletePresetTooltip": "Apagar este treino predefinido",
     "loading": "A carregar...",
-    "loadMore": "Mais",
     "noExercisesInPreset": "Sem exercícios nesse treino predefinido",
     "failedToLoadPresets": "Falha ao carregar treinos predefinidos.",
     "createSuccess": "Treino predefinido carregado com sucesso.",
@@ -867,7 +866,6 @@
     "searchFoodsToYour": "Procure comidas para adicionar ao seu"
   },
   "checkIn": {
-    "howAreYouFeelingToday": "Como se sente hoje?",
     "neutral": "Neutral",
     "anyThoughtsOrFeelings": "Há pensamentos ou sentimentos que gostaria de acrescentar?",
     "sleepTracking": "Rastreamento do dormir",

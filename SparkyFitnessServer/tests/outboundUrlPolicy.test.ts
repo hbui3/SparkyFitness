@@ -62,6 +62,8 @@ describe('outboundUrlPolicy', () => {
     'gopher://example.com/',
     'ftp://8.8.8.8/',
     'http://user:pass@example.com/v1',
+    'http://example.com/api#fragment',
+    'http://example.com/api#',
     'not a url',
   ])('rejects unsafe or malformed URL %s', (url) => {
     expect(() =>

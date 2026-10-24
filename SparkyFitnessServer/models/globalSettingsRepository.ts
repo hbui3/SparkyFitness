@@ -29,6 +29,23 @@ async function getGlobalSettings() {
     ) {
       settings.enable_email_password_login = true;
     }
+    // Manage enable_passkey_login
+    const forcePasskeyLogin =
+      process.env.SPARKY_FITNESS_FORCE_PASSKEY_LOGIN === 'true';
+    const disablePasskeyLogin =
+      process.env.SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN === 'true';
+    settings.is_passkey_login_env_configured =
+      forcePasskeyLogin || disablePasskeyLogin;
+    if (forcePasskeyLogin) {
+      settings.enable_passkey_login = true;
+    } else if (disablePasskeyLogin) {
+      settings.enable_passkey_login = false;
+    } else if (
+      settings.enable_passkey_login === undefined ||
+      settings.enable_passkey_login === null
+    ) {
+      settings.enable_passkey_login = true;
+    }
     // Manage is_oidc_active
     settings.is_oidc_active_env_configured = oidcAuthEnabledEnv;
     if (oidcAuthEnabledEnv) {
@@ -52,6 +69,13 @@ async function getGlobalSettings() {
     ) {
       settings.allow_openfoodfacts_contributions = false;
     }
+    settings.allow_private_network_ai = !!settings.allow_private_network_ai;
+    settings.allow_private_network_food_providers =
+      !!settings.allow_private_network_food_providers;
+    settings.public_api_docs = !!settings.public_api_docs;
+    settings.dev_tools_enabled = !!settings.dev_tools_enabled;
+    settings.mock_data_enabled = !!settings.mock_data_enabled;
+
     log(
       'info',
       `[GLOBAL SETTINGS REPO] Retrieved Global Settings with overrides: ${JSON.stringify(settings)}`
@@ -69,24 +93,48 @@ async function saveGlobalSettings(settings: any) {
       settings.allow_user_ai_config !== undefined
         ? settings.allow_user_ai_config
         : true;
+    // While an env var forces a login setting, keep the stored admin choice:
+    // the admin page sends back the forced value on every unrelated save.
+    const emailLoginEnvForced =
+      process.env.SPARKY_FITNESS_FORCE_EMAIL_LOGIN === 'true' ||
+      process.env.SPARKY_FITNESS_DISABLE_EMAIL_LOGIN === 'true';
+    const oidcEnvForced =
+      process.env.SPARKY_FITNESS_OIDC_AUTH_ENABLED === 'true';
+    const passkeyEnvForced =
+      process.env.SPARKY_FITNESS_FORCE_PASSKEY_LOGIN === 'true' ||
+      process.env.SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN === 'true';
     await client.query(
       `UPDATE global_settings
-             SET enable_email_password_login = $1, is_oidc_active = $2, mfa_mandatory = $3, allow_user_ai_config = COALESCE($4, allow_user_ai_config, true), default_vision_ai_service_id = CASE WHEN $6 THEN $5 ELSE default_vision_ai_service_id END, allow_openfoodfacts_contributions = COALESCE($7, allow_openfoodfacts_contributions, false)
+             SET enable_email_password_login = COALESCE($1, enable_email_password_login),
+                 is_oidc_active = COALESCE($2, is_oidc_active),
+                 mfa_mandatory = $3,
+                 allow_user_ai_config = COALESCE($4, allow_user_ai_config, true),
+                 default_vision_ai_service_id = CASE WHEN $6 THEN $5 ELSE default_vision_ai_service_id END,
+                 allow_openfoodfacts_contributions = COALESCE($7, allow_openfoodfacts_contributions, false),
+                 allow_private_network_ai = COALESCE($8, allow_private_network_ai, false),
+                 allow_private_network_food_providers = COALESCE($9, allow_private_network_food_providers, false),
+                 public_api_docs = COALESCE($10, public_api_docs, false),
+                 dev_tools_enabled = COALESCE($11, dev_tools_enabled, false),
+                 mock_data_enabled = COALESCE($12, mock_data_enabled, false),
+                 enable_passkey_login = COALESCE($13, enable_passkey_login, true)
              WHERE id = 1
              RETURNING *`,
-      // Use 'is_mfa_mandatory' from the incoming settings from the frontend.
-      // default_vision_ai_service_id uses a CASE WHEN existence check (matching
-      // active_vision_ai_service_id in preferenceRepository) so an explicit null
-      // can clear it ("None") while an omitted field leaves the stored value
-      // untouched instead of clobbering it.
       [
-        settings.enable_email_password_login,
-        settings.is_oidc_active,
+        emailLoginEnvForced
+          ? null
+          : (settings.enable_email_password_login ?? null),
+        oidcEnvForced ? null : (settings.is_oidc_active ?? null),
         settings.is_mfa_mandatory,
         allowUserAiConfig,
         settings.default_vision_ai_service_id ?? null,
         'default_vision_ai_service_id' in settings,
         settings.allow_openfoodfacts_contributions ?? null,
+        settings.allow_private_network_ai ?? null,
+        settings.allow_private_network_food_providers ?? null,
+        settings.public_api_docs ?? null,
+        settings.dev_tools_enabled ?? null,
+        settings.mock_data_enabled ?? null,
+        passkeyEnvForced ? null : (settings.enable_passkey_login ?? null),
       ]
     );
     // Return the full truth (DB + ENV overrides)
@@ -107,6 +155,69 @@ async function isOpenFoodFactsContributionAllowed(): Promise<boolean> {
   } finally {
     client.release();
   }
+}
+/**
+ * The boolean policy columns on `global_settings`. A closed union, because the
+ * column name is interpolated into the SQL below — nothing outside this file
+ * can widen it, and no value ever comes from a request.
+ */
+type BooleanSettingColumn =
+  | 'allow_private_network_ai'
+  | 'allow_private_network_food_providers'
+  | 'public_api_docs'
+  | 'dev_tools_enabled'
+  | 'mock_data_enabled';
+
+/**
+ * Reads one boolean policy column from `global_settings`, failing closed.
+ *
+ * These are consulted on request paths (SSRF policy, API-doc access, dev tool
+ * registration), so an unreachable database must deny rather than throw a
+ * connection error into the caller. The client is acquired inside the try for
+ * that reason: `getSystemClient()` itself rejects when Postgres is down.
+ */
+async function readBooleanSetting(
+  column: BooleanSettingColumn
+): Promise<boolean> {
+  let client;
+  try {
+    client = await getSystemClient();
+    const result = await client.query(
+      `SELECT ${column} FROM global_settings WHERE id = 1`
+    );
+    return result.rows[0]?.[column] === true;
+  } catch (error) {
+    log(
+      'warn',
+      `[GLOBAL SETTINGS REPO] Could not read ${column}; defaulting to false: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return false;
+  } finally {
+    client?.release();
+  }
+}
+
+async function isPrivateNetworkAiAllowed(): Promise<boolean> {
+  return readBooleanSetting('allow_private_network_ai');
+}
+async function isPrivateNetworkFoodProvidersAllowed(): Promise<boolean> {
+  return readBooleanSetting('allow_private_network_food_providers');
+}
+async function isPublicApiDocsAllowed(): Promise<boolean> {
+  return readBooleanSetting('public_api_docs');
+}
+async function isDevToolsEnabled(): Promise<boolean> {
+  return readBooleanSetting('dev_tools_enabled');
+}
+/**
+ * Admin master switch for the runtime mock-data options. While false, the
+ * per-sync `saveMockData` / `dataSource` request options are ignored, so no
+ * user can make the server write provider responses to disk or replay
+ * fixtures. There is deliberately no env fallback: this is an operator
+ * decision made in the Admin UI and meant to be turned back off.
+ */
+async function isMockDataEnabled(): Promise<boolean> {
+  return readBooleanSetting('mock_data_enabled');
 }
 async function isUserAiConfigAllowed() {
   const client = await getSystemClient();
@@ -148,12 +259,19 @@ async function setMfaMandatorySetting(isMandatory: any) {
     client.release();
   }
 }
-export { getGlobalSettings };
-export { saveGlobalSettings };
-export { getMfaMandatorySetting };
-export { setMfaMandatorySetting };
-export { isUserAiConfigAllowed };
-export { isOpenFoodFactsContributionAllowed };
+export {
+  getGlobalSettings,
+  saveGlobalSettings,
+  getMfaMandatorySetting,
+  setMfaMandatorySetting,
+  isUserAiConfigAllowed,
+  isOpenFoodFactsContributionAllowed,
+  isPrivateNetworkAiAllowed,
+  isPrivateNetworkFoodProvidersAllowed,
+  isPublicApiDocsAllowed,
+  isDevToolsEnabled,
+  isMockDataEnabled,
+};
 export default {
   getGlobalSettings,
   saveGlobalSettings,
@@ -161,4 +279,9 @@ export default {
   setMfaMandatorySetting,
   isUserAiConfigAllowed,
   isOpenFoodFactsContributionAllowed,
+  isPrivateNetworkAiAllowed,
+  isPrivateNetworkFoodProvidersAllowed,
+  isPublicApiDocsAllowed,
+  isDevToolsEnabled,
+  isMockDataEnabled,
 };

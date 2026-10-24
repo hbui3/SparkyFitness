@@ -29,9 +29,12 @@ export interface FoodDefaultVariant {
   caffeine_mg?: number;
   water_ml?: number;
   alcohol_g?: number;
+  abv_percent?: number;
   is_default?: boolean;
   glycemic_index?: string;
   custom_nutrients?: Record<string, string | number>;
+  allergens?: string[] | null;
+  traces?: string[] | null;
 }
 
 export interface FoodItem {
@@ -124,6 +127,7 @@ export interface FoodVariantDetail {
   caffeine_mg?: number;
   water_ml?: number;
   alcohol_g?: number;
+  abv_percent?: number;
   is_default?: boolean;
   glycemic_index?: string;
   custom_nutrients?: Record<string, string | number>;

@@ -15,6 +15,7 @@ import type {
   HealthMetricStates,
   SyncResult,
 } from '../../src/types/healthRecords';
+import { atLocalTime } from '../helpers/localTime';
 
 // Helpers — construct test dates in local time so day attribution in
 // aggregateCumulativeMetricByDayDetailed produces predictable output
@@ -435,15 +436,15 @@ describe('healthConnectService.ts (Android)', () => {
       mockReadRecords.mockResolvedValue({
         records: [
           {
-            startTime: '2024-01-15T08:00:00Z',
+            startTime: atLocalTime('2024-01-15', '08:00'),
             samples: [{ beatsPerMinute: 60 }],
           },
           {
-            startTime: '2024-01-15T12:00:00Z',
+            startTime: atLocalTime('2024-01-15', '12:00'),
             samples: [{ beatsPerMinute: 80 }],
           },
           {
-            startTime: '2024-01-15T18:00:00Z',
+            startTime: atLocalTime('2024-01-15', '18:00'),
             samples: [{ beatsPerMinute: 70 }],
           },
         ],
@@ -509,9 +510,18 @@ describe('healthConnectService.ts (Android)', () => {
     test('HeartRateVariabilityRmssd records are aggregated with min/max/avg by date', async () => {
       mockReadRecords.mockResolvedValue({
         records: [
-          { time: '2024-01-15T08:00:00Z', heartRateVariabilityMillis: 40 },
-          { time: '2024-01-15T12:00:00Z', heartRateVariabilityMillis: 60 },
-          { time: '2024-01-15T18:00:00Z', heartRateVariabilityMillis: 50 },
+          {
+            time: atLocalTime('2024-01-15', '08:00'),
+            heartRateVariabilityMillis: 40,
+          },
+          {
+            time: atLocalTime('2024-01-15', '12:00'),
+            heartRateVariabilityMillis: 60,
+          },
+          {
+            time: atLocalTime('2024-01-15', '18:00'),
+            heartRateVariabilityMillis: 50,
+          },
         ],
       });
 

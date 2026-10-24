@@ -20,6 +20,10 @@ vi.mock('../models/globalSettingsRepository.js', () => ({
   default: {
     isUserAiConfigAllowed: vi.fn(),
   },
+  // Named exports read by utils/outboundUrlPolicy's resolve* wrappers. Default
+  // false keeps these cases on the env/admin-only path the assertions expect.
+  isPrivateNetworkAiAllowed: vi.fn().mockResolvedValue(false),
+  isPrivateNetworkFoodProvidersAllowed: vi.fn().mockResolvedValue(false),
 }));
 vi.mock('../middleware/authMiddleware.js', () => ({
   authenticate: vi.fn((req, _res, next) => {
@@ -198,6 +202,23 @@ describe('chatService.testAiServiceConnection', () => {
     expect(mockDispatch).toHaveBeenCalledTimes(1);
     expect(mockDispatch.mock.calls[0][0]).toMatchObject({
       provider: { service_type: 'openai', api_key: 'sk-test' },
+      temperature: 0,
+      timeoutMs: 15000,
+    });
+  });
+
+  it('dispatches a connection test for perplexity with default model resolution', async () => {
+    mockDispatch.mockResolvedValue(okDispatch);
+
+    const result = await chatService.testAiServiceConnection(
+      { service_type: 'perplexity', api_key: 'pplx-key' },
+      USER_ID,
+      false
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(mockDispatch.mock.calls[0][0]).toMatchObject({
+      provider: { service_type: 'perplexity', api_key: 'pplx-key' },
       temperature: 0,
       timeoutMs: 15000,
     });

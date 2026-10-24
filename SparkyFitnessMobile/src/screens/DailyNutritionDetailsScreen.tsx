@@ -20,13 +20,8 @@ import { NUTRIENT_META, getNutrientLabel } from '../constants/nutrients';
 import NutritionMacroCard from '../components/NutritionMacroCard';
 import StatusView from '../components/StatusView';
 import Icon from '../components/Icon';
-import {
-  resolveSupplementTotals,
-  FOOD_VARIANT_NUTRIENT_FIELDS,
-} from '@workspace/shared';
-import type { FoodVariantNutrientField } from '@workspace/shared';
+import { dayCustomNutrient, dayStandardNutrient } from '../utils/nutrientUtils';
 import type { RootStackScreenProps } from '../types/navigation';
-import type { FoodEntry } from '../types/foodEntries';
 import { formatLocalizedNumber } from '../localization';
 
 type DailyNutritionDetailsScreenProps =
@@ -94,19 +89,6 @@ const DailyNutritionDetailsScreen: React.FC<
     left: { kind: 'back' },
   });
 
-  // Calculate standard nutrient totals from food entries
-  const calculateNutrientTotal = (
-    entries: FoodEntry[],
-    key: keyof FoodEntry
-  ): number => {
-    return entries.reduce((total, entry) => {
-      if (!entry.serving_size) return total;
-      const value = entry[key];
-      if (typeof value !== 'number') return total;
-      return total + (value * entry.quantity) / entry.serving_size;
-    }, 0);
-  };
-
   // Determine standard and custom display items ordered and filtered by report_tabular preference
   const displayGroups = useMemo(() => {
     if (!summary) return null;
@@ -155,12 +137,6 @@ const DailyNutritionDetailsScreen: React.FC<
       goal?: number;
     }[] = [];
 
-    // Logged supplement doses, full width and zero-filled, so a fixed nutrient computed
-    // from food entries below can have its supplement contribution added back (#2145).
-    const supplements = resolveSupplementTotals(summary.supplementTotals);
-    const isFixedNutrient = (key: string): key is FoodVariantNutrientField =>
-      (FOOD_VARIANT_NUTRIENT_FIELDS as readonly string[]).includes(key);
-
     // Filter and compute standard nutrients in order of visibleKeys
     for (const key of visibleKeys) {
       // Exclude base macros from the detailed breakdown if they are already visible in top card
@@ -181,34 +157,11 @@ const DailyNutritionDetailsScreen: React.FC<
 
       const meta = NUTRIENT_META[key];
       if (meta) {
-        // Fields the summary already rolls up include logged supplement doses; recomputing
-        // one from foodEntries would print a different number from the macro card at the
-        // top of this same screen. Fiber is the one that reaches here today, since the
-        // other rolled-up fields are excluded above, but keying on the set rather than on
-        // fiber keeps that true if the exclusion list ever changes.
-        const rolledUp: Record<string, number> = {
-          protein: summary.protein.consumed,
-          carbs: summary.carbs.consumed,
-          fat: summary.fat.consumed,
-          dietary_fiber: summary.fiber.consumed,
-        };
-        // Anything not already rolled up is derived from food entries here, which is
-        // food-only. Every fixed nutrient a supplement can carry has to have its dose
-        // contribution added back, or this screen shows a smaller calcium than Reports
-        // does for the same day.
-        const consumed =
-          rolledUp[key] ??
-          calculateNutrientTotal(summary.foodEntries, key as keyof FoodEntry) +
-            (isFixedNutrient(key) ? supplements[key] : 0);
-        const goal = summary.goals[key as keyof typeof summary.goals] as
-          number | undefined;
-
         standardItems.push({
           key,
           label: getNutrientLabel(t, key),
           unit: meta.unit,
-          consumed,
-          goal: goal && goal > 0 ? goal : undefined,
+          ...dayStandardNutrient(summary, key),
         });
       }
     }
@@ -218,33 +171,26 @@ const DailyNutritionDetailsScreen: React.FC<
     for (const def of customDefs) {
       const isVisible = !reportPref || visibleKeys.includes(def.name);
       if (isVisible) {
-        const consumed = summary.customNutrientTotals[def.name] ?? 0;
-        const goal = summary.customNutrientGoals[def.name] ?? undefined;
         customItems.push({
           key: def.name,
           label: def.name,
           unit: def.unit || 'g',
-          consumed,
-          goal: goal && goal > 0 ? goal : undefined,
+          ...dayCustomNutrient(summary, def.name),
         });
         seenCustom.add(def.name);
       }
     }
 
     // Add any logged custom nutrients not in current custom definitions
-    for (const [name, consumed] of Object.entries(
-      summary.customNutrientTotals
-    )) {
+    for (const name of Object.keys(summary.customNutrientTotals)) {
       if (seenCustom.has(name)) continue;
       const isVisible = !reportPref || visibleKeys.includes(name);
       if (isVisible) {
-        const goal = summary.customNutrientGoals[name] ?? undefined;
         customItems.push({
           key: name,
           label: name,
           unit: 'g',
-          consumed,
-          goal: goal && goal > 0 ? goal : undefined,
+          ...dayCustomNutrient(summary, name),
         });
       }
     }
@@ -428,6 +374,14 @@ const DailyNutritionDetailsScreen: React.FC<
           proteinGoal={summary.protein.goal}
           carbsGoal={summary.carbs.goal}
           fatGoal={summary.fat.goal}
+          onMacroPress={(macro) =>
+            navigation.navigate('NutrientTrends', {
+              nutrientKey: macro.key,
+              nutrientLabel: macro.label,
+              unit: 'g',
+              goal: macro.goal,
+            })
+          }
         />
 
         {/* Predefined Nutrients Section */}

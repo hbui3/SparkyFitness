@@ -38,14 +38,30 @@ export async function getActiveCaffeineKinetics(
       ? prefs.target_bedtime.slice(0, 5)
       : '22:30';
 
-  // 48h lookback window (3 calendar days: date - 2 days to date)
+  // Calculate bedtime instant in user's timezone for target date.
+  // Bedtimes at midnight or early morning (00:00 - 11:59) conclude the waking day
+  // on the following calendar morning (date + 1).
+  const [bedtimeHourStr] = targetBedtime.split(':');
+  const bedtimeHour = parseInt(bedtimeHourStr ?? '22', 10);
+  const bedtimeCalendarDate =
+    !isNaN(bedtimeHour) && bedtimeHour < 12 ? addDays(date, 1) : date;
+  const bedtimeDate = localDateTimeToUtc(
+    `${bedtimeCalendarDate}T${targetBedtime}`,
+    tz
+  );
+  const bedtimeAt = bedtimeDate.toISOString();
+
+  // 48h lookback window (date - 2 days through bedtime calendar date)
   const startDate = addDays(date, -2);
-  const endDate = date;
+  const endDate = bedtimeCalendarDate;
 
   const rawDoses = await getCaffeineDosesForWindow(userId, startDate, endDate);
 
   let hasEstimatedTimes = false;
-  const doses: CaffeineDose[] = rawDoses.map((raw) => {
+  const windowEndMs = new Date(bedtimeAt).getTime() + 2 * 60 * 60 * 1000;
+  const rawDosesMapped: CaffeineDose[] = [];
+
+  for (const raw of rawDoses) {
     let atInstant: string;
     let isEstimated: boolean;
 
@@ -65,21 +81,25 @@ export async function getActiveCaffeineKinetics(
         isEstimated = true;
       }
 
-      if (isEstimated) {
-        hasEstimatedTimes = true;
-      }
-
       const utcDate = localDateTimeToUtc(`${raw.entry_date}T${timeStr}`, tz);
       atInstant = utcDate.toISOString();
     }
 
-    return {
-      at: atInstant,
-      mg: raw.caffeine_mg,
-      name: raw.name,
-      is_estimated: isEstimated,
-    };
-  });
+    // Exclude doses after the current day's active window (bedtime + 2h)
+    if (new Date(atInstant).getTime() <= windowEndMs) {
+      if (isEstimated) {
+        hasEstimatedTimes = true;
+      }
+      rawDosesMapped.push({
+        at: atInstant,
+        mg: raw.caffeine_mg,
+        name: raw.name,
+        is_estimated: isEstimated,
+      });
+    }
+  }
+
+  const doses = rawDosesMapped;
 
   // Order by the resolved instant, not by the SQL ordering. That ORDER BY sorts
   // on COALESCE(entry_time, meal_default_time, '12:00'), and a supplement dose
@@ -87,10 +107,6 @@ export async function getActiveCaffeineKinetics(
   // it were taken at noon. The kinetics maths is order-independent, but this
   // list is rendered as the day's doses in sequence.
   doses.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-
-  // Calculate bedtime instant in user's timezone for target date
-  const bedtimeDate = localDateTimeToUtc(`${date}T${targetBedtime}`, tz);
-  const bedtimeAt = bedtimeDate.toISOString();
 
   const activeMgNow = activeCaffeineAt(doses, now, halfLifeHours);
   const atBedtimeMg = caffeineAtBedtime(doses, bedtimeAt, halfLifeHours);

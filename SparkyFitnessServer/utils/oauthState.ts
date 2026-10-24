@@ -22,7 +22,7 @@ const NONCE_BYTES = 32;
 const OAUTH_STATE_PATTERN = /^([0-9a-f]{64})\.([0-9]{1,15})$/;
 
 /** Providers whose linking flow uses a server-issued nonce. */
-export type OAuthStateProviderType = 'withings' | 'polar';
+export type OAuthStateProviderType = 'withings' | 'polar' | 'coros_mcp';
 
 /**
  * The slice of a `pg` client this module needs. Structural on purpose: it keeps

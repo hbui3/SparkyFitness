@@ -527,7 +527,7 @@ router.get('/search', authenticate, async (req, res, next) => {
  *                         nullable: true
  *                       modality:
  *                         type: string
- *                         enum: [weight_reps, reps_only, duration, duration_distance]
+ *                         enum: [weight_reps, reps_only, bodyweight_reps, weight_duration, weight_distance, duration, duration_distance]
  *                         description: Derived from the provider category so import previews can pick a set editor.
  *                       calories_per_hour:
  *                         type: number
@@ -836,6 +836,19 @@ router.get('/names', authenticate, async (req, res, next) => {
  *       500:
  *         description: Server error.
  */
+/**
+ * Image values a client may carry over when creating an exercise (e.g. when
+ * duplicating one): an http(s) URL, or a library-relative "Folder/file.ext"
+ * path under uploads/exercises. Rejects traversal and absolute paths.
+ */
+function isSafeExerciseImageReference(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 500)
+    return false;
+  if (/^https?:\/\//i.test(value)) return true;
+  if (value.startsWith('/') || value.includes('\\')) return false;
+  return value.split('/').every((part) => part !== '' && part !== '..');
+}
+
 router.post('/add-external', authenticate, async (req, res, next) => {
   const { wgerExerciseId, language } = req.body;
   if (!wgerExerciseId) {
@@ -989,7 +1002,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
  *             properties:
  *               exerciseData:
  *                 type: string
- *                 description: JSON string of exercise data (name, category, modality, equipment, muscle_groups, description, instructions, is_public). modality is one of weight_reps, reps_only, duration, duration_distance; omitted or unrecognized values are derived from the category.
+ *                 description: JSON string of exercise data (name, category, modality, equipment, muscle_groups, description, instructions, is_public). modality is one of weight_reps, reps_only, bodyweight_reps, weight_duration, weight_distance, duration, duration_distance; omitted or unrecognized values are derived from the category.
  *                 example: '{"name": "Push-up", "category": "Strength", "modality": "reps_only", "equipment": ["None"], "muscle_groups": ["Chest", "Triceps"], "description": "A classic bodyweight exercise.", "instructions": ["Start in a plank position.", "Lower your body until your chest nearly touches the floor.", "Push back up to the starting position."], "is_public": true}'
  *               images:
  *                 type: array
@@ -1033,11 +1046,18 @@ router.post(
           )
         : [];
 
+      // A duplicated exercise carries the original's image references; keep
+      // them alongside any new uploads, as PUT does. Only library-relative
+      // paths or http(s) URLs are accepted, never traversal or absolute paths.
+      const carriedImages = (exerciseData.images ?? []).filter(
+        isSafeExerciseImageReference
+      );
+
       const newExercise = await exerciseService.createExercise(req.userId, {
         ...exerciseData,
 
         user_id: req.userId,
-        images: imagePaths,
+        images: [...carriedImages, ...imagePaths],
       });
       res.status(201).json(newExercise);
     } catch (error) {
@@ -1201,7 +1221,7 @@ router.post('/import-json', authenticate, async (req, res, next) => {
  *             properties:
  *               exerciseData:
  *                 type: string
- *                 description: JSON string of exercise data to update (name, category, modality, equipment, muscle_groups, description, instructions, is_public, images - existing image URLs). modality is one of weight_reps, reps_only, duration, duration_distance; omitted or unrecognized values leave the stored modality untouched, and changing the category alone never re-derives it.
+ *                 description: JSON string of exercise data to update (name, category, modality, equipment, muscle_groups, description, instructions, is_public, images - existing image URLs). modality is one of weight_reps, reps_only, bodyweight_reps, weight_duration, weight_distance, duration, duration_distance; omitted or unrecognized values leave the stored modality untouched, and changing the category alone never re-derives it.
  *                 example: '{"name": "Updated Push-up", "category": "Strength", "modality": "reps_only", "equipment": ["None"], "muscle_groups": ["Chest", "Triceps"], "description": "An updated classic bodyweight exercise.", "instructions": ["Start in a plank position.", "Lower your body until your chest nearly touches the floor.", "Push back up to the starting position."], "is_public": true, "images": ["http://example.com/old_image.jpg"]}'
  *               images:
  *                 type: array

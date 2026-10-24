@@ -249,6 +249,35 @@ Commit: "Add foodEntry.newField: shared schema + server route + frontend + mobil
 
 ---
 
+## TypeScript Typing & Legacy `any`
+
+### ❌ WRONG: Leaving or propagating legacy `any` declarations in modified files
+
+```typescript
+// When editing a service or repository method:
+export async function getFoodUsage(foodId: string, userId: string): Promise<any> {
+  const result: any = await client.query(...);
+  return result.rows.map((row: any) => ({ ... }));
+}
+```
+
+**Result:** Type safety degrades, IDE autocompletion fails, runtime shape mismatches slip through CI unspotted.
+
+### ✅ RIGHT: Replace legacy `any` with explicit types or schemas from shared
+
+```typescript
+import { FoodUsageSummary } from '@workspace/shared';
+
+export async function getFoodUsage(foodId: string, userId: string): Promise<FoodUsageSummary[]> {
+  const result = await client.query<FoodUsageRow>(...);
+  return result.rows.map(mapToFoodUsageSummary);
+}
+```
+
+**Pattern:** When modifying an existing file, proactively replace legacy `any` types and `// eslint-disable-next-line @typescript-eslint/no-explicit-any` in the touched code with proper TypeScript interfaces, types, or shared Zod schemas.
+
+---
+
 ## What To Do Instead
 
 - **Need to customize behavior per package?** Put the logic in the service layer, not the schema.

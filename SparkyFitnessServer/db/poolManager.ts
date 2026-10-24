@@ -18,6 +18,20 @@ types.setTypeParser(types.builtins.DATE, (value) => value);
 let ownerPoolInstance: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let appPoolInstance: any = null;
+/**
+ * pg-pool listens for 'error' only on idle clients and stops on checkout, so a
+ * checked-out client whose connection drops (database restart, failover)
+ * emits 'error' with no listener: an uncaught exception that ends the process.
+ * The caller still sees the failure on its query and the client is discarded
+ * on release; this only keeps the process alive.
+ */
+function handleConnectionLoss(pool: pg.Pool, name: string): void {
+  pool.on('connect', (client) => {
+    client.on('error', (err) => {
+      log('debug', `Lost a ${name} database connection`, err);
+    });
+  });
+}
 function createOwnerPoolInstance() {
   const newPool = new Pool({
     user: process.env.SPARKY_FITNESS_DB_USER,
@@ -33,6 +47,7 @@ function createOwnerPoolInstance() {
   newPool.on('error', (err) => {
     log('error', 'Unexpected error on idle owner client', err);
   });
+  handleConnectionLoss(newPool, 'owner');
   return newPool;
 }
 function createAppPoolInstance() {
@@ -42,7 +57,7 @@ function createAppPoolInstance() {
     database: process.env.SPARKY_FITNESS_DB_NAME,
     password: process.env.SPARKY_FITNESS_APP_DB_PASSWORD,
     // @ts-expect-error TS(2322): Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-    port: process.env.SPARKY_FITNESS_DB_PORT,
+    port: process.env.SPARKY_FITNESS_DB_PORT || 5432,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
@@ -50,6 +65,7 @@ function createAppPoolInstance() {
   newPool.on('error', (err) => {
     log('error', 'Unexpected error on idle app client', err);
   });
+  handleConnectionLoss(newPool, 'app');
   return newPool;
 }
 function _getRawOwnerPool() {
@@ -139,6 +155,7 @@ export { getClient };
 export { getSystemClient };
 export { getPoolStats };
 export { _getRawOwnerPool as getRawOwnerPool };
+export { handleConnectionLoss };
 export default {
   endPool,
   resetPool,

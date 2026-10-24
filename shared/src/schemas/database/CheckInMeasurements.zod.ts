@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const measurementSourceProvenanceEntrySchema = z.object({
   source: z.string(),
@@ -7,7 +7,7 @@ export const measurementSourceProvenanceEntrySchema = z.object({
 
 export const measurementSourceProvenanceSchema = z.record(
   z.string(),
-  measurementSourceProvenanceEntrySchema,
+  measurementSourceProvenanceEntrySchema
 );
 
 export type MeasurementSourceProvenanceEntry = z.infer<

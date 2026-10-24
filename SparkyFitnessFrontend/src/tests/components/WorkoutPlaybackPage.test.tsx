@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import '@testing-library/jest-dom';
 import WorkoutPlaybackPage from '@/pages/Diary/WorkoutPlaybackPage';
 import type { WorkoutPreset } from '@/types/workout';
@@ -16,9 +22,8 @@ jest.mock('react-i18next', () => ({
       defaultValue?: string,
       values?: Record<string, string | number>
     ) =>
-      (defaultValue || key).replace(
-        '{{setNumber}}',
-        String(values?.['setNumber'] ?? '{{setNumber}}')
+      (defaultValue || key).replace(/\{\{(\w+)\}\}/g, (match, name) =>
+        String(values?.[name] ?? match)
       ),
   }),
 }));
@@ -30,7 +35,11 @@ jest.mock('react-router-dom', () => ({
 }));
 
 jest.mock('@/contexts/PreferencesContext', () => ({
-  usePreferences: () => ({ weightUnit: 'kg', timezone: 'UTC' }),
+  usePreferences: () => ({
+    weightUnit: 'kg',
+    timezone: 'UTC',
+    timeFormat: 'HH:mm',
+  }),
 }));
 
 jest.mock('@/hooks/Exercises/useExerciseEntries', () => ({
@@ -38,6 +47,7 @@ jest.mock('@/hooks/Exercises/useExerciseEntries', () => ({
     mutateAsync: (...args: unknown[]) => mockCreatePresetSession(...args),
     isPending: false,
   }),
+  useWorkoutLocations: () => ({ data: ['Home Gym', 'Downtown'] }),
 }));
 
 const presetFixture: WorkoutPreset = {
@@ -305,13 +315,16 @@ describe('WorkoutPlaybackPage', () => {
 
     render(<WorkoutPlaybackPage />);
 
-    const startTimeInput = screen.getByLabelText(
-      'Start Time'
-    ) as HTMLInputElement;
-    expect(startTimeInput.value).toBe('14:30');
+    const startTimeSegments = () =>
+      within(screen.getByRole('group', { name: 'Start Time' })).getAllByRole(
+        'spinbutton'
+      );
+    expect(startTimeSegments().map((s) => s.textContent)).toEqual(['14', '30']);
 
     fireEvent.click(screen.getByText('Clear'));
-    expect(startTimeInput.value).toBe('');
+    for (const segment of startTimeSegments()) {
+      expect(segment).toHaveAttribute('data-placeholder');
+    }
   });
 
   it('allows extending a finished exercise after expanding it', () => {

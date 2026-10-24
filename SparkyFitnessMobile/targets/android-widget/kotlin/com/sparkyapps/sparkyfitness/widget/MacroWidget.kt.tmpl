@@ -42,8 +42,6 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import {{APPLICATION_ID}}.R
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import kotlin.math.roundToLong
 import org.json.JSONObject
 
@@ -66,21 +64,22 @@ class MacroWidget : GlanceAppWidget() {
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val fallbackSnapshot = loadSnapshot(context)
         provideContent {
             GlanceTheme {
-                WidgetContent(context = context, fallbackSnapshot = fallbackSnapshot)
+                WidgetContent(context = context)
             }
         }
     }
 
     @Composable
-    private fun WidgetContent(context: Context, fallbackSnapshot: MacroSnapshot?) {
+    private fun WidgetContent(context: Context) {
         val state = currentState<Preferences>()
         // Observe the dedicated revision so an active Glance session recomposes
         // after a language-only invalidation.
         currentState(WidgetLocale.LOCALE_RENDER_REVISION_STATE_KEY)
-        val snapshot = parseSnapshot(state[SNAPSHOT_STATE_KEY]) ?: fallbackSnapshot
+        // The stored copy is read here rather than once per session, so a
+        // snapshot cleared on an account change does not come back from it.
+        val snapshot = parseSnapshot(state[SNAPSHOT_STATE_KEY]) ?: loadSnapshot(context)
 
         // Widget-only locale override: localized string and number resolution
         // stay local to widget rendering (see WidgetLocale).
@@ -300,7 +299,7 @@ class MacroWidget : GlanceAppWidget() {
         return try {
             val obj = JSONObject(json)
             val date = obj.optString("date", "")
-            if (!isToday(date)) return null
+            if (!isSnapshotToday(date)) return null
             MacroSnapshot(
                 date = date,
                 protein = obj.safeDouble("protein"),
@@ -372,16 +371,6 @@ class MacroWidget : GlanceAppWidget() {
         if (!has(name) || isNull(name)) return null
         val value = optDouble(name, Double.NaN)
         return if (value.isFinite()) value else null
-    }
-
-    private fun isToday(date: String): Boolean {
-        if (date.isBlank()) return false
-        return try {
-            val parsed = LocalDate.parse(date, DateTimeFormatter.ISO_LOCAL_DATE)
-            parsed == LocalDate.now()
-        } catch (e: Exception) {
-            false
-        }
     }
 
     private fun formatInt(context: Context, value: Double): String {

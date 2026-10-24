@@ -7,8 +7,6 @@ import React, {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BackHandler,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -17,12 +15,23 @@ import {
 } from 'react-native';
 import { BottomSheetModal, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useCSSVariable } from 'uniwind';
-import Icon from './Icon';
-import { sheetContainer, useSheetBackdrop } from './ui/sheetChrome';
+import Icon, { type IconName } from './Icon';
+import {
+  sheetContainer,
+  useSheetBackdrop,
+  useSheetHardwareBack,
+} from './ui/sheetChrome';
 
 export interface ActionSheetItem {
   key: string;
   label: string;
+  icon?: IconName;
+  /**
+   * Secondary line under the label, for actions whose difference cannot be
+   * carried by a short label alone. Optional: an item without one renders
+   * exactly as before.
+   */
+  description?: string;
   /**
    * Consecutive items sharing a group render as one block, separated from
    * adjacent blocks by a spacer band. Ungrouped items chunk together.
@@ -46,6 +55,7 @@ export interface ActionSheetRef {
 interface ActionSheetProps {
   title: string;
   items: ActionSheetItem[];
+  layout?: 'list' | 'grid';
   /** Renders a back chevron left of the title (content-swap flows). */
   onBack?: () => void;
   onDismiss?: () => void;
@@ -62,7 +72,7 @@ interface ActionSheetProps {
  * overwritten the old.
  */
 const ActionSheet = React.forwardRef<ActionSheetRef, ActionSheetProps>(
-  ({ title, items, onBack, onDismiss }, ref) => {
+  ({ title, items, layout = 'list', onBack, onDismiss }, ref) => {
     const { t } = useTranslation();
     const modalRef = useRef<BottomSheetModal>(null);
     const isDismissingRef = useRef(false);
@@ -132,19 +142,20 @@ const ActionSheet = React.forwardRef<ActionSheetRef, ActionSheetProps>(
       };
     }, [clearScheduledPresent]);
 
-    useEffect(() => {
-      if (!isOpen || Platform.OS !== 'android') return;
-      // Registered while open (after any screen handlers), so the sheet wins
-      // Back and the press can't fall through and pop the screen.
-      const subscription = BackHandler.addEventListener(
-        'hardwareBackPress',
-        () => {
-          dismissSheet();
-          return true;
-        }
-      );
-      return () => subscription.remove();
-    }, [isOpen, dismissSheet]);
+    useSheetHardwareBack(isOpen, dismissSheet);
+
+    // The sheet is opening or open. Called from onAnimate and from onChange:
+    // when the open finishes before onAnimate reaches JS (Android's "Remove
+    // animations", or a busy JS thread), the library drops onAnimate, and
+    // onChange is the only signal that arrives.
+    const markOpen = useCallback(() => {
+      isDismissingRef.current = false;
+      isOpenRef.current = true;
+      isPresentingRef.current = false;
+      pendingPresentRef.current = false;
+      clearScheduledPresent();
+      setIsOpen(true);
+    }, [clearScheduledPresent]);
 
     const handleAnimate = useCallback(
       (fromIndex: number, toIndex: number) => {
@@ -156,15 +167,19 @@ const ActionSheet = React.forwardRef<ActionSheetRef, ActionSheetProps>(
         }
 
         if (toIndex >= 0) {
-          isDismissingRef.current = false;
-          isOpenRef.current = true;
-          isPresentingRef.current = false;
-          pendingPresentRef.current = false;
-          clearScheduledPresent();
-          setIsOpen(true);
+          markOpen();
         }
       },
-      [clearScheduledPresent]
+      [markOpen]
+    );
+
+    const handleChange = useCallback(
+      (index: number) => {
+        if (index >= 0) {
+          markOpen();
+        }
+      },
+      [markOpen]
     );
 
     const handleDismiss = useCallback(() => {
@@ -210,19 +225,48 @@ const ActionSheet = React.forwardRef<ActionSheetRef, ActionSheetProps>(
         maxDynamicContentSize={windowHeight * 0.8}
         backdropComponent={renderBackdrop}
         containerComponent={sheetContainer}
-        backgroundStyle={{ backgroundColor: surfaceBg }}
+        backgroundStyle={{
+          backgroundColor: surfaceBg,
+          ...(layout === 'grid'
+            ? { borderTopLeftRadius: 28, borderTopRightRadius: 28 }
+            : {}),
+        }}
         handleIndicatorStyle={{ backgroundColor: textMuted }}
         onAnimate={handleAnimate}
+        onChange={handleChange}
         onDismiss={handleDismiss}
       >
         <BottomSheetScrollView contentContainerClassName="pb-safe-or-5">
-          <View className="px-4 py-4 border-b border-border-subtle">
+          <View
+            className={
+              layout === 'grid'
+                ? 'px-5 pt-2 pb-4'
+                : 'px-4 py-4 border-b border-border-subtle'
+            }
+          >
             <Text
               numberOfLines={1}
-              className="text-lg font-semibold text-center text-text-primary px-8"
+              accessibilityRole="header"
+              className={
+                layout === 'grid'
+                  ? 'text-xl font-semibold text-text-primary pr-12'
+                  : 'text-lg font-semibold text-center text-text-primary px-8'
+              }
             >
               {title}
             </Text>
+            {layout === 'grid' && (
+              <Pressable
+                onPress={dismissSheet}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.close', {
+                  defaultValue: 'Close',
+                })}
+                className="absolute right-4 top-0 w-11 h-11 items-center justify-center rounded-full bg-raised"
+              >
+                <Icon name="close" size={20} color={textMuted} />
+              </Pressable>
+            )}
             {onBack && (
               <Pressable
                 onPress={onBack}
@@ -243,27 +287,64 @@ const ActionSheet = React.forwardRef<ActionSheetRef, ActionSheetProps>(
                   className="h-3 bg-background"
                 />
               )}
-              {section.map((item) => (
-                <Pressable
-                  key={item.key}
-                  testID={`action-sheet-item-${item.key}`}
-                  onPress={() => handleItemPress(item)}
-                  className="flex-row items-center px-4 py-3.5 border-b border-border-subtle"
-                  style={{ borderBottomWidth: StyleSheet.hairlineWidth }}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.label}
-                >
-                  <Text
-                    className={`text-base font-medium ${
-                      item.destructive
-                        ? 'text-text-danger-subtle'
-                        : 'text-text-primary'
-                    }`}
+              <View
+                className={
+                  layout === 'grid'
+                    ? 'flex-row flex-wrap gap-3 px-4 pt-2 pb-4'
+                    : undefined
+                }
+              >
+                {section.map((item) => (
+                  <Pressable
+                    key={item.key}
+                    testID={`action-sheet-item-${item.key}`}
+                    onPress={() => handleItemPress(item)}
+                    className={
+                      layout === 'grid'
+                        ? 'flex-1 items-center rounded-2xl bg-raised p-5'
+                        : 'px-4 py-3.5 border-b border-border-subtle'
+                    }
+                    style={({ pressed }) => ({
+                      ...(layout === 'grid'
+                        ? { flexBasis: '40%' }
+                        : { borderBottomWidth: StyleSheet.hairlineWidth }),
+                      opacity: pressed ? 0.65 : 1,
+                    })}
+                    accessibilityRole="button"
+                    // Screen readers announce the description with the label, so
+                    // the distinction is not sighted-only.
+                    accessibilityLabel={
+                      item.description
+                        ? `${item.label}. ${item.description}`
+                        : item.label
+                    }
                   >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              ))}
+                    {item.icon && (
+                      <View className="mb-3" accessible={false}>
+                        <Icon
+                          name={item.icon}
+                          size={layout === 'grid' ? 44 : 28}
+                          color={accentPrimary}
+                        />
+                      </View>
+                    )}
+                    <Text
+                      className={`${layout === 'grid' ? 'text-sm text-center' : 'text-base'} font-medium ${
+                        item.destructive
+                          ? 'text-text-danger-subtle'
+                          : 'text-text-primary'
+                      }`}
+                    >
+                      {item.label}
+                    </Text>
+                    {item.description ? (
+                      <Text className="text-sm text-text-muted mt-0.5">
+                        {item.description}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
             </React.Fragment>
           ))}
         </BottomSheetScrollView>

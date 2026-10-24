@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const adaptiveTrainingSettingsSchema = z.object({
   user_id: z.string().uuid(),

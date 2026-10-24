@@ -1,10 +1,12 @@
 name: Build Android APK
 
+# Runs on publish rather than on the v* tag push. release-please.yml creates the
+# tag together with the draft, before anyone has approved the release, and a tag
+# pushed with GITHUB_TOKEN would not trigger this workflow at all. On a release
+# event github.ref is still refs/tags/<tag>, so the steps below are unchanged.
 on:
-  push:
-    #    branches: [ main ]
-    tags:
-      - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=\"-Xmx6144m -XX:MaxMetaspaceSize=1024m\" -Dorg.gradle.caching=true"
 
     steps:
       - name: Checkout repository
@@ -34,10 +38,15 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
+        env:
+          GOOGLE_MAPS_ANDROID_API_KEY: ${{ secrets.GOOGLE_MAPS_ANDROID_API_KEY }}
         run: |
           pnpm install --frozen-lockfile
           cd SparkyFitnessMobile
           APP_VARIANT=production npx expo prebuild --platform android
+          sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m/' android/gradle.properties
+          sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64/' android/gradle.properties
+          printf '\norg.gradle.caching=true\n' >> android/gradle.properties
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -63,10 +72,10 @@ jobs:
           echo "Keystore created at: $(pwd)/SparkyFitnessMobile/android/app/sparky-fitness-release-key.keystore"
           ls -la SparkyFitnessMobile/android/app/sparky-fitness-release-key.keystore
 
-      - name: Run Gradle to generate codegen (will fail but generates files)
+      - name: Generate async-storage codegen
         run: |
           cd SparkyFitnessMobile/android
-          ./gradlew :app:assembleDebug || true
+          ./gradlew :react-native-async-storage_async-storage:generateCodegenArtifactsFromSchema
 
       - name: Verify codegen was generated
         run: |
@@ -123,9 +132,10 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.version.outputs.version) }}
           files: |
             ${{ steps.apk.outputs.path }}
             ${{ steps.aab.outputs.path }}

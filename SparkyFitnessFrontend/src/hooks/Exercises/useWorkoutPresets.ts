@@ -2,6 +2,7 @@ import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
   getWorkoutPresets,
+  getWorkoutPresetById,
   createWorkoutPreset,
   updateWorkoutPreset,
   deleteWorkoutPreset,
@@ -9,6 +10,11 @@ import {
 } from '@/api/Exercises/workoutPresets';
 import type { WorkoutPreset } from '@/types/workout';
 import { presetKeys } from '@/api/keys/exercises';
+
+export const workoutPresetByIdOptions = (id: string | number) => ({
+  queryKey: presetKeys.detail(String(id)),
+  queryFn: () => getWorkoutPresetById(id),
+});
 
 // --- Queries ---
 

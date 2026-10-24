@@ -10,15 +10,13 @@ import {
   thresholdCrossingTime,
 } from '@workspace/shared';
 import type { CaffeineActiveResponse } from '@workspace/shared';
-import { makeChartFont, CHART_LABEL_FONT_SIZE } from './charts/chartFormatting';
+import { useChartFont, CHART_LABEL_FONT_SIZE } from './charts/chartFormatting';
 import LineSeriesMark from './charts/LineSeriesMark';
 import { usePreferences } from '../hooks/usePreferences';
 import {
   formatDateToTimeLabel,
   formatTimeLabel,
 } from '../utils/entryTimeDisplay';
-
-const font = makeChartFont(CHART_LABEL_FONT_SIZE);
 
 type CaffeineCardProps = {
   kinetics: CaffeineActiveResponse | undefined;
@@ -38,6 +36,7 @@ const CaffeineCard: React.FC<CaffeineCardProps> = ({
   isLoading,
 }) => {
   const { t } = useTranslation();
+  const font = useChartFont(CHART_LABEL_FONT_SIZE);
   const { preferences } = usePreferences();
   const [accentColor, dangerColor, textMuted] = useCSSVariable([
     '--color-accent-primary',
@@ -52,29 +51,65 @@ const CaffeineCard: React.FC<CaffeineCardProps> = ({
 
   const bedtimeMs = kinetics ? new Date(kinetics.bedtime_at).getTime() : 0;
 
+  // The calendar start of the viewed day in local time
+  const dayStartMs = useMemo(() => {
+    if (!kinetics) return 0;
+    const [bedtimeHourStr] = kinetics.target_bedtime.split(':');
+    const bedtimeHour = parseInt(bedtimeHourStr ?? '22', 10);
+    const bedtimeDate = new Date(kinetics.bedtime_at);
+    const viewedYear = bedtimeDate.getFullYear();
+    const viewedMonth = bedtimeDate.getMonth();
+    const viewedDay =
+      bedtimeDate.getDate() - (!isNaN(bedtimeHour) && bedtimeHour < 12 ? 1 : 0);
+    return new Date(viewedYear, viewedMonth, viewedDay, 0, 0, 0, 0).getTime();
+  }, [kinetics]);
+
   // The plotted window belongs to the day on screen, and the wall clock must
   // never widen it: the card renders for whatever date the dashboard shows, so
   // on a past day `nowMs` sits outside the window and stretching the range to
   // reach it walked the whole span at 15-minute steps with no cap.
   const windowMs = useMemo(() => {
     if (!kinetics || kinetics.doses.length === 0) return null;
-    const firstDoseMs = kinetics.doses.reduce(
-      (earliest, dose) => Math.min(earliest, new Date(dose.at).getTime()),
-      Number.POSITIVE_INFINITY
-    );
-    const end = bedtimeMs + 2 * 60 * 60 * 1000;
-    // `bedtime_at` sits on the date being viewed, so the 24 hours before it are
-    // that day. Only a clock inside them belongs on this chart; anything else
-    // is a different day and must not drag the window across to meet it.
-    const nowBelongsToDay =
-      nowMs >= bedtimeMs - 24 * 60 * 60 * 1000 && nowMs <= end;
-    const doseStart = firstDoseMs - 60 * 60 * 1000;
+    const rawEnd = bedtimeMs + 2 * 60 * 60 * 1000;
+    const nowBelongsToDay = nowMs >= dayStartMs && nowMs <= rawEnd;
+
+    const dayDoses = kinetics.doses.filter((dose) => {
+      const ms = new Date(dose.at).getTime();
+      return ms >= dayStartMs && ms <= rawEnd;
+    });
+
+    const firstDoseMs =
+      dayDoses.length > 0
+        ? dayDoses.reduce(
+            (earliest, dose) => Math.min(earliest, new Date(dose.at).getTime()),
+            Number.POSITIVE_INFINITY
+          )
+        : dayStartMs + 8 * 60 * 60 * 1000;
+    const doseStart =
+      dayDoses.length > 0 ? firstDoseMs - 60 * 60 * 1000 : firstDoseMs;
+    const rawStart = nowBelongsToDay ? Math.min(doseStart, nowMs) : doseStart;
+
+    // Align start to the top of the hour without local-time mutation
+    const startDate = new Date(rawStart);
+    const startRemainderMs =
+      (startDate.getMinutes() * 60 + startDate.getSeconds()) * 1000 +
+      startDate.getMilliseconds();
+    const start = rawStart - startRemainderMs;
+
+    // Align end to the top of the next hour without local-time mutation
+    const endDate = new Date(rawEnd);
+    const endRemainderMs =
+      (endDate.getMinutes() * 60 + endDate.getSeconds()) * 1000 +
+      endDate.getMilliseconds();
+    const end =
+      endRemainderMs === 0 ? rawEnd : rawEnd + (3600 * 1000 - endRemainderMs);
+
     return {
-      start: nowBelongsToDay ? Math.min(doseStart, nowMs) : doseStart,
+      start,
       end,
       nowBelongsToDay,
     };
-  }, [kinetics, bedtimeMs, nowMs]);
+  }, [kinetics, bedtimeMs, nowMs, dayStartMs]);
 
   // "Now" on the day being viewed, otherwise that day's edge, so the active
   // figure describes the day on screen rather than this instant.
@@ -244,12 +279,18 @@ const CaffeineCard: React.FC<CaffeineCardProps> = ({
       </View>
 
       <Text className="text-text-muted text-xs text-center mt-1">
-        {crossingAt
+        {crossingAt && new Date(crossingAt).getTime() >= dayStartMs
           ? t('caffeine.crossingNote', {
               defaultValue: 'Back under {{threshold}}mg from {{time}}',
             })
               .replace('{{threshold}}', String(kinetics.threshold_mg))
-              .replace('{{time}}', clockLabel(crossingAt))
+              .replace(
+                '{{time}}',
+                new Date(crossingAt).getTime() >=
+                  dayStartMs + 24 * 60 * 60 * 1000
+                  ? `${t('caffeine.tomorrow', { defaultValue: 'Tomorrow' })}, ${clockLabel(crossingAt)}`
+                  : clockLabel(crossingAt)
+              )
           : t('caffeine.underThreshold', {
               defaultValue: 'Stays under {{threshold}}mg tonight',
             }).replace('{{threshold}}', String(kinetics.threshold_mg))}

@@ -449,6 +449,10 @@ export function moveDraftExerciseItem(
  * Superset rail colours come from the theme's category palette (the
  * providerColor.ts pattern): fixed var-name order here, resolved through
  * useCSSVariable by consumers so they track the active theme.
+ *
+ * The watch cannot read CSS variables. `SupersetPalette` in
+ * `targets/watch/Presentation/WorkoutView.swift` copies this order and the
+ * dark `--color-cat-*` values from `global.css`. Change both together.
  */
 export const SUPERSET_PALETTE_VARS = [
   '--color-cat-blue',

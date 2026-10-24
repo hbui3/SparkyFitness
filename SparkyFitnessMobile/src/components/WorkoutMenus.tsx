@@ -3,6 +3,10 @@ import AnchoredMenu, {
   type AnchoredMenuItem,
 } from './AnchoredMenu';
 import { useTranslation } from 'react-i18next';
+import {
+  DEFAULT_DROP_SET_COUNT,
+  DEFAULT_DROP_SET_PERCENT,
+} from '@workspace/shared';
 import { SET_TYPE_OPTIONS } from '../utils/workoutSession';
 import { useAppPreferencesStore } from '../stores/appPreferencesStore';
 import type { ActiveWorkoutMetricColumn } from '../stores/appPreferencesStore';
@@ -10,6 +14,7 @@ import type { ActiveWorkoutMetricColumn } from '../stores/appPreferencesStore';
 /** Options and labels for the metric-column picker menu the header opens. */
 const METRIC_OPTIONS: ActiveWorkoutMetricColumn[] = [
   'rpe',
+  'rir',
   'volume',
   'e1rm',
   'tenrm',
@@ -50,17 +55,21 @@ export function MetricColumnMenu({
     (s) => s.setActiveWorkoutMetricColumn
   );
   const options = METRIC_OPTIONS.filter(
-    (o) => (includeRpe || o !== 'rpe') && (includeWeightMetrics || o === 'rpe')
+    (o) =>
+      (includeRpe || (o !== 'rpe' && o !== 'rir')) &&
+      (includeWeightMetrics || o === 'rpe' || o === 'rir')
   );
   const effectiveColumn = !includeWeightMetrics
     ? 'rpe'
-    : !includeRpe && metricColumn === 'rpe'
+    : !includeRpe && (metricColumn === 'rpe' || metricColumn === 'rir')
       ? 'volume'
       : metricColumn;
   const metricLabel = (option: ActiveWorkoutMetricColumn): string => {
     switch (option) {
       case 'rpe':
         return t('workout.metricRpe', { defaultValue: 'RPE' });
+      case 'rir':
+        return t('workout.metricRir', { defaultValue: 'RIR' });
       case 'volume':
         return t('workout.metricVolume', { defaultValue: 'Volume' });
       case 'e1rm':
@@ -100,6 +109,7 @@ export function SetTypeMenu({
   onClose,
   onSelect,
   onDelete,
+  onGenerateDropSets,
 }: {
   anchor: AnchorRect | null;
   /** The target set's current type; null/undefined reads as 'normal'. */
@@ -107,12 +117,13 @@ export function SetTypeMenu({
   onClose: () => void;
   onSelect: (type: (typeof SET_TYPE_OPTIONS)[number]) => void;
   onDelete?: () => void;
+  onGenerateDropSets?: () => void;
 }) {
   const { t } = useTranslation();
   const typeLabels: Record<string, string> = {
     normal: t('workout.setTypeNormal', { defaultValue: 'Normal' }),
     warmup: t('workout.setTypeWarmup', { defaultValue: 'Warm-up' }),
-    dropset: t('workout.setTypeDropSet', { defaultValue: 'Drop set' }),
+    drop: t('workout.setTypeDropSet', { defaultValue: 'Drop set' }),
     failure: t('workout.setTypeFailure', { defaultValue: 'Failure' }),
   };
   const current = currentType ?? 'normal';
@@ -122,6 +133,18 @@ export function SetTypeMenu({
     label: `${type === current ? '✓ ' : ''}${typeLabels[type] ?? type}`,
     onPress: () => onSelect(type),
   }));
+  if (onGenerateDropSets) {
+    items.push({
+      key: 'generate-dropsets',
+      label: t('workout.addDropSets', {
+        sets: DEFAULT_DROP_SET_COUNT,
+        percent: DEFAULT_DROP_SET_PERCENT,
+        defaultValue: 'Add {{sets}} drop sets (-{{percent}}%)',
+      }),
+      icon: 'add-circle',
+      onPress: onGenerateDropSets,
+    });
+  }
   if (onDelete) {
     items.push({
       key: 'delete',
@@ -135,7 +158,7 @@ export function SetTypeMenu({
       visible={anchor != null}
       anchor={anchor}
       onClose={onClose}
-      minWidth={180}
+      minWidth={200}
       items={items}
     />
   );

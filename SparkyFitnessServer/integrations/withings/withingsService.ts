@@ -5,6 +5,15 @@ import { log } from '../../config/logging.js';
 import withingsDataProcessor from './withingsDataProcessor.js';
 import { logRawResponse } from '../../utils/diagnosticLogger.js';
 import { claimOAuthState, persistOAuthState } from '../../utils/oauthState.js';
+import { describeError } from '../../utils/errors.js';
+import { withProviderTokenLock } from '../../models/externalProviderRepository.js';
+import type {
+  WithingsActivity,
+  WithingsHeartSeries,
+  WithingsMeasureGroup,
+  WithingsSleepSeries,
+  WithingsWorkout,
+} from '../../types/withings.js';
 const WITHINGS_API_BASE_URL = 'https://wbsapi.withings.net';
 const WITHINGS_ACCOUNT_BASE_URL = 'https://account.withings.com';
 interface WithingsTokenBody {
@@ -201,116 +210,119 @@ async function exchangeCodeForTokens(
     }
     return { success: true, userId: userid, ownerUserId };
   } catch (error) {
-    // @ts-expect-error TS(2571): Object is of type 'unknown'.
-    log('error', `Error exchanging Withings code for tokens: ${error.message}`);
+    log(
+      'error',
+      `Error exchanging Withings code for tokens: ${describeError(error)}`
+    );
     throw error;
   } finally {
     client.release();
   }
 }
 // Function to refresh an expired access token
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function refreshAccessToken(userId: any) {
+async function refreshAccessToken(userId: string) {
   const client = await getClient(userId);
   try {
-    const providerResult = await client.query(
-      `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
+    return await withProviderTokenLock(client, async () => {
+      const providerResult = await client.query(
+        `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
                     encrypted_refresh_token, refresh_token_iv, refresh_token_tag
              FROM external_data_providers
-             WHERE user_id = $1 AND provider_type = 'withings'`,
-      [userId]
-    );
-    if (providerResult.rows.length === 0) {
-      throw new Error(
-        'Withings client credentials or refresh token not found for user.'
+             WHERE user_id = $1 AND provider_type = 'withings'
+             FOR UPDATE`,
+        [userId]
       );
-    }
-    const {
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-    } = providerResult.rows[0];
-    const clientId = await decrypt(
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      ENCRYPTION_KEY
-    );
-    const clientSecret = await decrypt(
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      ENCRYPTION_KEY
-    );
-    const refreshToken = await decrypt(
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-      ENCRYPTION_KEY
-    );
-    if (!clientId || !clientSecret || !refreshToken) {
-      throw new Error(
-        'Withings client ID, client secret, or refresh token is missing.'
+      if (providerResult.rows.length === 0) {
+        throw new Error(
+          'Withings client credentials or refresh token not found for user.'
+        );
+      }
+      const {
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+      } = providerResult.rows[0];
+      const clientId = await decrypt(
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        ENCRYPTION_KEY
       );
-    }
-    const response = await requestWithingsToken({
-      grant_type: 'refresh_token',
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-    });
-    const {
-      access_token,
-      refresh_token: newRefreshToken,
-      expires_in,
-      scope,
-    } = parseWithingsTokenResponse(response.data, 'token refresh');
-    // Validate expires_in
-    let validExpiresIn = parseInt(String(expires_in), 10);
-    if (isNaN(validExpiresIn) || validExpiresIn <= 0) {
-      log(
-        'warn',
-        `Invalid or missing expires_in value received from Withings API during refresh: ${expires_in}. Defaulting to 0.`
+      const clientSecret = await decrypt(
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        ENCRYPTION_KEY
       );
-      validExpiresIn = 0; // Force immediate expiration to trigger refresh
-    }
-    // Encrypt new tokens
-    const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
-    const encryptedNewRefreshToken = await encrypt(
-      newRefreshToken,
-      ENCRYPTION_KEY
-    );
-    // Update tokens in external_data_providers table
-    await client.query(
-      `UPDATE external_data_providers
+      const refreshToken = await decrypt(
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+        ENCRYPTION_KEY
+      );
+      if (!clientId || !clientSecret || !refreshToken) {
+        throw new Error(
+          'Withings client ID, client secret, or refresh token is missing.'
+        );
+      }
+      const response = await requestWithingsToken({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+      });
+      const {
+        access_token,
+        refresh_token: newRefreshToken,
+        expires_in,
+        scope,
+      } = parseWithingsTokenResponse(response.data, 'token refresh');
+      // Validate expires_in
+      let validExpiresIn = parseInt(String(expires_in), 10);
+      if (isNaN(validExpiresIn) || validExpiresIn <= 0) {
+        log(
+          'warn',
+          `Invalid or missing expires_in value received from Withings API during refresh: ${expires_in}. Defaulting to 0.`
+        );
+        validExpiresIn = 0; // Force immediate expiration to trigger refresh
+      }
+      // Encrypt new tokens
+      const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
+      const encryptedNewRefreshToken = await encrypt(
+        newRefreshToken,
+        ENCRYPTION_KEY
+      );
+      // Update tokens in external_data_providers table
+      await client.query(
+        `UPDATE external_data_providers
              SET encrypted_access_token = $1, access_token_iv = $2, access_token_tag = $3,
                  encrypted_refresh_token = $4, refresh_token_iv = $5, refresh_token_tag = $6,
                  scope = $7, token_expires_at = $8, updated_at = NOW()
              WHERE user_id = $9 AND provider_type = 'withings'`,
-      [
-        encryptedAccessToken.encryptedText,
-        encryptedAccessToken.iv,
-        encryptedAccessToken.tag,
-        encryptedNewRefreshToken.encryptedText,
-        encryptedNewRefreshToken.iv,
-        encryptedNewRefreshToken.tag,
-        scope,
-        new Date(Date.now() + validExpiresIn * 1000),
-        userId,
-      ]
-    );
-    return access_token;
+        [
+          encryptedAccessToken.encryptedText,
+          encryptedAccessToken.iv,
+          encryptedAccessToken.tag,
+          encryptedNewRefreshToken.encryptedText,
+          encryptedNewRefreshToken.iv,
+          encryptedNewRefreshToken.tag,
+          scope,
+          new Date(Date.now() + validExpiresIn * 1000),
+          userId,
+        ]
+      );
+      return access_token;
+    });
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error refreshing Withings access token for user ${userId}: ${error.message}`
+      `Error refreshing Withings access token for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -318,8 +330,7 @@ async function refreshAccessToken(userId: any) {
   }
 }
 // Helper function to get a valid access token (refreshes if expired)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getValidAccessToken(userId: any) {
+async function getValidAccessToken(userId: string) {
   const client = await getClient(userId);
   try {
     const providerResult = await client.query(
@@ -356,8 +367,11 @@ async function getValidAccessToken(userId: any) {
   }
 }
 // Function to fetch measures data (weight, blood pressure, etc.)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchMeasuresData(userId: any, startDate: any, endDate: any) {
+async function fetchMeasuresData(
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<WithingsMeasureGroup[]> {
   const accessToken = await getValidAccessToken(userId);
   const client = await getClient(userId);
   try {
@@ -366,8 +380,7 @@ async function fetchMeasuresData(userId: any, startDate: any, endDate: any) {
       [userId]
     );
     const withingsUserId = providerResult.rows[0].external_user_id;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let allGroups: any = [];
+    let allGroups: WithingsMeasureGroup[] = [];
     let offset = 0;
     let hasMore = true;
     while (hasMore) {
@@ -404,8 +417,7 @@ async function fetchMeasuresData(userId: any, startDate: any, endDate: any) {
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error fetching Withings measures data for user ${userId}: ${error.message}`
+      `Error fetching Withings measures data for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -413,14 +425,10 @@ async function fetchMeasuresData(userId: any, startDate: any, endDate: any) {
   }
 }
 async function fetchAndProcessMeasuresData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createdByUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any
+  userId: string,
+  createdByUserId: string,
+  startDate: number,
+  endDate: number
 ) {
   const measuregrps = await fetchMeasuresData(userId, startDate, endDate);
   if (measuregrps && measuregrps.length > 0) {
@@ -433,8 +441,11 @@ async function fetchAndProcessMeasuresData(
   return measuregrps;
 }
 // Function to fetch heart data
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchHeartData(userId: any, startDate: any, endDate: any) {
+async function fetchHeartData(
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<WithingsHeartSeries[]> {
   const accessToken = await getValidAccessToken(userId);
   const client = await getClient(userId);
   try {
@@ -443,8 +454,7 @@ async function fetchHeartData(userId: any, startDate: any, endDate: any) {
       [userId]
     );
     const withingsUserId = providerResult.rows[0].external_user_id;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let allSeries: any = [];
+    let allSeries: WithingsHeartSeries[] = [];
     let offset = 0;
     let hasMore = true;
     while (hasMore) {
@@ -484,8 +494,7 @@ async function fetchHeartData(userId: any, startDate: any, endDate: any) {
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error fetching Withings heart data for user ${userId}: ${error.message}`
+      `Error fetching Withings heart data for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -493,14 +502,10 @@ async function fetchHeartData(userId: any, startDate: any, endDate: any) {
   }
 }
 async function fetchAndProcessHeartData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createdByUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any
+  userId: string,
+  createdByUserId: string,
+  startDate: number,
+  endDate: number
 ) {
   const heartSeries = await fetchHeartData(userId, startDate, endDate);
   if (heartSeries && heartSeries.length > 0) {
@@ -513,8 +518,11 @@ async function fetchAndProcessHeartData(
   return heartSeries;
 }
 // Function to fetch sleep data (high-frequency stages)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchSleepData(userId: any, startDate: any, endDate: any) {
+async function fetchSleepData(
+  userId: string,
+  startDate: number,
+  endDate: number
+): Promise<WithingsSleepSeries[]> {
   const accessToken = await getValidAccessToken(userId);
   const client = await getClient(userId);
   try {
@@ -523,8 +531,7 @@ async function fetchSleepData(userId: any, startDate: any, endDate: any) {
       [userId]
     );
     const withingsUserId = providerResult.rows[0].external_user_id;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let allSeries: any = [];
+    let allSeries: WithingsSleepSeries[] = [];
     let currentStart = startDate;
     const SECONDS_IN_DAY = 24 * 60 * 60;
     // Withings limit: only 24h of high-frequency data per call
@@ -561,8 +568,7 @@ async function fetchSleepData(userId: any, startDate: any, endDate: any) {
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error fetching Withings sleep data for user ${userId}: ${error.message}`
+      `Error fetching Withings sleep data for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -570,14 +576,10 @@ async function fetchSleepData(userId: any, startDate: any, endDate: any) {
   }
 }
 async function fetchAndProcessSleepData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createdByUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDate: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDate: any
+  userId: string,
+  createdByUserId: string,
+  startDate: number,
+  endDate: number
 ) {
   const sleepSeries = await fetchSleepData(userId, startDate, endDate);
   if (sleepSeries && sleepSeries.length > 0) {
@@ -592,13 +594,10 @@ async function fetchAndProcessSleepData(
 // Function to fetch sleep summary data (action=getsummary)
 
 async function fetchSleepSummaryData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDateYMD: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDateYMD: any
-) {
+  userId: string,
+  startDateYMD: string,
+  endDateYMD: string
+): Promise<WithingsSleepSeries[]> {
   const accessToken = await getValidAccessToken(userId);
   const client = await getClient(userId);
   try {
@@ -607,8 +606,7 @@ async function fetchSleepSummaryData(
       [userId]
     );
     const withingsUserId = providerResult.rows[0].external_user_id;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let allSeries: any = [];
+    let allSeries: WithingsSleepSeries[] = [];
     let offset = 0;
     let hasMore = true;
     while (hasMore) {
@@ -650,8 +648,7 @@ async function fetchSleepSummaryData(
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error fetching Withings sleep summary data for user ${userId}: ${error.message}`
+      `Error fetching Withings sleep summary data for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -661,13 +658,10 @@ async function fetchSleepSummaryData(
 // Function to fetch daily activity data (steps, total calories, etc.)
 
 async function fetchActivityData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDateYMD: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDateYMD: any
-) {
+  userId: string,
+  startDateYMD: string,
+  endDateYMD: string
+): Promise<WithingsActivity[]> {
   const accessToken = await getValidAccessToken(userId);
   const client = await getClient(userId);
   try {
@@ -676,8 +670,7 @@ async function fetchActivityData(
       [userId]
     );
     const withingsUserId = providerResult.rows[0].external_user_id;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let allActivities: any = [];
+    let allActivities: WithingsActivity[] = [];
     let offset = 0;
     let hasMore = true;
     while (hasMore) {
@@ -716,8 +709,7 @@ async function fetchActivityData(
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error fetching Withings activity data for user ${userId}: ${error.message}`
+      `Error fetching Withings activity data for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -727,13 +719,10 @@ async function fetchActivityData(
 // Function to fetch workout data
 
 async function fetchWorkoutsData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDateYMD: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDateYMD: any
-) {
+  userId: string,
+  startDateYMD: string,
+  endDateYMD: string
+): Promise<WithingsWorkout[]> {
   const accessToken = await getValidAccessToken(userId);
   const client = await getClient(userId);
   try {
@@ -742,8 +731,7 @@ async function fetchWorkoutsData(
       [userId]
     );
     const withingsUserId = providerResult.rows[0].external_user_id;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let allSeries: any = [];
+    let allSeries: WithingsWorkout[] = [];
     let offset = 0;
     let hasMore = true;
     while (hasMore) {
@@ -785,8 +773,7 @@ async function fetchWorkoutsData(
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error fetching Withings workout data for user ${userId}: ${error.message}`
+      `Error fetching Withings workout data for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
@@ -794,14 +781,10 @@ async function fetchWorkoutsData(
   }
 }
 async function fetchAndProcessWorkoutsData(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  userId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createdByUserId: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  startDateYMD: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  endDateYMD: any
+  userId: string,
+  createdByUserId: string,
+  startDateYMD: string,
+  endDateYMD: string
 ) {
   const workouts = await fetchWorkoutsData(userId, startDateYMD, endDateYMD);
   if (workouts && workouts.length > 0) {
@@ -814,8 +797,7 @@ async function fetchAndProcessWorkoutsData(
   return workouts;
 }
 // Function to disconnect Withings account
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function disconnectWithings(userId: any) {
+async function disconnectWithings(userId: string) {
   const client = await getClient(userId);
   try {
     const providerResult = await client.query(
@@ -875,16 +857,14 @@ async function disconnectWithings(userId: any) {
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error disconnecting Withings account for user ${userId}: ${error.message}`
+      `Error disconnecting Withings account for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {
     client.release();
   }
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getStatus(userId: any) {
+async function getStatus(userId: string) {
   const client = await getClient(userId);
   try {
     const result = await client.query(
@@ -909,8 +889,7 @@ async function getStatus(userId: any) {
   } catch (error) {
     log(
       'error',
-      // @ts-expect-error TS(2571): Object is of type 'unknown'.
-      `Error getting Withings status for user ${userId}: ${error.message}`
+      `Error getting Withings status for user ${userId}: ${describeError(error)}`
     );
     throw error;
   } finally {

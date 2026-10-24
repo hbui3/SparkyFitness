@@ -1,4 +1,7 @@
-import { fetchDailyGoals } from '../../src/services/api/goalsApi';
+import {
+  fetchDailyGoals,
+  fetchGoalsRange,
+} from '../../src/services/api/goalsApi';
 import {
   getActiveServerConfig,
   ServerConfig,
@@ -128,6 +131,63 @@ describe('goalsApi', () => {
       await expect(fetchDailyGoals(testDate)).rejects.toThrow(
         'Network request failed'
       );
+    });
+  });
+
+  describe('fetchGoalsRange', () => {
+    const testConfig: ServerConfig = {
+      id: 'test-id',
+      url: 'https://example.com',
+      apiKey: 'test-api-key-12345',
+    };
+
+    const startDate = '2026-09-01';
+    const endDate = '2026-09-07';
+
+    test('sends GET request with date, end_date and adjust=true params', async () => {
+      mockGetActiveServerConfig.mockResolvedValue(testConfig);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+      await fetchGoalsRange(startDate, endDate, true);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://example.com/api/goals/for-date?date=2026-09-01&end_date=2026-09-07&adjust=true',
+        expect.anything()
+      );
+    });
+
+    test('sends adjust=false when the caller asks for the raw goal', async () => {
+      mockGetActiveServerConfig.mockResolvedValue(testConfig);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+      await fetchGoalsRange(startDate, endDate, false);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://example.com/api/goals/for-date?date=2026-09-01&end_date=2026-09-07&adjust=false',
+        expect.anything()
+      );
+    });
+
+    test('returns the parsed per-day goals map on success', async () => {
+      const responseData = {
+        '2026-09-01': { calories: 1800, water_goal_ml: 2000 },
+        '2026-09-07': { calories: 2000, water_goal_ml: 2500 },
+      };
+      mockGetActiveServerConfig.mockResolvedValue(testConfig);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(responseData),
+      });
+
+      const result = await fetchGoalsRange(startDate, endDate, true);
+
+      expect(result).toEqual(responseData);
     });
   });
 });

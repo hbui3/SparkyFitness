@@ -1068,6 +1068,14 @@ const SEED_CONFIGS: SeedConfig[] = [
     range: [2, 4],
   },
   {
+    recordType: 'BodyWaterMass',
+    seedType: 'instant',
+    valueKey: 'mass',
+    valueType: 'mass',
+    unit: 'kilograms',
+    range: [35, 45],
+  },
+  {
     recordType: 'BodyTemperature',
     seedType: 'instant',
     valueKey: 'temperature',

@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { authClient } from '@/lib/auth-client';
 import { apiKeyKeys } from '@/api/keys/settings';
+import { apiCall } from '@/api/api';
+import type { ApiKeyScope, CreateApiKeyBody } from '@workspace/shared';
 
 interface ApiKeyRecord {
   id: string;
@@ -10,6 +12,16 @@ interface ApiKeyRecord {
   createdAt: string | Date | null;
   updatedAt: string | Date | null;
   expiresAt: string | Date | null;
+  permissions?: Record<string, string[]> | null;
+}
+
+interface CreateApiKeyResponse {
+  apiKey: {
+    id: string;
+    key: string;
+    name: string | null;
+    scope: ApiKeyScope;
+  };
 }
 
 export const useApiKeysQuery = (userId?: string) => {
@@ -37,19 +49,14 @@ export const useCreateApiKeyMutation = () => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async ({
-      name,
-      expiresIn,
-    }: {
-      name: string;
-      expiresIn?: number;
-    }) => {
-      const { data, error } = await authClient.apiKey.create({
-        name,
-        expiresIn,
-      });
-      if (error) throw error;
-      return data;
+    // Created through the server route rather than authClient.apiKey.create:
+    // Better Auth only accepts a key's permissions (its scope) server-side.
+    mutationFn: async (body: CreateApiKeyBody) => {
+      const data = await apiCall<CreateApiKeyResponse>(
+        '/identity/user/generate-api-key',
+        { method: 'POST', body }
+      );
+      return data.apiKey;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: apiKeyKeys.lists() });

@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { getSystemClient, endPool } from '../db/poolManager.js';
+import { initializeDatabase } from '../utils/initializeDatabase.js';
 import exerciseDb from '../models/exercise.js';
 import workoutPresetRepository from '../models/workoutPresetRepository.js';
 
@@ -51,6 +52,8 @@ describe('exercise delete preset and future plan cascade integration test', () =
   beforeAll(async () => {
     canRun = await dbReachable();
     if (!canRun) return;
+
+    await initializeDatabase();
 
     adminClient = await getSystemClient();
     if (!adminClient) {

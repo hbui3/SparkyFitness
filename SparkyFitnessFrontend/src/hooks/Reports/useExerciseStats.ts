@@ -43,6 +43,36 @@ export const useExercisePRs = (
   });
 };
 
+export const useExerciseActivities = (
+  startDate?: string | null,
+  endDate?: string | null,
+  userId?: string,
+  unitSystem: 'metric' | 'imperial' = 'metric',
+  page = 1
+) => {
+  return useQuery({
+    queryKey: [
+      'exerciseActivities',
+      startDate,
+      endDate,
+      userId,
+      unitSystem,
+      page,
+    ],
+    queryFn: () =>
+      queryExerciseActivities({
+        startDate,
+        endDate,
+        userId,
+        unitSystem,
+        page,
+        pageSize: 50,
+        sortBy: 'entry_date',
+        sortOrder: 'desc',
+      }),
+  });
+};
+
 export const useMatchedCourses = (
   userId?: string,
   unitSystem: 'metric' | 'imperial' = 'metric'

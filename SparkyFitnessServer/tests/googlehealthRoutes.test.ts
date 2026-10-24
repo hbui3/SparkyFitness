@@ -49,9 +49,23 @@ vi.mock('../middleware/checkPermissionMiddleware.js', () => ({
 }));
 
 vi.mock('../config/logging.js', () => ({ log: vi.fn() }));
+vi.mock('../models/globalSettingsRepository.js', () => ({
+  // The mock-data options are off unless an admin turned them on; these route
+  // tests exercise the normal path, so the options never reach the service.
+  isMockDataEnabled: vi.fn().mockResolvedValue(false),
+}));
 
 import googleHealthIntegrationService from '../integrations/googlehealth/googleHealthService.js';
 import googleHealthService from '../services/googleHealthService.js';
+
+vi.mock('../services/providerSyncClaim.js', async (importActual) => ({
+  ...(await importActual<typeof import('../services/providerSyncClaim.js')>()),
+  startProviderSync: vi.fn(async (_target, sync) => ({ running: sync() })),
+}));
+import {
+  startProviderSync,
+  SYNC_ALREADY_RUNNING_RESPONSE,
+} from '../services/providerSyncClaim.js';
 
 const app = express();
 app.use(express.json());
@@ -210,6 +224,35 @@ describe('POST /api/integrations/googlehealth/callback', () => {
 });
 
 describe('POST /api/integrations/googlehealth/sync', () => {
+  it('answers 409 without syncing while another sync holds the account', async () => {
+    vi.mocked(startProviderSync).mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post('/api/integrations/googlehealth/sync')
+      .send({});
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual(SYNC_ALREADY_RUNNING_RESPONSE);
+    expect(googleHealthService.syncGoogleHealthData).not.toHaveBeenCalled();
+  });
+
+  it('replies 202 while the claimed sync is still running', async () => {
+    // @ts-expect-error TS(2339)
+    googleHealthService.syncGoogleHealthData.mockReturnValue(
+      new Promise(() => {})
+    );
+
+    const res = await request(app)
+      .post('/api/integrations/googlehealth/sync')
+      .send({});
+
+    expect(res.statusCode).toBe(202);
+    expect(startProviderSync).toHaveBeenCalledWith(
+      { userId: 'test-user-id', providerType: 'googlehealth' },
+      expect.any(Function)
+    );
+  });
+
   it('returns 202 on successful sync without dates', async () => {
     // @ts-expect-error TS(2339)
     googleHealthService.syncGoogleHealthData.mockResolvedValue(undefined);
@@ -224,7 +267,9 @@ describe('POST /api/integrations/googlehealth/sync', () => {
       'test-user-id',
       'manual',
       undefined,
-      undefined
+      undefined,
+      undefined,
+      false
     );
   });
 
@@ -241,7 +286,9 @@ describe('POST /api/integrations/googlehealth/sync', () => {
       'test-user-id',
       'manual',
       '2026-06-01',
-      '2026-06-07'
+      '2026-06-07',
+      undefined,
+      false
     );
   });
 

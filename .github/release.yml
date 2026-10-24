@@ -19,6 +19,8 @@ changelog:
       - "help wanted"
       - eas-build
       - skip-changelog
+      - "autorelease: pending"
+      - "autorelease: tagged"
       - refactor
   categories:
     - title: "Security"

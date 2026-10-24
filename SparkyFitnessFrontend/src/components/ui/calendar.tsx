@@ -8,12 +8,22 @@ import {
 import {
   DayPicker,
   getDefaultClassNames,
+  useDayPicker,
   type DayButton,
+  type DropdownProps,
   type Locale,
 } from 'react-day-picker';
 
 import { cn } from '@/lib/utils';
+import { usePreferences } from '@/contexts/PreferencesContext';
 import { Button, buttonVariants } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker> & {
   yearsRange?: number;
@@ -28,21 +38,27 @@ function Calendar({
   yearsRange = 10,
   formatters,
   components,
+  weekStartsOn,
   ...props
 }: CalendarProps) {
   const defaultClassNames = getDefaultClassNames();
+  const { firstDayOfWeek } = usePreferences();
 
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
+      // --cell-radius is Tailwind's rounded-full value; the theme defines no
+      // --radius-full, so selected days in the first and last column lost
+      // their rounded edge.
       className={cn(
-        'group/calendar bg-background p-2 [--cell-radius:var(--radius-full)] [--cell-size:--spacing(8)] in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent',
+        'group/calendar bg-background p-2 [--cell-radius:calc(infinity*1px)] [--cell-size:--spacing(8)] in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent',
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
         String.raw`rtl:**:[.rdp-button\_previous>svg]:rotate-180`,
         className
       )}
       captionLayout={captionLayout}
       locale={locale}
+      weekStartsOn={weekStartsOn ?? firstDayOfWeek}
       reverseYears
       startMonth={new Date(new Date().getFullYear() - yearsRange, 0)}
       endMonth={new Date(new Date().getFullYear() + 1, 11)}
@@ -145,6 +161,7 @@ function Calendar({
         ...classNames,
       }}
       components={{
+        Dropdown: CalendarDropdown,
         Root: ({ className, rootRef, ...props }) => {
           return (
             <div
@@ -192,6 +209,54 @@ function Calendar({
       }}
       {...props}
     />
+  );
+}
+
+function CalendarDropdown({
+  className,
+  style,
+  options,
+  value,
+  onChange,
+  disabled,
+  'aria-label': ariaLabel,
+}: DropdownProps) {
+  const { dayPickerProps } = useDayPicker();
+  const dir = dayPickerProps.dir;
+
+  return (
+    <Select
+      dir={dir === 'rtl' || dir === 'ltr' ? dir : undefined}
+      value={String(value)}
+      disabled={disabled}
+      onValueChange={(nextValue) =>
+        onChange?.({
+          target: { value: nextValue },
+        } as React.ChangeEvent<HTMLSelectElement>)
+      }
+    >
+      <SelectTrigger
+        aria-label={ariaLabel}
+        className={cn(
+          'h-8 w-auto gap-1 rounded-full border-0 bg-transparent px-2 py-0 font-medium shadow-none',
+          className
+        )}
+        style={style}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent className="max-h-60 min-w-20">
+        {options?.map((option) => (
+          <SelectItem
+            key={option.value}
+            value={String(option.value)}
+            disabled={option.disabled}
+          >
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

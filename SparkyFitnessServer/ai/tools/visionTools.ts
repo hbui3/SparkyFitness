@@ -336,7 +336,7 @@ export function buildVisionTools(
           // this changes nothing about what it reads.
           estimateSink?.set(result.estimate);
           return {
-            text: `🔬 Food Image Analysis Result:\n\n${renderFoodPhotoEstimate(result.estimate)}`,
+            text: `🔬 Food Image Analysis Result:\n\n${renderFoodPhotoEstimate(result.estimate)}\n\n[Note: The interactive meal card is now displayed to the user. Summarize the detected meal and finish your response. Do NOT call sparky_analyze_food_image again in this turn.]`,
             estimate: result.estimate,
             meal_type: parsed.data.meal_type,
             entry_date: parsed.data.entry_date,
@@ -393,7 +393,8 @@ Only call this when the user explicitly asks to log the plate in a message AFTER
               meal_type: args.meal_type,
               meal_type_id: null,
               name: mealName,
-              description: captured.estimate.confidence_reason || null,
+              description: null,
+              notes: captured.estimate.confidence_reason || null,
               items,
               // The chat flow logs the analysed plate as one serving, all of it
               // eaten. Splitting a dish into servings is done on the review

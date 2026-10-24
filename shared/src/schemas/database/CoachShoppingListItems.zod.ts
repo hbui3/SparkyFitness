@@ -1,20 +1,20 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   coachMealPlanningCategorySchema,
   coachMealPlanningQuantitySchema,
   coachMealPlanningRetailerSchema,
   coachMealPlanningUnitSchema,
-} from "./CoachPantryItems.zod.ts";
+} from './CoachPantryItems.zod.ts';
 
 export function isOfficialCoachRetailerUrl(
   retailer: z.infer<typeof coachMealPlanningRetailerSchema>,
-  directUrl: string,
+  directUrl: string
 ): boolean {
   try {
     const url = new URL(directUrl);
-    const officialDomain = retailer === "coop" ? "coop.ch" : "migros.ch";
+    const officialDomain = retailer === 'coop' ? 'coop.ch' : 'migros.ch';
     return (
-      url.protocol === "https:" &&
+      url.protocol === 'https:' &&
       (url.hostname === officialDomain ||
         url.hostname.endsWith(`.${officialDomain}`))
     );
@@ -24,9 +24,9 @@ export function isOfficialCoachRetailerUrl(
 }
 
 export const coachShoppingListItemStatusSchema = z.enum([
-  "needed",
-  "purchased",
-  "skipped",
+  'needed',
+  'purchased',
+  'skipped',
 ]);
 
 export const coachShoppingListItemsSchema = z
@@ -75,14 +75,14 @@ export const coachShoppingListItemsSchema = z
     ];
     const hasSnapshot = requiredSnapshotValues.some((item) => item !== null);
     const hasCompleteSnapshot = requiredSnapshotValues.every(
-      (item) => item !== null,
+      (item) => item !== null
     );
 
     if (hasSnapshot && !hasCompleteSnapshot) {
       ctx.addIssue({
-        code: "custom",
-        message: "Selected product snapshot is incomplete",
-        path: ["selected_product_retailer"],
+        code: 'custom',
+        message: 'Selected product snapshot is incomplete',
+        path: ['selected_product_retailer'],
       });
     }
     if (
@@ -91,9 +91,9 @@ export const coachShoppingListItemsSchema = z
         value.selected_product_note !== null)
     ) {
       ctx.addIssue({
-        code: "custom",
-        message: "GTIN and note require a selected product snapshot",
-        path: ["selected_product_gtin"],
+        code: 'custom',
+        message: 'GTIN and note require a selected product snapshot',
+        path: ['selected_product_gtin'],
       });
     }
     if (
@@ -101,13 +101,13 @@ export const coachShoppingListItemsSchema = z
       value.selected_product_direct_url !== null &&
       !isOfficialCoachRetailerUrl(
         value.selected_product_retailer,
-        value.selected_product_direct_url,
+        value.selected_product_direct_url
       )
     ) {
       ctx.addIssue({
-        code: "custom",
+        code: 'custom',
         message: `Expected an official ${value.selected_product_retailer} HTTPS product URL`,
-        path: ["selected_product_direct_url"],
+        path: ['selected_product_direct_url'],
       });
     }
   });

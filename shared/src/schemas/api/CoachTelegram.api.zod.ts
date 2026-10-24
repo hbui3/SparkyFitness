@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const coachTelegramConnectionStatusSchema = z.object({
   available: z.boolean(),
@@ -19,7 +19,7 @@ export const coachTelegramDisconnectResponseSchema = z.object({
 
 export const telegramAdminConfigStatusSchema = z.object({
   configured: z.boolean(),
-  source: z.enum(["database", "environment", "none"]),
+  source: z.enum(['database', 'environment', 'none']),
   botUsername: z.string().nullable(),
   webhookUrl: z.string().nullable(),
   databaseTokenStored: z.boolean(),

@@ -13,26 +13,31 @@ import Icon from './Icon';
 import EditableSetRow from './EditableSetRow';
 import { isDurationModality } from '../utils/workoutSession';
 import type { WorkoutDraftSet } from '../types/drafts';
-import type { ExerciseModality } from '@workspace/shared';
+import {
+  isWeightDistanceModality,
+  isWeightDurationModality,
+  type ExerciseModality,
+} from '@workspace/shared';
+
+type EditableField = 'weight' | 'reps' | 'duration' | 'distance';
 
 interface EditableSetListProps {
   exerciseClientId: string;
   sets: WorkoutDraftSet[];
   activeSetKey: string | null;
   // 'rpe' comes from the shared editing hook but never occurs for activities.
-  activeSetField: 'weight' | 'reps' | 'duration' | 'rpe';
+  activeSetField: EditableField | 'rpe';
   /** The owning exercise's resolved modality; decides the column set. */
   modality?: ExerciseModality;
   weightUnit: string;
-  onActivateSet: (
-    setKey: string,
-    field: 'weight' | 'reps' | 'duration'
-  ) => void;
+  /** Unit label for a carry's distance column (e.g. m / yd). */
+  distanceUnitLabel?: string;
+  onActivateSet: (setKey: string, field: EditableField) => void;
   onDeactivateSet: () => void;
   onUpdateSetField: (
     exerciseClientId: string,
     setClientId: string,
-    field: 'weight' | 'reps' | 'duration',
+    field: EditableField,
     value: string
   ) => void;
   onRemoveSet: (exerciseClientId: string, setClientId: string) => void;
@@ -46,6 +51,7 @@ function EditableSetList({
   activeSetField,
   modality = 'weight_reps',
   weightUnit,
+  distanceUnitLabel = '',
   onActivateSet,
   onDeactivateSet,
   onUpdateSetField,
@@ -80,7 +86,15 @@ function EditableSetList({
                   </Text>
                 )}
                 <Text className="text-xs font-semibold text-text-muted flex-1 text-center">
-                  {t('activeWorkout.setRow.reps', { defaultValue: 'Reps' })}
+                  {isWeightDurationModality(modality)
+                    ? t('activeWorkout.columns.seconds', {
+                        defaultValue: 'Sec',
+                      })
+                    : isWeightDistanceModality(modality)
+                      ? distanceUnitLabel
+                      : t('activeWorkout.setRow.reps', {
+                          defaultValue: 'Reps',
+                        })}
                 </Text>
               </>
             )}
@@ -102,6 +116,8 @@ function EditableSetList({
                   weight={set.weight}
                   reps={set.reps}
                   duration={set.duration != null ? String(set.duration) : ''}
+                  distance={set.distance ?? ''}
+                  distanceUnitLabel={distanceUnitLabel}
                   setNumber={index + 1}
                   isActive={activeSetKey === setKey}
                   activeField={

@@ -519,13 +519,12 @@ const MealDetailScreen: React.FC<MealDetailScreenProps> = ({
 
         <Button
           variant="secondary"
+          textClassName="text-text-primary"
           onPress={() =>
             navigation.navigate('MealPlanForm', { initialMeal: meal })
           }
         >
-          <Text className="text-gray-900 dark:text-white text-base font-semibold">
-            {t('mealDetail.planMeal', { defaultValue: 'Plan Meal' })}
-          </Text>
+          {t('mealDetail.planMeal', { defaultValue: 'Plan Meal' })}
         </Button>
 
         {canManageMeal ? (

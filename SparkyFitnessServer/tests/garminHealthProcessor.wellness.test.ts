@@ -14,12 +14,15 @@ const getHealthMetricSampleRowForUpdateWithClient = vi
   .fn()
   .mockResolvedValue(null);
 const bulkUpsertVitals = vi.fn().mockResolvedValue([]);
+const upsertDailyHealthMetrics = vi.fn().mockResolvedValue({});
 vi.mock('../models/genericHealthRepository.js', () => ({
   upsertHealthMetricSamplesWithClient: (...args: unknown[]) =>
     upsertHealthMetricSamplesWithClient(...args),
   getHealthMetricSampleRowForUpdateWithClient: (...args: unknown[]) =>
     getHealthMetricSampleRowForUpdateWithClient(...args),
   bulkUpsertVitals: (...args: unknown[]) => bulkUpsertVitals(...args),
+  upsertDailyHealthMetrics: (...args: unknown[]) =>
+    upsertDailyHealthMetrics(...args),
 }));
 
 vi.mock('../db/poolManager.js', () => ({
@@ -33,8 +36,11 @@ vi.mock('../utils/timezoneLoader.js', () => ({
   loadUserTimezone: vi.fn().mockResolvedValue('UTC'),
 }));
 
+const upsertDerivedMood = vi.fn().mockResolvedValue(undefined);
 vi.mock('../models/moodRepository.js', () => ({
-  default: { createOrUpdateMoodEntry: vi.fn().mockResolvedValue(undefined) },
+  default: {
+    upsertDerivedMood: (...args: unknown[]) => upsertDerivedMood(...args),
+  },
 }));
 vi.mock('../models/sleepRepository.js', () => ({ default: {} }));
 vi.mock('../models/food.js', () => ({ default: {} }));
@@ -68,6 +74,8 @@ beforeEach(() => {
   upsertHealthMetricSamplesWithClient.mockClear();
   getHealthMetricSampleRowForUpdateWithClient.mockClear();
   bulkUpsertVitals.mockClear();
+  upsertDailyHealthMetrics.mockClear();
+  upsertDerivedMood.mockClear();
 });
 
 describe('processGarminHealthAndWellnessData - HRV', () => {
@@ -269,6 +277,97 @@ describe('processGarminHealthAndWellnessData - respiration', () => {
   });
 });
 
+describe('processGarminHealthAndWellnessData - daily summary calories', () => {
+  interface DailyMetricsPayload {
+    entry_date: string;
+    total_calories: number | null;
+    total_calories_captured_at: Date | null;
+  }
+  const dailyMetricsPayload = (): DailyMetricsPayload =>
+    upsertDailyHealthMetrics.mock.calls[0]?.[2] as DailyMetricsPayload;
+
+  it('persists total_calories stamped with the microservice fetch instant', async () => {
+    // routes.py sends captured_at as the get_user_summary fetch instant; the
+    // total_calories gate orders on it, so the newest provider snapshot wins
+    // however scheduled and manual syncs interleave.
+    await processGarminHealthAndWellnessData(
+      'user-1',
+      'user-1',
+      {
+        daily_summary: [
+          {
+            date: '2026-08-01',
+            total_calories: 4594,
+            active_calories: 2180,
+            bmr_calories: 2414,
+            captured_at: '2026-08-01T20:12:34.123+00:00',
+          },
+        ],
+      },
+      '2026-08-01',
+      '2026-08-01'
+    );
+
+    expect(upsertDailyHealthMetrics).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      expect.objectContaining({
+        entry_date: '2026-08-01',
+        source_provider: 'garmin',
+        active_calories: 2180,
+        bmr_calories: 2414,
+        total_calories: 4594,
+      })
+    );
+    expect(
+      dailyMetricsPayload().total_calories_captured_at?.toISOString()
+    ).toBe('2026-08-01T20:12:34.123Z');
+  });
+
+  it('sends a NULL capture time when the microservice sends no captured_at', async () => {
+    // Microservices predating the field still persist total_calories, but
+    // with a NULL stamp so the gate only fills an untimestamped row — a
+    // delayed legacy sync can never displace a newer timestamped total.
+    await processGarminHealthAndWellnessData(
+      'user-1',
+      'user-1',
+      { daily_summary: [{ date: '2026-08-01', total_calories: 4594 }] },
+      '2026-08-01',
+      '2026-08-01'
+    );
+
+    expect(upsertDailyHealthMetrics).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      expect.objectContaining({
+        total_calories: 4594,
+        total_calories_captured_at: null,
+      })
+    );
+  });
+
+  it('keeps the value/stamp pair null together when Garmin sent no total', async () => {
+    // The gate only advances total_calories alongside its stamp, so a day
+    // without totalKilocalories must not push a bare stamp.
+    await processGarminHealthAndWellnessData(
+      'user-1',
+      'user-1',
+      { daily_summary: [{ date: '2026-08-01', bmr_calories: 2414 }] },
+      '2026-08-01',
+      '2026-08-01'
+    );
+
+    expect(upsertDailyHealthMetrics).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      expect.objectContaining({
+        total_calories: null,
+        total_calories_captured_at: null,
+      })
+    );
+  });
+});
+
 describe('processGarminHealthAndWellnessData - blood pressure', () => {
   interface VitalsRow {
     timestamp: Date;
@@ -332,5 +431,54 @@ describe('processGarminHealthAndWellnessData - blood pressure', () => {
     expect(instants).toHaveLength(3);
     expect(new Set(instants).size).toBe(3);
     expect(instants).toContain('2026-08-02T12:00:00.000Z');
+  });
+});
+
+describe('processGarminHealthAndWellnessData - derived mood', () => {
+  it("stores the stress-derived mood as the day's garmin derived row", async () => {
+    const notes = 'Derived from Garmin Stress: Average 30 (Calm)';
+    await processGarminHealthAndWellnessData(
+      'user-1',
+      'user-1',
+      {
+        stress: [
+          {
+            date: '2026-08-01',
+            derived_mood_value: 80,
+            derived_mood_notes: notes,
+          },
+        ],
+      },
+      '2026-08-01',
+      '2026-08-01'
+    );
+
+    expect(upsertDerivedMood).toHaveBeenCalledTimes(1);
+    expect(upsertDerivedMood).toHaveBeenCalledWith('user-1', 'garmin', {
+      moodValue: 80,
+      notes,
+      entryDate: '2026-08-01',
+      entryTimestamp: new Date('2026-08-01T12:00:00.000Z'),
+    });
+  });
+
+  it("stamps a past day's mood at local noon in the user timezone", async () => {
+    const { loadUserTimezone } = await import('../utils/timezoneLoader.js');
+    (loadUserTimezone as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      'America/Chicago'
+    );
+
+    await processGarminHealthAndWellnessData(
+      'user-1',
+      'user-1',
+      { stress: [{ date: '2026-08-01', derived_mood_value: 80 }] },
+      '2026-08-01',
+      '2026-08-01'
+    );
+
+    // Noon CDT, so the mood sits on its own day rather than at sync time.
+    expect(upsertDerivedMood.mock.calls[0]![2].entryTimestamp).toEqual(
+      new Date('2026-08-01T17:00:00.000Z')
+    );
   });
 });

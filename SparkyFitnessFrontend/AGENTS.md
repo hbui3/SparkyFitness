@@ -1,6 +1,6 @@
 # AGENTS.md
 
-_Last updated: 2026-09-01_
+_Last updated: 2026-10-24_
 
 SparkyFitness Frontend is the React web app for the SparkyFitness monorepo. Use this file as the primary guide for work inside `SparkyFitnessFrontend/`.
 
@@ -14,7 +14,7 @@ If a task also touches the server, mobile app, or `shared/`, read that package g
 
 ## Current Snapshot
 
-- Stack: React 19, Vite 8, TypeScript 5, Tailwind CSS v4 (via `@tailwindcss/vite`), shadcn/ui-style Radix primitives, TanStack Query 5, React Router 7 (`createBrowserRouter`), i18next, Better Auth client, Zod 4, Recharts.
+- Stack: React 19, Vite 8, TypeScript 6, Tailwind CSS v4 (via `@tailwindcss/vite`), shadcn/ui-style Radix primitives, TanStack Query 5, React Router 7 (`createBrowserRouter`), i18next, Better Auth client, Zod 4, Recharts.
 - `@/*` maps to `src/`; `@workspace/shared` maps to `../shared/src/index.ts` (also in Jest via `moduleNameMapper`).
 - Dev server runs on port `8080` and proxies `/api`, `/mcp`, and `/uploads` to the backend on `3010`; `/health-data` is proxied with an `/api` prefix rewrite. Override the backend host with `VITE_BACKEND_HOST`.
 - PWA (`vite-plugin-pwa`) is enabled in production builds only.
@@ -42,15 +42,18 @@ pnpm run build
 
 Features are organized by domain, and the same domain folder name appears in `src/pages/`, `src/api/`, and `src/hooks/`. A feature change usually touches the matching folder in all three:
 
-- Page domains: `Admin`, `Auth`, `Chat`, `CheckIn`, `Cycle`, `Diary`, `Errors`, `Exercises`, `Fasting`, `Foods`, `Goals`, `Integrations`, `Medications`, `Reports`, `Settings`.
-- API domains add a few more: `AiConversions`, `Chatbot`, `Onboarding`, `Pregnancy`, `SleepScience`.
+- Page domains: `Admin`, `Auth`, `Chat`, `CheckIn`, `Cycle`, `Diary`, `Errors`, `Exercises`, `Fasting`, `Foods`, `Goals`, `Integrations`, `Medications`, `Reports`, `Settings`, `Symptoms`.
+- API domains add a few more: `AiConversions`, `Chatbot`, `Onboarding`, `Pregnancy`, `SleepScience`, `Symptoms`.
 - Example: a Medications bug lives in `src/pages/Medications/` + `src/api/Medications/` + `src/hooks/` medication hooks. Start there, not with a repo-wide search.
 
 ## Source Map
 
+- Food assistant state: owner-only preferences, recoverable tasks and operation history use `FoodAssistant.api.zod.ts` / `FoodAssistant.zod.ts` in shared. Server: `routes/v2/foodAssistantRoutes.ts`, `services/foodAssistantService.ts`, `models/foodAssistantRepository.ts`, `ai/tools/foodAssistantTools.ts`. Web: `src/components/ai/FoodAssistantState.tsx`, `src/api/Chatbot/foodAssistantService.ts`.
+
 - `src/main.tsx` - app bootstrap; creates the shared `QueryClient` with global `QueryCache`/`MutationCache` handlers that render toasts from query/mutation `meta` (`errorTitle`, `errorMessage`, `successMessage`).
 - `src/App.tsx` - route registry via `createBrowserRouter`, plus `PrivateRoute` and `PermissionRoute` wrappers (permission-gated areas include `reports` and `admin`).
 - `src/pages/<Domain>/` - route screens by domain.
+- `src/pages/Reports/Compare/` - the Reports > Compare tab (`CompareReport` is the root, mounted by `Reports.tsx` outside its loading gate), with its data from `src/hooks/Reports/useCompare.ts` and `src/api/Reports/compareApi.ts`.
 - `src/api/api.ts` - `apiCall(endpoint, options)` helper: base URL `/api`, query `params`, JSON/FormData bodies, `responseType`, error toasts, `suppress404Toast`. Use it for all backend requests.
 - `src/api/<Domain>/` - per-domain API clients built on `apiCall`.
 - `src/hooks/<Domain>/` and `src/hooks/use*.ts(x)` - TanStack Query hooks and shared UI hooks (`use-toast`, `useDebounce`, `useAuth`, ...).
@@ -63,7 +66,7 @@ Features are organized by domain, and the same domain folder name appears in `sr
 - `src/layouts/` - `MainLayout.tsx` and `AddComp.tsx`.
 - `src/lib/` - `auth-client.ts` (Better Auth React client), `utils.ts` (`cn`), scanner engines, sleep helpers.
 - `src/services/` - pure calculation helpers (BMR, body composition, nutrient calculation), not HTTP clients.
-- `src/utils/` - logging, user preferences, date helpers, misc.
+- `src/utils/` - logging, user preferences, date helpers, misc. `browserVoiceInput.ts` owns browser speech/recording lifecycle; `hooks/AI/useVoiceInput.ts` appends transcripts to drafts without sending.
 - `src/tests/` - Jest suites mirroring `components`/`contexts`/`hooks`/`services`/`utils`, plus `test-utils.tsx`.
 - `public/locales/<lng>/translation.json` - i18next resources, loaded over HTTP at runtime.
 
@@ -71,10 +74,10 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 
 ## Translations (i18n)
 
-- Only ever edit `public/locales/en/translation.json`. The other 27 locales are machine-synced through the `sync-translations.yml` workflow and a separate SparkyFitnessTranslations repo; hand-editing them creates conflicts with that pipeline.
+- Only ever edit `public/locales/en/translation.json`. The other 35 locales are machine-synced through the `sync-translations.yml` workflow and a separate SparkyFitnessTranslations repo; hand-editing them creates conflicts with that pipeline.
 - UI strings go through `useTranslation()` / `t('...')` keys, not hardcoded literals.
 - `en/translation.json` is ~120 KB - grep for the key or section you need instead of reading the whole file.
-- Developer docs: `../docs/content/8.developer/9.translations.md`.
+- Developer docs: `../docs/src/developer/translations.md`.
 
 ## Conventions
 
@@ -85,6 +88,8 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - To learn a database table's shape, read `../shared/src/schemas/database/<Table>.zod.ts` - do not read `../db_schema_backup.sql` or the migrations.
 - Auth flows go through `src/lib/auth-client.ts` and `useAuth`; acting-user (family access) state lives in `ActiveUserContext` and affects most data hooks.
 - New UI should reuse `src/components/ui/` primitives and existing shared components before adding new ones.
+- Food and meal quantity fields use `NumericInput` with `allowExpressions` for basic arithmetic. `utils/evaluateArithmetic.ts` parses numbers, parentheses, and `+ - * /` without executing code; invalid expressions block form submission. Other numeric fields retain their existing behavior.
+- Time entry uses `TimeInput` (`'HH:mm'`) and `DateTimeInput` (`'YYYY-MM-DDTHH:mm'`) from `src/components/ui/TimeInput.tsx`, never native `<input type="time">` or `type="datetime-local"`: browsers pick 12h/24h from their language and ignore the user's `timeFormat` preference. Both take the native string formats, so call sites keep their state as-is; name them with `aria-labelledby` (an external `<Label htmlFor>` cannot target a multi-part field).
 - **Cache Invalidation on Library Mutations:** When mutating foods, exercises, presets, or plans, use the domain invalidation hooks from `src/hooks/useInvalidateKeys.ts` (`useExerciseInvalidation`, `useFoodInvalidation`, `useMealInvalidation`, `useDiaryInvalidation`) to invalidate the entire family of dependent query keys including search, presets, templates, and diary daily progress.
 - **Library Deletes & Snapshots:** Deleting foods or exercises uses `mode: 'delete'` which preserves logged diary history (via snapshots) and drops items from presets/plans; only explicit `delete_with_history` deletes diary entries. Empty presets are guarded against starting/logging.
 
@@ -100,14 +105,26 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - API/error-toast issue: `src/api/api.ts`, then the domain client in `src/api/<Domain>/`, then the query/mutation `meta` in the calling hook.
 - Auth/session issue: `src/lib/auth-client.ts`, `src/hooks/useAuth.tsx`, `src/pages/Auth/`, and the server's `auth.ts` if it crosses packages.
 - Family-access/acting-user issue: `src/contexts/ActiveUserContext.tsx` and the hooks consuming it.
-- Chat (Sparky) issue: `src/pages/Chat/`, `src/components/ai/`, `src/api/Chatbot/`.
+- Chat (Sparky) issue: `src/pages/Chat/`, `src/components/ai/`, `src/api/Chatbot/`. Voice controls live in `VoiceInputControl.tsx`; `VoiceInputSettings.tsx` shares server-backed enable/System/AI choices with mobile. `active_voice_ai_service_id: null` means System, never automatic inheritance from Chat. A compatible Chat model is only a suggestion. Cancelling, leaving the page, hiding the tab, or changing voice preferences releases the microphone and aborts uploads.
 - Theme/preferences issue: `src/contexts/ThemeContext.tsx`, `src/contexts/PreferencesContext.tsx`, `src/api/Settings/preferences.ts`, `src/utils/userPreferences.ts`.
 - Persistent AI coach inherited goals, dietary constraints, configurable proactive schedules, owner-controlled memories, or Telegram pairing: `src/pages/Settings/CoachProfileSettings.tsx`, `src/hooks/Settings/useCoachProfile.ts`, and `src/api/Settings/coachProfile.ts`. Cross-channel Telegram/proactive changes refresh active web queries through `src/hooks/useCoachEvents.ts`. Instance-wide encrypted Telegram bot configuration remains in the Admin domain.
 - Pantry, shopping list, Coop/Migros product choice, or dated coach meal-plan UI: `src/pages/Settings/MealPlanningSettings.tsx`, `src/components/MealPlanning/`, `src/hooks/Settings/useMealPlanning.ts`, and `src/api/Settings/mealPlanning.ts`. Keep physical stock, planned reservations, and remaining shopping quantities visually distinct.
 - External-provider setup and manual sync (including Speediance and iGPSPORT regions/credentials): `src/pages/Settings/ProviderSpecificFields.tsx`, `EditProviderForm.tsx`, `ProviderCard.tsx`, `src/api/Integrations/integrations.ts`, and `src/hooks/Integrations/useIntegrations.ts`.
 - Complete Speediance workout building/editing, warm-up blocks, set modes, and calendar reservations: `src/pages/Exercises/SpeedianceWorkoutManager.tsx` plus the matching Exercises API/hook files. Alternating A/B-style cycles use `AddWorkoutPlanDialog.tsx`, `useWorkoutPlanAssignments.tsx`, and `TrainingTimeline.tsx`; preserve `cycle_length_weeks` and assignment `week_index` on every edit. Speediance is intentionally excluded from the generic Online exercise importer because workout-safe variants require dedicated validation.
 - Missing completed/planned workouts or wrong set/warm-up progress in the Training calendar, chronology, or Diary planned-training card: `src/pages/Exercises/TrainingCalendar.tsx`, `src/pages/Exercises/TrainingTimeline.tsx`, `src/pages/Diary/PlannedTrainingCard.tsx`, `src/hooks/Exercises/useWorkoutPlans.ts`, and the server's `plannedWorkoutScheduleService.ts`; the server response is authoritative.
+- Calorie goal settings: `src/pages/Settings/CalculationSettings.tsx`; `components/WeeklyWeightGoalInput.tsx` edits the `weekly` goal mode with direction and kg, g, lbs or stones + pounds per week, defaulting to the profile weight unit. Store signed kilograms in `goal_mode_weekly_change_kg` (negative loss, positive gain, zero maintenance), preserving legacy percentage modes. Use shared `formatWeeklyGoalRate` / `parseWeeklyGoalRate` for display and input; switching units preserves the canonical rate. Pass `weeklyChangeKg` to `computeCalorieTarget`; Diary preview and `CalorieTargetBreakdown` use the same preference.
 - Missing/wrong UI text: the i18n key in `public/locales/en/translation.json` and the `t('...')` call site.
+- Exercise alternatives / workout feedback / adaptive suggestions (#1560): `AddExerciseDialog`'s `replaceFor` prop adds the **Suggested** tab (`pages/Exercises/ExerciseAlternativesPanel.tsx`); the workout player's Replace (lazy-loaded dialog) and load pass (`WorkoutPlaybackPage.tsx`, helpers in `utils/workoutPlayback.ts`) apply the shared `decideAdaptiveAdjustment` rules and keep both the usual and adapted sets on the draft for "Use my usual"; feedback is `pages/Diary/WorkoutFeedbackPanel.tsx` (finish dialog + expanded diary workout) via `hooks/Exercises/useWorkoutCoaching.ts`.
+- Medication adherence, streak, checklist progress and month-calendar status (`pages/Medications/TodayMedications.tsx`, `MedicationLogCalendar.tsx`) are computed by `@workspace/shared` (`medications/adherence.ts`), the same code the mobile adherence screen uses; change the rules there, not in the page. The meds/supplements filter rules (`filterMedsBySubtype`, `filterEntriesBySubtype`, `visibleDoseCards`) come from `medications/subtype.ts`.
+- Symptom or episode tracking (#1882): `src/pages/Symptoms/` (`SymptomsHub` is the tracker, shown on Check-in through `SymptomsPanel` and on Medications with `variant="medications"`; `SymptomLogForm` is template-driven, `SymptomsReport` is Reports > Symptoms), `src/api/Symptoms/symptomService.ts`, `src/hooks/useSymptoms.ts`. Which sections a symptom asks about comes from `resolveSections` in `@workspace/shared`; family delegates with only the symptoms permission use the standalone `/symptoms` page.
+- Bodyweight exercises (#56): the `bodyweight_reps` layout in `constants/exercises.ts` (`signedWeight`) drives the +/− weight header and placeholder in the set editor; reports and trend charts count body weight through the shared `effectiveLoadKg` / `setVolumeKg` (`pages/Reports/ReportsTables.tsx`, `utils/exerciseTrendUtils.ts`, which reads `body_weight_kg` from the progress endpoint).
+- `weight_distance` / `weight_duration` (#127) have their own `SET_TABLE_LAYOUT` entries: carries swap the reps cell for a distance cell (stored km, edited in metres/yards via `carryDistanceFromKm` / `carryDistanceToKm` in `@workspace/shared`), loaded holds drop reps and use the duration column.
+- Training consistency (#59): `pages/Reports/TrainingConsistencyCard.tsx` in the Exercise report's left column, fed by `useTrainingConsistency` (`hooks/Reports/useReports.ts`) from `GET /reports/training-consistency`. A fixed 26-week window computed on the server by the shared `buildTrainingConsistency`, so it ignores the report's date filter; the existing `WorkoutHeatmap` stays the calendar.
+- Compare tab (day and week questions): `src/pages/Reports/Compare/CompareReport.tsx` holds the question and span state and wires the sentence, charts and tables; wording is `compareCopy.ts` and table rows are `compareTables.ts`; question, window and display-scale logic is `shared/src/compare/`. Since-habit questions are not offered on the web yet. It shows only the signed-in user's own data (no request while acting on behalf), and its range is its own, so the Reports date picker is hidden on this tab.
+- Shoe inventory: the Equipment section of the Exercises page (`src/pages/Exercises/EquipmentManager.tsx` + `ShoeFormDialog`; there is no separate tab or route), `src/components/Shoes/ShoeSelect.tsx` (the picker used by `pages/Diary/EditExerciseEntryDialog.tsx` for cardio entries), `src/api/Shoes/shoeService.ts`, `src/hooks/Shoes/useShoes.ts`. Distances are stored in km and edited in the user's unit; assigning a shoe invalidates both `shoeKeys` and `exerciseEntryKeys` because mileage is derived from linked entries. The Equipment section also shows while acting on behalf of someone: `can_manage_diary` delegates can edit it and `can_view_reports` delegates read it, as the server enforces.
+- Training programs (run and walk plans): the `/exercises/training-programs` route (`src/pages/Exercises/TrainingPrograms/`: `TrainingPrograms` is the page, `TrainingProgramPicker` the built-in list with the 3 or 4 runs a week choice and the person's own plans, `StartProgramDialog` the start day, `TrainingProgramCard` the running program, `TrainingProgramCalendar` the month view, projected finish day, goal-date fit and catch-up), reached from `TrainingProgramsEntry` on the Exercises page, and `pages/Diary/RunProgramBanner.tsx` in the Diary's exercise card. Data is `GET/PUT /api/v2/run-program` plus `POST .../complete` and `GET .../custom` through `src/api/Exercises/runPrograms.ts` and `src/hooks/Exercises/useRunProgram.ts`; the server route is owner-only (`requireSelfActor`), so every hook and the banner stay off while `isActingOnBehalf`. All schedule maths comes from `@workspace/shared` (`projectRuns`, `projectedFinishDay`, `programRunForDate`, `catchUpFor`, `buildProgramTimeline`), never re-derived here. Request bodies come from `utils/runPrograms.ts`; `useSaveRunProgramMutation` runs changes one at a time (mutation `scope`) and accepts a function of the program as it stands, so two quick weekday taps both land. Mutations write the response into `runProgramKeys.current()` and call `useRunProgramInvalidation` (program, workout plan, exercise entry and daily progress families); `useDiaryInvalidation` and `useExerciseInvalidation` also refresh `runProgramKeys.all`. English program names, descriptions and week layouts live in `constants/runProgramCopy.ts` and mirror `trainingPrograms.programs.<id>.*` in the locale file. The web does not record runs: **Mark workout as done** (card and Diary) is how a workout is ticked off. Not on web yet: creating or editing custom plans, the race plan builder, the effort rating, the ease-back offers and the workout detail screen.
+- Heart rate zones: Settings → Profile & Account → Heart Rate Zones (`src/pages/Settings/HeartRateZoneSettings.tsx`, `src/hooks/Settings/useHeartRateZones.ts`, `src/api/Settings/heartRateZones.ts` over `GET`/`PUT /api/v2/heart-rate-zones`). Zone maths is shared (`@workspace/shared` `heartRateZones.ts`); labels are in `src/utils/heartRateZoneLabels.ts`. `ActivityHeartRateZonesChart` takes `zoneMethod` (from the stored `zone_method` of the workout's zone rows) and says which method the zones were worked out with; stored zones are never recomputed when settings change.
+- Routing provider (Valhalla, route generation and Follow roads): a Settings > External Providers type like Mealie, with `pages/Settings/RoutingProviderFields.tsx` (empty server URL with an example placeholder and no default server, optional API key, privacy and public-server notes) used by `ProviderSpecificFields` (add) and `EditProviderForm`; the type row is seeded by the server migration, the server resolves it per person (see the server guide).
 - Chart issue: Recharts usage in the domain page plus `src/components/ExerciseCharts/` or `ZoomableChart.tsx`.
 - Report source/provenance display or mirrored-workout issue: `src/pages/Reports/ReportsTables.tsx`, `src/utils/sourceLabels.ts`, `src/utils/reportUtil.ts`, `NutritionPeriodSummary.tsx`, and the server report/canonical-workout services. Body measurement sources are per metric; do not reimplement provider overlap rules in the component.
 - Adaptive training or muscle-load map issue: `src/pages/Reports/AdaptiveTrainingDashboard.tsx`, `src/components/ExerciseCharts/MuscleBodyMap.tsx`, `src/hooks/Exercises/useAdaptiveTraining.ts`, and the server adaptive-training service; keep scoring and duplicate suppression on the server.

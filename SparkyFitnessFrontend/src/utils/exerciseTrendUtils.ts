@@ -1,7 +1,38 @@
 import {
   findMirroredWorkoutDuplicates,
+  effectiveLoadKg,
+  epleyOneRepMaxKg,
+  resolveExerciseModality,
   type ExerciseProgressResponse,
 } from '@workspace/shared';
+
+type ProgressSet = ExerciseProgressResponse['sets'][number];
+
+/**
+ * The load a set moved: its weight, or for a bodyweight exercise the lifter's
+ * body weight that day plus the added (or minus the assisting) weight.
+ */
+const setLoad = (entry: ExerciseProgressResponse, set: ProgressSet): number =>
+  effectiveLoadKg(
+    set.weight,
+    resolveExerciseModality(entry.modality, entry.category),
+    entry.body_weight_kg
+  );
+
+const entryVolume = (entry: ExerciseProgressResponse): number =>
+  entry.sets.reduce(
+    (sum, set) => sum + (set.reps ?? 0) * setLoad(entry, set),
+    0
+  );
+
+const entryMaxLoad = (entry: ExerciseProgressResponse): number =>
+  Math.max(...entry.sets.map((set) => setLoad(entry, set)), 0);
+
+const entryMaxEstimated1RM = (entry: ExerciseProgressResponse): number =>
+  Math.max(
+    ...entry.sets.map((set) => epleyOneRepMaxKg(setLoad(entry, set), set.reps)),
+    0
+  );
 
 /**
  * Returns the Monday (week start) of the week containing the given date.
@@ -64,22 +95,14 @@ export const calculateVolumeTrendData = (
           acc.push(existingEntry);
         }
 
-        const currentVolume = entry.sets.reduce(
-          (sum, set) => sum + (set.reps ?? 0) * (set.weight ?? 0),
-          0
-        );
-        existingEntry.volume += currentVolume;
+        existingEntry.volume += entryVolume(entry);
 
         const comparisonEntry = Object.values(comparisonExerciseProgressData)
           .flat()
           .find((compEntry) => compEntry.entry_date === entry.entry_date);
 
         if (comparisonEntry) {
-          const compVolume = comparisonEntry.sets.reduce(
-            (sum, set) => sum + (set.reps ?? 0) * (set.weight ?? 0),
-            0
-          );
-          existingEntry.comparisonVolume += compVolume;
+          existingEntry.comparisonVolume += entryVolume(comparisonEntry);
         }
         return acc;
       },
@@ -111,13 +134,9 @@ export const calculateMaxWeightTrendData = (
           acc.push(existingEntry);
         }
 
-        const currentMaxWeight = Math.max(
-          ...entry.sets.map((set) => set.weight ?? 0),
-          0
-        );
         existingEntry.maxWeight = Math.max(
           existingEntry.maxWeight,
-          currentMaxWeight
+          entryMaxLoad(entry)
         );
 
         const comparisonEntry = Object.values(comparisonExerciseProgressData)
@@ -125,13 +144,9 @@ export const calculateMaxWeightTrendData = (
           .find((compEntry) => compEntry.entry_date === entry.entry_date);
 
         if (comparisonEntry) {
-          const compMaxWeight = Math.max(
-            ...comparisonEntry.sets.map((set) => set.weight ?? 0),
-            0
-          );
           existingEntry.comparisonMaxWeight = Math.max(
             existingEntry.comparisonMaxWeight,
-            compMaxWeight
+            entryMaxLoad(comparisonEntry)
           );
         }
         return acc;
@@ -164,15 +179,9 @@ export const calculateEstimated1RMTrendData = (
           acc.push(existingEntry);
         }
 
-        const currentMax1RM = Math.max(
-          ...entry.sets.map(
-            (set) => (set.weight ?? 0) * (1 + (set.reps ?? 0) / 30)
-          ),
-          0
-        );
         existingEntry.estimated1RM = Math.max(
           existingEntry.estimated1RM,
-          currentMax1RM
+          entryMaxEstimated1RM(entry)
         );
 
         const comparisonEntry = Object.values(comparisonExerciseProgressData)
@@ -180,15 +189,9 @@ export const calculateEstimated1RMTrendData = (
           .find((compEntry) => compEntry.entry_date === entry.entry_date);
 
         if (comparisonEntry) {
-          const compMax1RM = Math.max(
-            ...comparisonEntry.sets.map(
-              (set) => (set.weight ?? 0) * (1 + (set.reps ?? 0) / 30)
-            ),
-            0
-          );
           existingEntry.comparisonEstimated1RM = Math.max(
             existingEntry.comparisonEstimated1RM,
-            compMax1RM
+            entryMaxEstimated1RM(comparisonEntry)
           );
         }
         return acc;
@@ -212,7 +215,7 @@ export const calculateRepsVsWeightScatterData = (
 
   exerciseData
     .flatMap((entry) =>
-      entry.sets.map((set) => ({ reps: set.reps, weight: set.weight }))
+      entry.sets.map((set) => ({ reps: set.reps, weight: setLoad(entry, set) }))
     )
     .forEach((item) => {
       if (repWeightMap.has(item.reps ?? 0)) {
@@ -269,6 +272,7 @@ export const extractTelemetryActivityEntries = (
     'garmin',
     'garmin_fit',
     'strava',
+    'coros_mcp',
     'healthkit',
     'health connect',
     'speediance',

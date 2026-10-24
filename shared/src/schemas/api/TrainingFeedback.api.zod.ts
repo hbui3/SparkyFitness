@@ -1,17 +1,17 @@
-import { z } from "zod";
+import { z } from 'zod';
 import {
   coachExerciseFeedbackSchema,
   coachWorkoutDifficultySchema,
   coachWorkoutProviderSchema,
-} from "../database/CoachWorkoutFeedback.zod.ts";
+} from '../database/CoachWorkoutFeedback.zod.ts';
 import {
   coachTrainingPreferenceKindSchema,
   coachTrainingPreferenceSentimentSchema,
-} from "../database/CoachTrainingPreferences.zod.ts";
+} from '../database/CoachTrainingPreferences.zod.ts';
 
 const calendarDaySchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected a YYYY-MM-DD calendar day");
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD calendar day');
 
 export const trainingPreferenceInputSchema = z.object({
   kind: coachTrainingPreferenceKindSchema,
@@ -24,7 +24,7 @@ export const recordTrainingFeedbackRequestSchema = z
   .object({
     workoutDate: calendarDaySchema.optional(),
     workoutName: z.string().trim().min(1).max(200),
-    provider: coachWorkoutProviderSchema.optional().default("speediance"),
+    provider: coachWorkoutProviderSchema.optional().default('speediance'),
     overallRating: z.number().int().min(1).max(5).optional(),
     difficulty: coachWorkoutDifficultySchema.optional(),
     energyRating: z.number().int().min(1).max(5).optional(),
@@ -52,8 +52,8 @@ export const recordTrainingFeedbackRequestSchema = z
       value.preferenceUpdates.length === 0
     ) {
       ctx.addIssue({
-        code: "custom",
-        message: "At least one feedback value is required",
+        code: 'custom',
+        message: 'At least one feedback value is required',
       });
     }
   });
@@ -70,7 +70,7 @@ export const trainingPreferenceResponseSchema = z.object({
   subject: z.string(),
   sentiment: coachTrainingPreferenceSentimentSchema,
   notes: z.string().nullable(),
-  source: z.enum(["user", "feedback", "coach"]),
+  source: z.enum(['user', 'feedback', 'coach']),
   active: z.boolean(),
   updatedAt: z.string().datetime(),
 });

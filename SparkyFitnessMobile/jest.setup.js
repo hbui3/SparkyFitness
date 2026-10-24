@@ -165,6 +165,11 @@ jest.mock('expo-notifications', () => {
     addNotificationResponseReceivedListener: jest.fn(() => ({
       remove: jest.fn(),
     })),
+    registerTaskAsync: jest.fn().mockResolvedValue(null),
+    BackgroundNotificationTaskResult: { NewData: 0, NoData: 1, Failed: 2 },
+    DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
+    getLastNotificationResponse: jest.fn(() => null),
+    clearLastNotificationResponse: jest.fn(),
     AndroidImportance: { HIGH: 4, DEFAULT: 3, LOW: 2, MIN: 1, NONE: 0 },
     SchedulableTriggerInputTypes: {
       CALENDAR: 'calendar',
@@ -198,14 +203,43 @@ jest.mock('expo-haptics', () => ({
 }));
 
 // Mock expo-audio
-jest.mock('expo-audio', () => ({
-  createAudioPlayer: jest.fn(() => ({
-    play: jest.fn(),
-    pause: jest.fn(),
-    seekTo: jest.fn().mockResolvedValue(undefined),
-    remove: jest.fn(),
-  })),
-  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+jest.mock('expo-audio', () => {
+  const recorder = {
+    isRecording: false,
+    uri: 'file:///voice.m4a',
+    prepareToRecordAsync: jest.fn().mockResolvedValue(undefined),
+    record: jest.fn(),
+    stop: jest.fn().mockResolvedValue(undefined),
+  };
+  return {
+    createAudioPlayer: jest.fn(() => ({
+      play: jest.fn(),
+      pause: jest.fn(),
+      seekTo: jest.fn().mockResolvedValue(undefined),
+      remove: jest.fn(),
+    })),
+    RecordingPresets: { HIGH_QUALITY: {} },
+    getRecordingPermissionsAsync: jest
+      .fn()
+      .mockResolvedValue({ granted: false }),
+    requestRecordingPermissionsAsync: jest
+      .fn()
+      .mockResolvedValue({ granted: true }),
+    setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+    setIsAudioActiveAsync: jest.fn().mockResolvedValue(undefined),
+    useAudioRecorder: jest.fn(() => recorder),
+    useAudioRecorderState: jest.fn(() => ({
+      isRecording: false,
+      metering: -160,
+    })),
+  };
+});
+
+// Mock expo-speech (guided workout narration)
+jest.mock('expo-speech', () => ({
+  speak: jest.fn(),
+  stop: jest.fn().mockResolvedValue(undefined),
+  getAvailableVoicesAsync: jest.fn().mockResolvedValue([]),
 }));
 
 // Mock expo-camera
@@ -238,6 +272,7 @@ jest.mock('expo-secure-store', () => {
   const store = {};
   return {
     AFTER_FIRST_UNLOCK: 'AFTER_FIRST_UNLOCK',
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 'AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY',
     setItemAsync: jest.fn(async (key, value) => {
       store[key] = value;
     }),
@@ -433,14 +468,31 @@ jest.mock('react-native-keyboard-controller', () => {
     KeyboardAwareScrollView: React.forwardRef(({ children, ...props }, ref) =>
       React.createElement(ScrollView, { ...props, ref }, children)
     ),
+    // `offset` stays on the host View so tests can assert where a sticky view
+    // parks while the keyboard is closed.
     KeyboardStickyView: React.forwardRef(
-      ({ children, offset: _offset, enabled: _enabled, ...props }, ref) =>
+      ({ children, enabled: _enabled, ...props }, ref) =>
         React.createElement(View, { ...props, ref }, children)
     ),
-    // Keyboard-closed shared values; tests render with the rail expanded.
+    // Keyboard-closed shared values.
     useReanimatedKeyboardAnimation: () => ({
       height: { value: 0 },
       progress: { value: 0 },
+    }),
+    // Reports the keyboard up, like KeyboardController.isVisible below, so a
+    // focused set's sticky bar is reachable; a test that needs the keyboard
+    // down swaps the implementation and restores it afterwards.
+    useKeyboardState: jest.fn((selector) => {
+      const state = {
+        isVisible: true,
+        height: 300,
+        duration: 250,
+        timestamp: 0,
+        target: -1,
+        type: 'default',
+        appearance: 'light',
+      };
+      return selector ? selector(state) : state;
     }),
     // isVisible defaults to true so the Android IME-retry path in
     // focusSetCellInput stays quiet unless a test opts in.
@@ -537,6 +589,8 @@ jest.mock('@shopify/react-native-skia', () => {
     Rect: () => null,
     RoundedRect: () => null,
     Path: () => null,
+    Line: () => null,
+    DashPathEffect: () => null,
     Group: ({ children }) => children,
     Skia: {
       Path: {
@@ -672,6 +726,37 @@ jest.mock('react-native-pager-view', () => {
   return { __esModule: true, default: MockPagerView };
 });
 
+// Mock react-native-maps. Its package ships untranspiled native specs, and the
+// map is native-only anyway. Each piece renders a View carrying its props so
+// suites can assert what was drawn (`map-view`, `map-polyline`, `map-marker`).
+jest.mock('react-native-maps', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const piece = (testID) => {
+    const Piece = ({ children, ...props }) =>
+      React.createElement(View, { testID, ...props }, children);
+    Piece.displayName = testID;
+    return Piece;
+  };
+  return {
+    __esModule: true,
+    default: React.forwardRef(({ children, ...props }, ref) => {
+      // The camera methods screens call through a ref.
+      React.useImperativeHandle(ref, () => ({
+        animateToRegion: jest.fn(),
+        fitToCoordinates: jest.fn(),
+      }));
+      return React.createElement(
+        View,
+        { testID: 'map-view', ...props },
+        children
+      );
+    }),
+    Polyline: piece('map-polyline'),
+    Marker: piece('map-marker'),
+  };
+});
+
 // Mock @gorhom/bottom-sheet
 jest.mock('@gorhom/bottom-sheet', () => {
   const React = require('react');
@@ -709,3 +794,117 @@ if (!testI18n.isInitialized) {
     interpolation: { escapeValue: false },
   });
 }
+
+// Jest's expo-crypto stand-in has no AES implementation. Mock the module
+// instead of loading the native AES build, which pulls in ExpoModulesCore
+// and breaks other suites.
+jest.mock('expo-crypto', () => {
+  const { webcrypto } = require('crypto');
+  const { Buffer } = require('node:buffer');
+
+  class WatchTelemetryTestKey {
+    constructor(bytes) {
+      this.bytesValue = bytes;
+    }
+
+    static async generate() {
+      const bytes = new Uint8Array(32);
+      webcrypto.getRandomValues(bytes);
+      return new WatchTelemetryTestKey(bytes);
+    }
+
+    static async import(input, encoding) {
+      const bytes =
+        encoding === 'base64'
+          ? new Uint8Array(Buffer.from(input, 'base64'))
+          : input;
+      return new WatchTelemetryTestKey(bytes);
+    }
+
+    async encoded() {
+      return Buffer.from(this.bytesValue).toString('base64');
+    }
+  }
+
+  class WatchTelemetryTestSealed {
+    constructor(iv, ciphertext) {
+      this.ivBytes = iv;
+      this.ciphertextBytes = ciphertext;
+    }
+
+    static fromCombined(combined) {
+      const bytes = Buffer.from(combined, 'base64');
+      return new WatchTelemetryTestSealed(
+        new Uint8Array(bytes.subarray(0, 12)),
+        new Uint8Array(bytes.subarray(12))
+      );
+    }
+
+    async combined() {
+      return Buffer.concat([
+        Buffer.from(this.ivBytes),
+        Buffer.from(this.ciphertextBytes),
+      ]).toString('base64');
+    }
+  }
+
+  async function importKey(raw, usages) {
+    return webcrypto.subtle.importKey('raw', raw, 'AES-GCM', false, usages);
+  }
+
+  return {
+    __esModule: true,
+    randomUUID: () => webcrypto.randomUUID(),
+    AESEncryptionKey: WatchTelemetryTestKey,
+    AESSealedData: WatchTelemetryTestSealed,
+    aesEncryptAsync: async (plaintext, key) => {
+      const iv = webcrypto.getRandomValues(new Uint8Array(12));
+      const cryptoKey = await importKey(key.bytesValue, ['encrypt']);
+      const ciphertext = new Uint8Array(
+        await webcrypto.subtle.encrypt(
+          { name: 'AES-GCM', iv },
+          cryptoKey,
+          plaintext
+        )
+      );
+      return new WatchTelemetryTestSealed(iv, ciphertext);
+    },
+    aesDecryptAsync: async (sealed, key) => {
+      const cryptoKey = await importKey(key.bytesValue, ['decrypt']);
+      return new Uint8Array(
+        await webcrypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: sealed.ivBytes },
+          cryptoKey,
+          sealed.ciphertextBytes
+        )
+      );
+    },
+  };
+});
+
+// Rows render AllergenBadges, which reads the user's tracked allergens through
+// React Query. Most suites render rows without a QueryClientProvider, so default
+// to "no tracked allergens"; allergen suites mock this module themselves.
+jest.mock('./src/hooks/useAllergenPreferences', () => ({
+  useAllergenPreferences: () => ({
+    preferences: [],
+    isLoading: false,
+    isError: false,
+    refetch: jest.fn(),
+  }),
+  useAllergenPreferenceMutations: jest.fn(),
+}));
+
+jest.mock('expo-image-manipulator', () => ({
+  manipulateAsync: jest.fn(async (uri, _actions = [], options = {}) => ({
+    uri: uri + '-manipulated.jpg',
+    width: 1600,
+    height: 1200,
+    base64: options.base64 ? 'AAAA-manipulated-base64' : undefined,
+  })),
+  SaveFormat: {
+    JPEG: 'jpeg',
+    PNG: 'png',
+    WEBP: 'webp',
+  },
+}));

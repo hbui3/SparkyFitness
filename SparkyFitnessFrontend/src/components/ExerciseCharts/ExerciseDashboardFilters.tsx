@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { localizeEquipment, localizeMuscle } from '@/utils/exerciseTaxonomy';
 
 interface ExerciseDashboardFiltersProps {
   comparisonPeriod: string | null;
@@ -120,7 +121,7 @@ export const ExerciseDashboardFilters = ({
               </SelectItem>
               {uniqueEquipment.map((equipment) => (
                 <SelectItem key={equipment} value={equipment}>
-                  {equipment}
+                  {localizeEquipment(t, equipment)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -145,7 +146,7 @@ export const ExerciseDashboardFilters = ({
               </SelectItem>
               {uniqueMuscles.map((muscle) => (
                 <SelectItem key={muscle} value={muscle}>
-                  {muscle}
+                  {localizeMuscle(t, muscle)}
                 </SelectItem>
               ))}
             </SelectContent>

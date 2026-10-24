@@ -3,6 +3,7 @@ import { getSystemClient } from '../../db/poolManager.js';
 import { encrypt, decrypt, ENCRYPTION_KEY } from '../../security/encryption.js';
 import { log } from '../../config/logging.js';
 import { logRawResponse } from '../../utils/diagnosticLogger.js';
+import { withProviderTokenLock } from '../../models/externalProviderRepository.js';
 
 function anonymizeGoogleHealthData(data: unknown): unknown {
   if (Array.isArray(data)) return data.map(anonymizeGoogleHealthData);
@@ -218,110 +219,115 @@ async function exchangeCodeForTokens(
 async function refreshAccessToken(userId: string) {
   const client = await getSystemClient();
   try {
-    const providerResult = await client.query(
-      `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
+    return await withProviderTokenLock(client, async () => {
+      const providerResult = await client.query(
+        `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
               encrypted_refresh_token, refresh_token_iv, refresh_token_tag
        FROM external_data_providers
-       WHERE user_id = $1 AND provider_type = 'googlehealth'`,
-      [userId]
-    );
-    if (providerResult.rows.length === 0) {
-      throw new Error('Google Health credentials not found for token refresh.');
-    }
-    const {
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-    } = providerResult.rows[0];
+       WHERE user_id = $1 AND provider_type = 'googlehealth'
+       FOR UPDATE`,
+        [userId]
+      );
+      if (providerResult.rows.length === 0) {
+        throw new Error(
+          'Google Health credentials not found for token refresh.'
+        );
+      }
+      const {
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+      } = providerResult.rows[0];
 
-    const clientId = await decrypt(
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      ENCRYPTION_KEY
-    );
-    const clientSecret = await decrypt(
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      ENCRYPTION_KEY
-    );
-    const refreshToken = await decrypt(
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-      ENCRYPTION_KEY
-    );
-
-    const params = new URLSearchParams();
-    params.append('grant_type', 'refresh_token');
-    // @ts-expect-error TS(2345)
-    params.append('refresh_token', refreshToken);
-    params.append('client_id', clientId as string);
-    params.append('client_secret', clientSecret as string);
-
-    const response = await axios.post(GOOGLE_TOKEN_URL, params, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-
-    const {
-      access_token,
-      refresh_token: newRefreshToken,
-      expires_in,
-      scope,
-    } = response.data;
-
-    const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
-    const expiresIn = Number(expires_in) || 3600;
-    const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
-
-    // Google may or may not return a new refresh token on each refresh
-    if (newRefreshToken) {
-      const encryptedNewRefreshToken = await encrypt(
-        newRefreshToken,
+      const clientId = await decrypt(
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
         ENCRYPTION_KEY
       );
-      await client.query(
-        `UPDATE external_data_providers
+      const clientSecret = await decrypt(
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        ENCRYPTION_KEY
+      );
+      const refreshToken = await decrypt(
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+        ENCRYPTION_KEY
+      );
+
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      // @ts-expect-error TS(2345)
+      params.append('refresh_token', refreshToken);
+      params.append('client_id', clientId as string);
+      params.append('client_secret', clientSecret as string);
+
+      const response = await axios.post(GOOGLE_TOKEN_URL, params, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+
+      const {
+        access_token,
+        refresh_token: newRefreshToken,
+        expires_in,
+        scope,
+      } = response.data;
+
+      const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
+      const expiresIn = Number(expires_in) || 3600;
+      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+
+      // Google may or may not return a new refresh token on each refresh
+      if (newRefreshToken) {
+        const encryptedNewRefreshToken = await encrypt(
+          newRefreshToken,
+          ENCRYPTION_KEY
+        );
+        await client.query(
+          `UPDATE external_data_providers
          SET encrypted_access_token = $1, access_token_iv = $2, access_token_tag = $3,
              encrypted_refresh_token = $4, refresh_token_iv = $5, refresh_token_tag = $6,
              scope = $7, token_expires_at = $8, updated_at = NOW()
          WHERE user_id = $9 AND provider_type = 'googlehealth'`,
-        [
-          encryptedAccessToken.encryptedText,
-          encryptedAccessToken.iv,
-          encryptedAccessToken.tag,
-          encryptedNewRefreshToken.encryptedText,
-          encryptedNewRefreshToken.iv,
-          encryptedNewRefreshToken.tag,
-          scope,
-          tokenExpiresAt,
-          userId,
-        ]
-      );
-    } else {
-      await client.query(
-        `UPDATE external_data_providers
+          [
+            encryptedAccessToken.encryptedText,
+            encryptedAccessToken.iv,
+            encryptedAccessToken.tag,
+            encryptedNewRefreshToken.encryptedText,
+            encryptedNewRefreshToken.iv,
+            encryptedNewRefreshToken.tag,
+            scope,
+            tokenExpiresAt,
+            userId,
+          ]
+        );
+      } else {
+        await client.query(
+          `UPDATE external_data_providers
          SET encrypted_access_token = $1, access_token_iv = $2, access_token_tag = $3,
              scope = $4, token_expires_at = $5, updated_at = NOW()
          WHERE user_id = $6 AND provider_type = 'googlehealth'`,
-        [
-          encryptedAccessToken.encryptedText,
-          encryptedAccessToken.iv,
-          encryptedAccessToken.tag,
-          scope,
-          tokenExpiresAt,
-          userId,
-        ]
-      );
-    }
-    return access_token;
+          [
+            encryptedAccessToken.encryptedText,
+            encryptedAccessToken.iv,
+            encryptedAccessToken.tag,
+            scope,
+            tokenExpiresAt,
+            userId,
+          ]
+        );
+      }
+      return access_token;
+    });
   } catch (error) {
     const googleError = (error as { response?: { data?: unknown } })?.response
       ?.data;
@@ -1082,7 +1088,8 @@ async function fetchVO2Max(
 }
 
 // Activity Minutes breakdown — matches Fitbit's minutesSedentary/LightlyActive/FairlyActive/VeryActive
-// Google data type: activity-level (session segments, aggregated per day in processor)
+// Google data types: active-minutes and sedentary-period (dailyRollup). One list holds
+// both; each point carries its own payload key (activeMinutes / sedentaryPeriod).
 async function fetchActivityMinutes(
   userId: string,
   startDate: string,
@@ -1092,12 +1099,24 @@ async function fetchActivityMinutes(
   const accessToken =
     providedToken || ((await getValidAccessToken(userId)) as string);
   try {
-    return await fetchDataPointsRange(
+    const activeMinutes = await fetchDailyRollupRange(
       accessToken,
-      'activity-level',
+      'active-minutes',
       startDate,
       endDate
     );
+    const sedentaryPeriod = await fetchDailyRollupRange(
+      accessToken,
+      'sedentary-period',
+      startDate,
+      endDate
+    );
+    return {
+      rollupDataPoints: [
+        ...activeMinutes.rollupDataPoints,
+        ...sedentaryPeriod.rollupDataPoints,
+      ],
+    };
   } catch (error) {
     log(
       'error',

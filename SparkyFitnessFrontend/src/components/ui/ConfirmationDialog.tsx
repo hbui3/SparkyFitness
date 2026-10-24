@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Terminal } from 'lucide-react';
 
+import { useTranslation } from 'react-i18next';
 interface ConfirmationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -19,6 +20,7 @@ interface ConfirmationDialogProps {
   warning?: React.ReactNode;
   variant?: 'default' | 'destructive';
   confirmLabel?: string;
+  confirmDisabled?: boolean;
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
 }
@@ -32,9 +34,11 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   warning,
   variant = 'default',
   confirmLabel,
+  confirmDisabled,
   secondaryActionLabel,
   onSecondaryAction,
 }) => {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -42,16 +46,18 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
           <DialogTitle>{title}</DialogTitle>
           <div className="text-sm text-muted-foreground">{description}</div>
         </DialogHeader>
-        {warning && (
+        {!!warning && (
           <Alert variant="destructive">
             <Terminal className="h-4 w-4" />
-            <AlertTitle>Warning</AlertTitle>
+            <AlertTitle>
+              {t('ui.confirmationDialog.warning', 'Warning')}
+            </AlertTitle>
             <AlertDescription>{warning}</AlertDescription>
           </Alert>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('common.cancel', 'Cancel')}
           </Button>
           {secondaryActionLabel && onSecondaryAction && (
             <Button variant="secondary" onClick={onSecondaryAction}>
@@ -61,8 +67,9 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
           <Button
             variant={variant === 'destructive' ? 'destructive' : 'default'}
             onClick={onConfirm}
+            disabled={confirmDisabled}
           >
-            {confirmLabel || 'Confirm'}
+            {confirmLabel || t('common.confirm', 'Confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

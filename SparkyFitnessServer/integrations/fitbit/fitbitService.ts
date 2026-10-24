@@ -3,6 +3,7 @@ import { getSystemClient } from '../../db/poolManager.js';
 import { encrypt, decrypt, ENCRYPTION_KEY } from '../../security/encryption.js';
 import { log } from '../../config/logging.js';
 import { logRawResponse } from '../../utils/diagnosticLogger.js';
+import { withProviderTokenLock } from '../../models/externalProviderRepository.js';
 const FITBIT_API_BASE_URL = 'https://api.fitbit.com';
 const FITBIT_ACCOUNT_BASE_URL = 'https://www.fitbit.com';
 /**
@@ -136,97 +137,99 @@ async function exchangeCodeForTokens(userId: any, code: any, redirectUri: any) {
 /**
  * Function to refresh an expired access token
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function refreshAccessToken(userId: any) {
+async function refreshAccessToken(userId: string) {
   const client = await getSystemClient();
   try {
-    const providerResult = await client.query(
-      `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
+    return await withProviderTokenLock(client, async () => {
+      const providerResult = await client.query(
+        `SELECT encrypted_app_id, app_id_iv, app_id_tag, encrypted_app_key, app_key_iv, app_key_tag,
                     encrypted_refresh_token, refresh_token_iv, refresh_token_tag
              FROM external_data_providers
-             WHERE user_id = $1 AND provider_type = 'fitbit'`,
-      [userId]
-    );
-    if (providerResult.rows.length === 0) {
-      throw new Error('Fitbit credentials not found for token refresh.');
-    }
-    const {
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-    } = providerResult.rows[0];
-    const clientId = await decrypt(
-      encrypted_app_id,
-      app_id_iv,
-      app_id_tag,
-      ENCRYPTION_KEY
-    );
-    const clientSecret = await decrypt(
-      encrypted_app_key,
-      app_key_iv,
-      app_key_tag,
-      ENCRYPTION_KEY
-    );
-    const refreshToken = await decrypt(
-      encrypted_refresh_token,
-      refresh_token_iv,
-      refresh_token_tag,
-      ENCRYPTION_KEY
-    );
-    const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString(
-      'base64'
-    );
-    const params = new URLSearchParams();
-    params.append('grant_type', 'refresh_token');
-    // @ts-expect-error TS(2345): Argument of type 'string | null' is not assignable... Remove this comment to see the full error message
-    params.append('refresh_token', refreshToken);
-    const response = await axios.post(
-      `${FITBIT_API_BASE_URL}/oauth2/token`,
-      params,
-      {
-        headers: {
-          Authorization: `Basic ${authHeader}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
+             WHERE user_id = $1 AND provider_type = 'fitbit'
+             FOR UPDATE`,
+        [userId]
+      );
+      if (providerResult.rows.length === 0) {
+        throw new Error('Fitbit credentials not found for token refresh.');
       }
-    );
-    const {
-      access_token,
-      refresh_token: newRefreshToken,
-      expires_in,
-      scope,
-    } = response.data;
-    const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
-    const encryptedNewRefreshToken = await encrypt(
-      newRefreshToken,
-      ENCRYPTION_KEY
-    );
-    const tokenExpiresAt = new Date(Date.now() + expires_in * 1000);
-    const updateQuery = `
+      const {
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+      } = providerResult.rows[0];
+      const clientId = await decrypt(
+        encrypted_app_id,
+        app_id_iv,
+        app_id_tag,
+        ENCRYPTION_KEY
+      );
+      const clientSecret = await decrypt(
+        encrypted_app_key,
+        app_key_iv,
+        app_key_tag,
+        ENCRYPTION_KEY
+      );
+      const refreshToken = await decrypt(
+        encrypted_refresh_token,
+        refresh_token_iv,
+        refresh_token_tag,
+        ENCRYPTION_KEY
+      );
+      const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString(
+        'base64'
+      );
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      // @ts-expect-error TS(2345): Argument of type 'string | null' is not assignable... Remove this comment to see the full error message
+      params.append('refresh_token', refreshToken);
+      const response = await axios.post(
+        `${FITBIT_API_BASE_URL}/oauth2/token`,
+        params,
+        {
+          headers: {
+            Authorization: `Basic ${authHeader}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        }
+      );
+      const {
+        access_token,
+        refresh_token: newRefreshToken,
+        expires_in,
+        scope,
+      } = response.data;
+      const encryptedAccessToken = await encrypt(access_token, ENCRYPTION_KEY);
+      const encryptedNewRefreshToken = await encrypt(
+        newRefreshToken,
+        ENCRYPTION_KEY
+      );
+      const tokenExpiresAt = new Date(Date.now() + expires_in * 1000);
+      const updateQuery = `
             UPDATE external_data_providers
             SET encrypted_access_token = $1, access_token_iv = $2, access_token_tag = $3,
                 encrypted_refresh_token = $4, refresh_token_iv = $5, refresh_token_tag = $6,
                 scope = $7, token_expires_at = $8, updated_at = NOW()
             WHERE user_id = $9 AND provider_type = 'fitbit'
         `;
-    await client.query(updateQuery, [
-      encryptedAccessToken.encryptedText,
-      encryptedAccessToken.iv,
-      encryptedAccessToken.tag,
-      encryptedNewRefreshToken.encryptedText,
-      encryptedNewRefreshToken.iv,
-      encryptedNewRefreshToken.tag,
-      scope,
-      tokenExpiresAt,
-      userId,
-    ]);
-    return access_token;
+      await client.query(updateQuery, [
+        encryptedAccessToken.encryptedText,
+        encryptedAccessToken.iv,
+        encryptedAccessToken.tag,
+        encryptedNewRefreshToken.encryptedText,
+        encryptedNewRefreshToken.iv,
+        encryptedNewRefreshToken.tag,
+        scope,
+        tokenExpiresAt,
+        userId,
+      ]);
+      return access_token;
+    });
   } catch (error) {
     // @ts-expect-error TS(2571): Object is of type 'unknown'.
     log('error', `Error refreshing Fitbit access token: ${error.message}`);

@@ -6,7 +6,7 @@ This directory contains a Nix flake and a NixOS module for running SparkyFitness
 ## Layout
 
 - [`../flake.nix`](../flake.nix) — packages, dev shell and NixOS modules.
-- [`backend.nix`](./backend.nix) — the Express API server (`tsx index.ts`).
+- [`backend.nix`](./backend.nix) — the Express API server (`node --import tsx index.ts`).
 - [`frontend.nix`](./frontend.nix) — the static Vite build.
 - [`garmin.nix`](./garmin.nix) — the Garmin Connect microservice
 - [`module.nix`](./module.nix) — the `services.sparkyfitness` NixOS module
@@ -89,9 +89,13 @@ The file is a systemd `EnvironmentFile` and should contain at least:
 ```
 SPARKY_FITNESS_DB_PASSWORD=...
 SPARKY_FITNESS_APP_DB_PASSWORD=...
-SPARKY_FITNESS_API_ENCRYPTION_KEY=...   # openssl rand -hex 32
+# SPARKY_FITNESS_API_ENCRYPTION_KEY: openssl rand -hex 32
+SPARKY_FITNESS_API_ENCRYPTION_KEY=...
+# BETTER_AUTH_SECRET: openssl rand -base64 32
 BETTER_AUTH_SECRET=...
 ```
+
+systemd does not support trailing comments; a `# ...` after a value becomes part of the value.
 
 When `database.createLocally = true` (the default), `SPARKY_FITNESS_DB_PASSWORD`
 is also used to provision the local PostgreSQL owner role.

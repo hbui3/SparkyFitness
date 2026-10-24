@@ -25,6 +25,14 @@ const requiredLegacyString = (fieldName: string) =>
     z.string().min(1, `${fieldName} is required`)
   );
 
+const requiredDayString = (fieldName: string) =>
+  z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() : value),
+    z
+      .string()
+      .refine(isDayString, `${fieldName} must be a YYYY-MM-DD calendar date`)
+  );
+
 const optionalLegacyString = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.string().optional()
@@ -222,7 +230,7 @@ export type UpsertCustomEntryBody = z.infer<typeof UpsertCustomEntryBodySchema>;
 
 export const DateParamSchema = z
   .object({
-    date: requiredLegacyString('date'),
+    date: requiredDayString('date'),
   })
   .loose();
 
@@ -238,43 +246,18 @@ export type UuidParam = z.infer<typeof UuidParamSchema>;
 
 export const DateRangeParamSchema = z
   .object({
-    startDate: requiredLegacyString('startDate'),
-    endDate: requiredLegacyString('endDate'),
-  })
-  .loose();
-
-export type DateRangeParam = z.infer<typeof DateRangeParamSchema>;
-
-const requiredDayString = (fieldName: string) =>
-  z.preprocess(
-    (value) => (typeof value === 'string' ? value.trim() : value),
-    z
-      .string()
-      .refine(isDayString, `${fieldName} must be a YYYY-MM-DD calendar date`)
-  );
-
-/**
- * Date-range params that are actually validated as calendar days.
- *
- * `DateRangeParamSchema` only asserts a non-empty string, so a malformed date reaches the
- * repository and surfaces as a database error rather than a 400. Fixing that schema in
- * place would change the contract of the endpoints already using it, so new routes adopt
- * this one instead and the older routes are migrated separately.
- */
-export const StrictDateRangeParamSchema = z
-  .object({
     startDate: requiredDayString('startDate'),
     endDate: requiredDayString('endDate'),
   })
   .loose();
 
-export type StrictDateRangeParam = z.infer<typeof StrictDateRangeParamSchema>;
+export type DateRangeParam = z.infer<typeof DateRangeParamSchema>;
 
 export const CustomMeasurementsRangeParamSchema = z
   .object({
     categoryId: requiredLegacyString('categoryId'),
-    startDate: requiredLegacyString('startDate'),
-    endDate: requiredLegacyString('endDate'),
+    startDate: requiredDayString('startDate'),
+    endDate: requiredDayString('endDate'),
   })
   .loose();
 
@@ -284,9 +267,7 @@ export type CustomMeasurementsRangeParam = z.infer<
 
 /**
  * Query params for the "latest manual custom value per category on or before a
- * date" lookup. The day is validated as a real calendar day rather than only a
- * non-empty string (as `DateParamSchema` does), so a malformed value is a 400
- * here instead of a database error surfacing as a 500.
+ * date" lookup.
  */
 export const LatestCustomEntryQuerySchema = z
   .object({
@@ -326,6 +307,7 @@ export const ImportHealthDataItemSchema = z
     timestamp: optionalLegacyString,
     source: optionalLegacyString,
     source_id: optionalLegacyString,
+    exercise_source_id: optionalLegacyString,
     record_timezone: nullableOptionalLegacyString,
     record_utc_offset_minutes: nullableOptionalLegacyInteger,
     // Sleep session fields (only present on SleepSession rows).

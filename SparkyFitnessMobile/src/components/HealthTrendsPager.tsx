@@ -3,7 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, Text, View } from 'react-native';
 import PagerView from 'react-native-pager-view';
 import type { HealthTrendKey } from '../constants/healthTrends';
-import type { SleepTrendSeries } from '../hooks/useHealthTrends';
+import type {
+  CaloriesTrendSeries,
+  SleepTrendSeries,
+} from '../hooks/useHealthTrends';
 import type {
   StepsDataPoint,
   WeightDataPoint,
@@ -12,20 +15,38 @@ import type {
   HealthTrendDateRange,
   HealthTrendSeries,
   HydrationDataPoint,
+  Vo2MaxDataPoint,
 } from '../types/healthTrends';
+import CaloriesBarChart from './CaloriesBarChart';
 import HydrationBarChart from './HydrationBarChart';
 import SleepTimelineChart from './SleepTimelineChart';
 import StepsBarChart from './StepsBarChart';
+import Vo2MaxLineChart from './Vo2MaxLineChart';
 import WeightLineChart from './WeightLineChart';
 
 type HealthTrendsPagerProps = {
-  steps: HealthTrendSeries<StepsDataPoint>;
+  steps: HealthTrendSeries<StepsDataPoint> & {
+    stepsGoals?: (number | null)[];
+  };
   weight: HealthTrendSeries<WeightDataPoint>;
   sleep: SleepTrendSeries;
   hydration: HealthTrendSeries<HydrationDataPoint>;
+  calories: CaloriesTrendSeries;
+  /** Optional so a caller that predates the trend still renders; absent reads as no data. */
+  vo2max?: HealthTrendSeries<Vo2MaxDataPoint>;
   range: HealthTrendDateRange;
   weightUnit: string;
   waterUnit: string;
+  /** The live target weight. `target_weight` has no per-day history anywhere in the
+   * schema (a single scalar profile field), so this stays a flat line across the whole
+   * window by necessity -- there is nothing to step between. */
+  weightGoal?: number | null;
+  /** The resolved hydration goal for each day in the window, same order as
+   * `hydration.data`, stepping to a new value on the day it actually changed. */
+  hydrationGoals?: (number | null)[];
+  /** The resolved calorie goal for each day in the window, same order as
+   * `calories.data`, stepping to a new value on the day it actually changed. */
+  calorieGoals?: (number | null)[];
   visibleTrends: readonly HealthTrendKey[];
   activePage: number;
   onPageSelected: (page: number) => void;
@@ -46,14 +67,25 @@ const PAGER_HEIGHT = 350;
 const shouldShowTrend = <TPoint,>(series: HealthTrendSeries<TPoint>): boolean =>
   series.isLoading || series.isError || series.data.length > 0;
 
+const NO_VO2MAX: HealthTrendSeries<Vo2MaxDataPoint> = {
+  data: [],
+  isLoading: false,
+  isError: false,
+};
+
 const HealthTrendsPager: React.FC<HealthTrendsPagerProps> = ({
   steps,
   weight,
   sleep,
   hydration,
+  calories,
+  vo2max = NO_VO2MAX,
   range,
   weightUnit,
   waterUnit,
+  weightGoal,
+  hydrationGoals,
+  calorieGoals,
   visibleTrends,
   activePage,
   onPageSelected,
@@ -63,12 +95,26 @@ const HealthTrendsPager: React.FC<HealthTrendsPagerProps> = ({
   const renderTrend: Record<HealthTrendKey, () => React.ReactElement> = {
     steps: () => <StepsBarChart {...steps} range={range} />,
     weight: () => (
-      <WeightLineChart {...weight} range={range} unit={weightUnit} />
+      <WeightLineChart
+        {...weight}
+        range={range}
+        unit={weightUnit}
+        goal={weightGoal}
+      />
     ),
     sleep: () => <SleepTimelineChart {...sleep} range={range} />,
     hydration: () => (
-      <HydrationBarChart {...hydration} range={range} unit={waterUnit} />
+      <HydrationBarChart
+        {...hydration}
+        range={range}
+        unit={waterUnit}
+        goals={hydrationGoals}
+      />
     ),
+    calories: () => (
+      <CaloriesBarChart {...calories} range={range} goals={calorieGoals} />
+    ),
+    vo2max: () => <Vo2MaxLineChart {...vo2max} range={range} />,
   };
 
   const hasTrendData: Record<HealthTrendKey, () => boolean> = {
@@ -84,12 +130,23 @@ const HealthTrendsPager: React.FC<HealthTrendsPagerProps> = ({
       hydration.isLoading ||
       hydration.isError ||
       hydration.data.some((point) => point.milliliters > 0),
+    // Same reasoning as hydration: `useCaloriesRange` zero-fills every day too.
+    calories: () =>
+      calories.isLoading ||
+      calories.isError ||
+      calories.data.some((point) => point.calories > 0),
+    // Only people whose watch or app syncs VO2 max have any, so the page waits
+    // for a reading: no loading flash or error card for everyone else.
+    vo2max: () => vo2max.data.length > 0,
   };
 
   // A trend the user configured to show but that has no data for in this window still hides itself
   const keysWithData = visibleTrends.filter((key) => hasTrendData[key]());
+  // VO2 max waits for a reading, so an empty one is never the fallback page.
   const keysToRender =
-    keysWithData.length > 0 ? keysWithData : visibleTrends.slice(0, 1);
+    keysWithData.length > 0
+      ? keysWithData
+      : visibleTrends.filter((key) => key !== 'vo2max').slice(0, 1);
 
   const pages: HealthTrendPage[] = keysToRender.map((key) => ({
     key,
@@ -156,10 +213,14 @@ const HealthTrendsPager: React.FC<HealthTrendsPagerProps> = ({
     return (
       <View className="bg-surface rounded-xl p-6 my-2 shadow-sm">
         <Text className="text-text-muted text-sm text-center">
-          {t('charts.allTrendsHidden', {
-            defaultValue:
-              'All graphs are hidden. Choose which to show in Dashboard Settings.',
-          })}
+          {visibleTrends.length > 0
+            ? t('charts.noTrendData', {
+                defaultValue: 'No data to graph yet.',
+              })
+            : t('charts.allTrendsHidden', {
+                defaultValue:
+                  'All graphs are hidden. Choose which to show in Dashboard Settings.',
+              })}
         </Text>
       </View>
     );

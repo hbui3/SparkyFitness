@@ -8,6 +8,8 @@ import {
 } from './supplementSql.js';
 
 export interface ReportExerciseEntryRow {
+  exercise_modality?: string | null;
+  workout_format?: string;
   id: string;
   entry_date: string;
   entry_time: string | null;
@@ -634,6 +636,8 @@ async function getExerciseEntries(
          activity_window.activity_started_at,
          activity_window.activity_ended_at,
          activity_window.activity_started_at_local,
+         ee.modality AS exercise_modality,
+         COALESCE(epe.workout_format, 'standard') AS workout_format,
          COALESCE(
            (SELECT json_agg(set_data ORDER BY set_data.set_number)
             FROM (
@@ -677,6 +681,7 @@ async function getExerciseEntries(
          FROM exercise_entry_activity_details detail
          WHERE detail.exercise_entry_id = ee.id
        ) activity_window ON TRUE
+       LEFT JOIN exercise_preset_entries epe ON ee.exercise_preset_entry_id = epe.id
        WHERE ee.user_id = $1 AND ee.entry_date BETWEEN $2 AND $3`;
     const params: (string | number)[] = [userId, startDate, endDate];
     let paramIndex = 4;
@@ -698,6 +703,46 @@ async function getExerciseEntries(
     query += ' ORDER BY ee.entry_date DESC, ee.created_at DESC';
     const result = await client.query(query, params);
     return result.rows as ReportExerciseEntryRow[];
+  } finally {
+    client.release();
+  }
+}
+/**
+ * Check-in body weights for bodyweight-exercise volume (`bodyWeightOnDay` in
+ * @workspace/shared): every reading in the range, plus the last one before it
+ * and the first one after it, so a day with no reading of its own still
+ * resolves. Under RLS a delegate without check-in access gets none back, and
+ * bodyweight sets then count their added weight only.
+ */
+async function getBodyWeightReadings(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<{ date: string; weightKg: number }[]> {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      `(SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS date, weight
+          FROM check_in_measurements
+         WHERE user_id = $1 AND weight > 0 AND entry_date BETWEEN $2 AND $3)
+       UNION ALL
+       (SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS date, weight
+          FROM check_in_measurements
+         WHERE user_id = $1 AND weight > 0 AND entry_date < $2
+         ORDER BY entry_date DESC LIMIT 1)
+       UNION ALL
+       (SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS date, weight
+          FROM check_in_measurements
+         WHERE user_id = $1 AND weight > 0 AND entry_date > $3
+         ORDER BY entry_date ASC LIMIT 1)`,
+      [userId, startDate, endDate]
+    );
+    return result.rows.map(
+      (row: { date: string; weight: string | number }) => ({
+        date: row.date,
+        weightKg: Number(row.weight),
+      })
+    );
   } finally {
     client.release();
   }
@@ -764,10 +809,12 @@ async function getDailyNutritionTotalsRange(
     // trends include supplements too. The date set is the UNION of food and taken-supplement
     // dates, so a day with only supplements logged still yields a row rather than
     // disappearing from the range.
-    const rangeSelects = RANGE_COLS.map(
+    let rangeSelects = RANGE_COLS.map(
       ([col, alias]) =>
         `COALESCE(SUM(fe.${col} * fe.quantity / NULLIF(fe.serving_size, 0)), 0) + ${supplementFixedSubquery(col, '$1', 'd.entry_date')} as ${alias}`
     ).join(',\n              ');
+    const legacyAmbiguousEntryCount = String.raw`COUNT(fe.id) FILTER (WHERE fe.unit ~ '^\s*[0-9]+(?:\.[0-9]+)?\s+\S') AS legacy_ambiguous_entry_count`;
+    rangeSelects += `,\n              ${legacyAmbiguousEntryCount}`;
     const result = await client.query(
       `SELECT d.entry_date,
               ${rangeSelects}
@@ -793,12 +840,70 @@ async function getDailyNutritionTotalsRange(
   }
 }
 
+/**
+ * Every logged workout in the range with just what training load needs: its
+ * day, length and average heart rate. Synced calorie summaries are not
+ * workouts.
+ */
+async function getTrainingLoadSessions(
+  userId: string,
+  startDate: string,
+  endDate: string,
+  canonicalEntryIds?: readonly string[]
+): Promise<
+  { day: string; durationMinutes: number; avgHeartRate: number | null }[]
+> {
+  const client = await getClient(userId);
+  try {
+    const result = await client.query(
+      // A workout logged without a duration still has its sets: their timing
+      // (seconds, per set) stands in for the length before the positive filter.
+      `SELECT day, duration_minutes, avg_heart_rate
+       FROM (
+         SELECT ee.entry_date,
+                TO_CHAR(ee.entry_date, 'YYYY-MM-DD') AS day,
+                COALESCE(
+                  NULLIF(ee.duration_minutes, 0),
+                  (SELECT SUM(COALESCE(s.duration, 0)) / 60.0
+                   FROM exercise_entry_sets s
+                   WHERE s.exercise_entry_id = ee.id),
+                  0
+                ) AS duration_minutes,
+                ee.avg_heart_rate
+         FROM exercise_entries ee
+         WHERE ee.user_id = $1
+           AND ee.entry_date BETWEEN $2 AND $3
+           AND ee.exercise_name != 'Active Calories'
+       ) sessions
+       WHERE duration_minutes > 0
+       ORDER BY entry_date ASC`,
+      [userId, startDate, endDate, canonicalEntryIds ?? null]
+    );
+    return result.rows.map(
+      (row: {
+        day: string;
+        duration_minutes: string | number;
+        avg_heart_rate: string | number | null;
+      }) => ({
+        day: row.day,
+        durationMinutes: Number(row.duration_minutes),
+        avgHeartRate:
+          row.avg_heart_rate === null ? null : Number(row.avg_heart_rate),
+      })
+    );
+  } finally {
+    client.release();
+  }
+}
+
 export { getNutritionData };
+export { getTrainingLoadSessions };
 export { getTabularFoodData };
 export { getMeasurementData };
 export { getCustomMeasurementsData };
 export { getMiniNutritionTrends };
 export { getExerciseEntries };
+export { getBodyWeightReadings };
 export { getExerciseNames };
 export { getDailyNutritionTotalsRange };
 export default {
@@ -808,6 +913,8 @@ export default {
   getCustomMeasurementsData,
   getMiniNutritionTrends,
   getExerciseEntries,
+  getTrainingLoadSessions,
+  getBodyWeightReadings,
   getExerciseNames,
   getDailyNutritionTotalsRange,
 };

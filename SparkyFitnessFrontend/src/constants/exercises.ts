@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { ExerciseModality } from '@workspace/shared';
 import type { WorkoutPresetSet } from '@/types/workout';
+import i18n from 'i18next';
 export const EXERCISE_CATEGORIES = [
   {
     value: 'general',
@@ -135,6 +136,21 @@ export const EXERCISE_MODALITY_OPTIONS = [
     defaultLabel: 'Reps',
   },
   {
+    value: 'bodyweight_reps',
+    labelKey: 'exercise.modality.bodyweightReps',
+    defaultLabel: 'Bodyweight (+/− weight)',
+  },
+  {
+    value: 'weight_distance',
+    labelKey: 'exercise.modality.weightDistance',
+    defaultLabel: 'Weight & Distance (carries)',
+  },
+  {
+    value: 'weight_duration',
+    labelKey: 'exercise.modality.weightDuration',
+    defaultLabel: 'Weight & Duration (loaded holds)',
+  },
+  {
     value: 'duration',
     labelKey: 'exercise.modality.duration',
     defaultLabel: 'Duration',
@@ -166,7 +182,15 @@ export const defaultSetForModality = (
         weight: null,
         duration: null,
       }
-    : { set_number: 1, set_type: 'Working Set', reps: 10, weight: null };
+    : modality === 'weight_duration' || modality === 'weight_distance'
+      ? {
+          set_number: 1,
+          set_type: 'Working Set',
+          reps: null,
+          weight: null,
+          duration: null,
+        }
+      : { set_number: 1, set_type: 'Working Set', reps: 10, weight: null };
 
 export const DAYS_OF_WEEK = [
   { id: 0, name: 'Sunday' },
@@ -307,13 +331,23 @@ export const dropdownOptions: Record<string, string[]> = {
 export const DROPDOWN_GUIDES = [
   {
     key: 'levelLabel',
-    label: 'Level:',
+    get label() {
+      return i18n.t('exercises.level', 'Level:');
+    },
     options: dropdownOptions['level'],
   },
-  { key: 'forceLabel', label: 'Force:', options: dropdownOptions['force'] },
+  {
+    key: 'forceLabel',
+    get label() {
+      return i18n.t('exercises.force', 'Force:');
+    },
+    options: dropdownOptions['force'],
+  },
   {
     key: 'mechanicLabel',
-    label: 'Mechanic:',
+    get label() {
+      return i18n.t('exercises.mechanic', 'Mechanic:');
+    },
     options: dropdownOptions['mechanic'],
   },
 ];
@@ -326,23 +360,79 @@ export type SetTableModality = Exclude<ExerciseModality, 'duration_distance'>;
 
 export const SET_TABLE_LAYOUT: Record<
   SetTableModality,
-  { gridClass: string; showReps: boolean; showWeight: boolean }
+  {
+    gridClass: string;
+    /** Same grid with one extra column for RIR (diary entries only). */
+    gridClassWithRir: string;
+    showReps: boolean;
+    showWeight: boolean;
+    /** Carries record a distance (metres/yards) in place of reps. */
+    showDistance: boolean;
+    /**
+     * The weight column is added (+) or assisting (−) weight on top of body
+     * weight, so it takes negatives and is labelled as such.
+     */
+    signedWeight: boolean;
+  }
 > = {
   weight_reps: {
     gridClass:
       'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    gridClassWithRir:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
     showReps: true,
     showWeight: true,
+    showDistance: false,
+    signedWeight: false,
+  },
+  bodyweight_reps: {
+    gridClass:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    gridClassWithRir:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    showReps: true,
+    showWeight: true,
+    showDistance: false,
+    signedWeight: true,
   },
   reps_only: {
     gridClass: 'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    gridClassWithRir:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
     showReps: true,
     showWeight: false,
+    showDistance: false,
+    signedWeight: false,
   },
   duration: {
     gridClass: 'grid grid-cols-[20px_140px_1fr_1fr_1fr_72px] gap-1.5 grow',
+    gridClassWithRir:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
     showReps: false,
     showWeight: false,
+    showDistance: false,
+    signedWeight: false,
+  },
+  // Loaded holds: weight plus the always-present duration column.
+  weight_duration: {
+    gridClass: 'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    gridClassWithRir:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    showReps: false,
+    showWeight: true,
+    showDistance: false,
+    signedWeight: false,
+  },
+  // Carries: weight and distance (in the reps slot) plus optional duration.
+  weight_distance: {
+    gridClass:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    gridClassWithRir:
+      'grid grid-cols-[20px_140px_1fr_1fr_1fr_1fr_1fr_1fr_72px] gap-1.5 grow',
+    showReps: false,
+    showWeight: true,
+    showDistance: true,
+    signedWeight: false,
   },
 };
 
@@ -366,19 +456,4 @@ export const SET_TYPE_STYLES: Record<string, string> = {
   Technique: 'bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300',
   Isometric:
     'bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-};
-
-/**
- * Maps the body-map SVG's `path[class]` names to the muscle vocabulary stored in
- * exercises.primary_muscles/secondary_muscles (the free-exercise-db muscle names, e.g.
- * "abdominals", "lower back", "quadriceps"). Shared by BodyMapFilter (exercise search
- * filter) and WorkoutSessionBodyMap (workout session muscle summary) so the SVG-to-schema
- * mapping only exists once.
- */
-export const svgClassToSchemaName: Record<string, string> = {
-  abdominal: 'abdominals',
-  lowerback: 'lower back',
-  quads: 'quadriceps',
-  obliques: 'abdominals', // Map obliques to abdominals
-  // Add other mappings if necessary, e.g. 'lats' if it appears in SVG
 };

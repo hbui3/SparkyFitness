@@ -144,6 +144,174 @@ describe('sparky_manage_goals', () => {
     });
   });
 
+  // set_goals has no parameters for the exercise targets, the macro/meal
+  // percentages or custom meal percentages. manageGoalTimeline treats a missing
+  // value as "set to 0/null" (cleanNumber), so they must be carried over from the
+  // existing goals -- the web UI always sends them.
+  it('set_goals keeps exercise targets and meal/macro percentages it has no parameters for', async () => {
+    vi.mocked(goalService.manageGoalTimeline).mockResolvedValue({
+      message: 'ok',
+    });
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({
+      calories: 2000,
+      protein: 150,
+      carbs: 200,
+      fat: 70,
+      target_exercise_calories_burned: 400,
+      target_exercise_duration_minutes: 45,
+      protein_percentage: 30,
+      carbs_percentage: 40,
+      fat_percentage: 30,
+      breakfast_percentage: 25,
+      lunch_percentage: 35,
+      dinner_percentage: 30,
+      snacks_percentage: 10,
+      custom_meal_percentages: { 'Post-workout': 5 },
+    });
+    await tools.sparky_manage_goals.execute!(
+      { action: 'set_goals', start_date: '2026-06-15', calories: 2200 },
+      opts
+    );
+    expect(goalService.manageGoalTimeline).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        p_calories: 2200,
+        p_target_exercise_calories_burned: 400,
+        p_target_exercise_duration_minutes: 45,
+        p_protein_percentage: 30,
+        p_carbs_percentage: 40,
+        p_fat_percentage: 30,
+        p_breakfast_percentage: 25,
+        p_lunch_percentage: 35,
+        p_dinner_percentage: 30,
+        p_snacks_percentage: 10,
+        custom_meal_percentages: { 'Post-workout': 5 },
+      })
+    );
+  });
+
+  // With all three macro percentages present, manageGoalTimeline recomputes the
+  // gram values from them. An explicit gram value from the caller must win, so
+  // the stored percentages are not carried over in that case.
+  it('set_goals lets explicit macro grams win over stored macro percentages', async () => {
+    vi.mocked(goalService.manageGoalTimeline).mockResolvedValue({
+      message: 'ok',
+    });
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({
+      calories: 2000,
+      protein: 150,
+      carbs: 200,
+      fat: 70,
+      protein_percentage: 30,
+      carbs_percentage: 40,
+      fat_percentage: 30,
+      breakfast_percentage: 25,
+    });
+    await tools.sparky_manage_goals.execute!(
+      { action: 'set_goals', start_date: '2026-06-15', protein: 180 },
+      opts
+    );
+    const payload = vi
+      .mocked(goalService.manageGoalTimeline)
+      .mock.calls.at(-1)![1];
+    expect(payload).toMatchObject({
+      p_protein: 180,
+      p_breakfast_percentage: 25,
+    });
+    expect(payload.p_protein_percentage).toBeUndefined();
+    expect(payload.p_carbs_percentage).toBeUndefined();
+    expect(payload.p_fat_percentage).toBeUndefined();
+  });
+
+  // #2115/#1958/#1925: caffeine_mg and alcohol_g were added as first-class
+  // user_goals columns, but this tool never grew parameters for either, so
+  // Sparky could not set a caffeine or alcohol goal on request.
+  it('set_goals persists caffeine_mg and alcohol_g', async () => {
+    vi.mocked(goalService.manageGoalTimeline).mockResolvedValue({
+      message: 'ok',
+    });
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({
+      calories: 2000,
+      protein: 150,
+      carbs: 250,
+      fat: 67,
+      water_goal_ml: 2000,
+    });
+
+    const result = await tools.sparky_manage_goals.execute!(
+      {
+        action: 'set_goals',
+        start_date: '2026-06-15',
+        caffeine_mg: 300,
+        alcohol_g: 20,
+      },
+      opts
+    );
+
+    expect(result).toBe('✅ Goals set successfully starting from 2026-06-15.');
+    expect(goalService.manageGoalTimeline).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ p_caffeine_mg: 300, p_alcohol_g: 20 })
+    );
+  });
+
+  it('infers set_goals when action is omitted and only caffeine_mg or alcohol_g is sent', async () => {
+    vi.mocked(goalService.manageGoalTimeline).mockResolvedValue({
+      message: 'ok',
+    });
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({
+      calories: 2000,
+      protein: 150,
+      carbs: 250,
+      fat: 67,
+      water_goal_ml: 2000,
+    });
+
+    const caffeineOnly = await tools.sparky_manage_goals.execute!(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { caffeine_mg: 300 } as any,
+      opts
+    );
+    expect(caffeineOnly).toMatch(/^✅ Goals set successfully/);
+    expect(goalService.manageGoalTimeline).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ p_caffeine_mg: 300 })
+    );
+
+    vi.mocked(goalService.manageGoalTimeline).mockClear();
+
+    const alcoholOnly = await tools.sparky_manage_goals.execute!(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { alcohol_g: 20 } as any,
+      opts
+    );
+    expect(alcoholOnly).toMatch(/^✅ Goals set successfully/);
+    expect(goalService.manageGoalTimeline).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ p_alcohol_g: 20 })
+    );
+  });
+
+  it('get_goals renders caffeine_mg and alcohol_g when set', async () => {
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({
+      calories: 2000,
+      protein: 150,
+      carbs: 250,
+      fat: 67,
+      water_goal_ml: 2000,
+      caffeine_mg: 300,
+      alcohol_g: 20,
+    });
+
+    const result = await tools.sparky_manage_goals.execute!(
+      { action: 'get_goals', target_date: '2026-06-01' },
+      opts
+    );
+
+    expect(result).toContain('- **Caffeine:** 300 mg\n');
+    expect(result).toContain('- **Alcohol:** 20 g\n');
+  });
+
   it('set_goals without start_date defaults to today', async () => {
     vi.mocked(goalService.manageGoalTimeline).mockResolvedValue({
       message: 'ok',
@@ -330,6 +498,29 @@ describe('sparky_get_goal_snapshot', () => {
       todayInZone('UTC'),
       undefined,
       true
+    );
+  });
+
+  // #2115/#1958/#1925: this tool projects the server's goal object down to
+  // its own hand-enumerated column set (GOAL_SNAPSHOT_FIELDS), separate from
+  // sparky_manage_goals' get_goals action, so it needed the same caffeine_mg
+  // and alcohol_g addition independently.
+  it('includes caffeine_mg and alcohol_g when set', async () => {
+    vi.mocked(goalService.getUserGoals).mockResolvedValue({
+      calories: 2000,
+      caffeine_mg: 300,
+      alcohol_g: 20,
+    });
+
+    const result = await tools.sparky_get_goal_snapshot.execute!({}, opts);
+
+    expect(result).toBe(
+      JSON.stringify({
+        calories: 2000,
+        caffeine_mg: 300,
+        alcohol_g: 20,
+        goal_directions: {},
+      })
     );
   });
 

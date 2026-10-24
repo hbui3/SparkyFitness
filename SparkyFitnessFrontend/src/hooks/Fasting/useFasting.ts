@@ -9,9 +9,11 @@ import {
   getFastingDataRange,
   updateFast,
   deleteFast,
+  getFastingPreferences,
+  updateFastingPreferences,
 } from '@/api/Fasting/fastingService';
 import { fastingKeys } from '@/api/keys/fasting';
-import { FastingLog } from '@/types/fasting';
+import { FastingLog, UserFastingPreferences } from '@/types/fasting';
 
 export const useCurrentFast = () => {
   return useQuery({
@@ -155,6 +157,24 @@ export const useDeleteFastMutation = () => {
         'fasting.deletedSuccessfully',
         'Fast deleted successfully.'
       ),
+    },
+  });
+};
+
+export const useFastingPreferences = () => {
+  return useQuery<UserFastingPreferences>({
+    queryKey: fastingKeys.preferences(),
+    queryFn: getFastingPreferences,
+  });
+};
+
+export const useUpdateFastingPreferencesMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: Partial<UserFastingPreferences>) =>
+      updateFastingPreferences(updates as Record<string, unknown>),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: fastingKeys.all });
     },
   });
 };

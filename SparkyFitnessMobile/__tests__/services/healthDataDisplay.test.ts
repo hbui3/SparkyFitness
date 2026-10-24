@@ -357,7 +357,7 @@ describe('fetchHealthDisplayData', () => {
       {
         recordType: 'WheelchairPushes',
         records: [{ count: 1200 }, { count: 300 }],
-        expected: (1500).toLocaleString(),
+        expected: formatLocalizedNumber(1500),
       },
       {
         recordType: 'ExerciseSession',

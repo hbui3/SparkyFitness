@@ -1,13 +1,13 @@
-import { z } from "zod";
-import { coachMealPlanningDaySchema } from "./CoachPantryItems.zod.ts";
+import { z } from 'zod';
+import { coachMealPlanningDaySchema } from './CoachPantryItems.zod.ts';
 
 export const coachMealPlanStatusSchema = z.enum([
-  "active",
-  "completed",
-  "archived",
+  'active',
+  'completed',
+  'archived',
 ]);
 
-export const coachMealPlanSourceSchema = z.enum(["coach", "user"]);
+export const coachMealPlanSourceSchema = z.enum(['coach', 'user']);
 
 export const coachMealPlansSchema = z
   .object({
@@ -32,9 +32,9 @@ export const coachMealPlansSchema = z
       return durationDays >= 0 && durationDays <= 6;
     },
     {
-      message: "Meal plan must cover between one and seven calendar days",
-      path: ["end_date"],
-    },
+      message: 'Meal plan must cover between one and seven calendar days',
+      path: ['end_date'],
+    }
   );
 
 export type CoachMealPlanStatus = z.infer<typeof coachMealPlanStatusSchema>;

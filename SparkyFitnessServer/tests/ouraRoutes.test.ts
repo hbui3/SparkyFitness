@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // @ts-expect-error TS(7016): no types for supertest
 import request from 'supertest';
 import express from 'express';
@@ -43,10 +43,24 @@ vi.mock('../services/ouraService.js', () => ({
     }),
   },
 }));
+vi.mock('../models/globalSettingsRepository.js', () => ({
+  // The mock-data options are off unless an admin turned them on; these route
+  // tests exercise the normal path, so the options never reach the service.
+  isMockDataEnabled: vi.fn().mockResolvedValue(false),
+}));
 
-import ouraRoutes from '../routes/ouraRoutes.js';
+import ouraRoutes, { getOuraRedirectUri } from '../routes/ouraRoutes.js';
 import ouraIntegrationService from '../integrations/oura/ouraService.js';
 import ouraService from '../services/ouraService.js';
+
+vi.mock('../services/providerSyncClaim.js', async (importActual) => ({
+  ...(await importActual<typeof import('../services/providerSyncClaim.js')>()),
+  startProviderSync: vi.fn(async (_target, sync) => ({ running: sync() })),
+}));
+import {
+  SYNC_ALREADY_RUNNING_RESPONSE,
+  startProviderSync,
+} from '../services/providerSyncClaim.js';
 
 const app = express();
 app.use(express.json());
@@ -66,6 +80,33 @@ describe('GET /oura/authorize', () => {
       expect.stringContaining('/oura/callback')
     );
   });
+
+  it('honors a valid client-provided redirect_uri', async () => {
+    process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS = 'http://localhost:8080';
+    const res = await request(app)
+      .get('/oura/authorize?redirect_uri=http://localhost:8080/oura/callback')
+      .set('Origin', 'http://localhost:8080');
+    expect(res.statusCode).toBe(200);
+    expect(ouraIntegrationService.getAuthorizationUrl).toHaveBeenCalledWith(
+      'user-1',
+      'http://localhost:8080/oura/callback'
+    );
+  });
+
+  it('falls back to default if client provides an untrusted redirect_uri', async () => {
+    const res = await request(app)
+      .get('/oura/authorize?redirect_uri=https://untrusted.test/oura/callback')
+      .set('Origin', 'https://untrusted.test');
+    expect(res.statusCode).toBe(200);
+    expect(ouraIntegrationService.getAuthorizationUrl).toHaveBeenCalledWith(
+      'user-1',
+      expect.stringContaining('/oura/callback')
+    );
+    expect(ouraIntegrationService.getAuthorizationUrl).not.toHaveBeenCalledWith(
+      'user-1',
+      'https://untrusted.test/oura/callback'
+    );
+  });
 });
 
 describe('POST /oura/callback', () => {
@@ -81,6 +122,20 @@ describe('POST /oura/callback', () => {
     );
   });
 
+  it('honors a client-provided redirect_uri in callback', async () => {
+    process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS = 'http://localhost:8080';
+    const res = await request(app).post('/oura/callback').send({
+      code: 'auth-code-1',
+      redirect_uri: 'http://localhost:8080/oura/callback',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(ouraIntegrationService.exchangeCodeForTokens).toHaveBeenCalledWith(
+      'user-1',
+      'auth-code-1',
+      'http://localhost:8080/oura/callback'
+    );
+  });
+
   it('rejects a missing code with 400', async () => {
     const res = await request(app).post('/oura/callback').send({});
     expect(res.statusCode).toBe(400);
@@ -88,7 +143,82 @@ describe('POST /oura/callback', () => {
   });
 });
 
+describe('getOuraRedirectUri helper', () => {
+  const origFrontendUrl = process.env.SPARKY_FITNESS_FRONTEND_URL;
+  const origExtraOrigins = process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS;
+
+  beforeEach(() => {
+    process.env.SPARKY_FITNESS_FRONTEND_URL = 'https://sparky.test/';
+    delete process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS;
+  });
+
+  afterAll(() => {
+    process.env.SPARKY_FITNESS_FRONTEND_URL = origFrontendUrl;
+    process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS = origExtraOrigins;
+  });
+
+  it('strips trailing slashes from default base URL', () => {
+    expect(getOuraRedirectUri()).toBe('https://sparky.test/oura/callback');
+  });
+
+  it('falls back to default if client-provided redirect_uri origin is untrusted', () => {
+    expect(getOuraRedirectUri('http://localhost:3000/oura/callback')).toBe(
+      'https://sparky.test/oura/callback'
+    );
+    expect(getOuraRedirectUri('https://untrusted.test/oura/callback')).toBe(
+      'https://sparky.test/oura/callback'
+    );
+  });
+
+  it('uses client-provided redirect_uri when origin is in SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS', () => {
+    process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS =
+      'https://alt.sparky.test, http://localhost:3000/';
+    expect(getOuraRedirectUri('https://alt.sparky.test/oura/callback')).toBe(
+      'https://alt.sparky.test/oura/callback'
+    );
+    expect(getOuraRedirectUri('http://localhost:3000/oura/callback')).toBe(
+      'http://localhost:3000/oura/callback'
+    );
+  });
+
+  it('uses client-provided redirect_uri when origin matches default frontend URL', () => {
+    expect(getOuraRedirectUri('https://sparky.test/oura/callback')).toBe(
+      'https://sparky.test/oura/callback'
+    );
+  });
+
+  it('falls back to default if path is not /oura/callback', () => {
+    process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS =
+      'https://alt.sparky.test';
+    expect(
+      getOuraRedirectUri('https://alt.sparky.test/malicious/callback')
+    ).toBe('https://sparky.test/oura/callback');
+  });
+
+  it('falls back to default if protocol is not http or https', () => {
+    process.env.SPARKY_FITNESS_EXTRA_TRUSTED_ORIGINS =
+      'https://alt.sparky.test';
+    expect(getOuraRedirectUri('foo://alt.sparky.test/oura/callback')).toBe(
+      'https://sparky.test/oura/callback'
+    );
+  });
+});
+
 describe('POST /oura/sync', () => {
+  it('answers 409 without syncing while another sync holds the account', async () => {
+    vi.mocked(startProviderSync).mockResolvedValueOnce(null);
+
+    const res = await request(app).post('/oura/sync').send({});
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual(SYNC_ALREADY_RUNNING_RESPONSE);
+    expect(startProviderSync).toHaveBeenCalledWith(
+      { userId: 'user-1', providerType: 'oura' },
+      expect.any(Function)
+    );
+    expect(ouraService.syncOuraData).not.toHaveBeenCalled();
+  });
+
   it('triggers a manual sync with a custom date range', async () => {
     const res = await request(app)
       .post('/oura/sync')
@@ -98,7 +228,9 @@ describe('POST /oura/sync', () => {
       'user-1',
       'manual',
       '2026-07-01',
-      '2026-07-10'
+      '2026-07-10',
+      undefined,
+      false
     );
   });
 
@@ -109,7 +241,9 @@ describe('POST /oura/sync', () => {
       'user-1',
       'manual',
       undefined,
-      undefined
+      undefined,
+      undefined,
+      false
     );
   });
 

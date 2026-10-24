@@ -88,6 +88,20 @@ const setGoalsSchema = z
       .describe('Daily vitamin C (mg)'),
     calcium: z.coerce.number().min(0).optional().describe('Daily calcium (mg)'),
     iron: z.coerce.number().min(0).optional().describe('Daily iron (mg)'),
+    caffeine_mg: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'Daily caffeine ceiling (mg). Default 400 (FDA guidance for healthy adults) when never set.'
+      ),
+    alcohol_g: z.coerce
+      .number()
+      .min(0)
+      .optional()
+      .describe(
+        'Daily alcohol / pure ethanol ceiling (g). Default 28 g (~2 US standard drinks) when never set.'
+      ),
     custom_nutrients: z
       .record(z.string(), z.coerce.number())
       .optional()
@@ -212,6 +226,16 @@ export const manageGoalsInput = z.object({
     .optional()
     .describe('set_goals: calcium (mg)'),
   iron: z.coerce.number().min(0).optional().describe('set_goals: iron (mg)'),
+  caffeine_mg: z.coerce
+    .number()
+    .min(0)
+    .optional()
+    .describe('set_goals: daily caffeine ceiling (mg)'),
+  alcohol_g: z.coerce
+    .number()
+    .min(0)
+    .optional()
+    .describe('set_goals: daily alcohol / pure ethanol ceiling (g)'),
   // Custom nutrients as a map of name -> amount (numeric)
   custom_nutrients: z
     .record(z.string(), z.coerce.number())

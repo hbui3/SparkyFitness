@@ -19,6 +19,10 @@ export interface LoginSettings {
   email: {
     enabled: boolean;
   };
+  /** Absent on servers that predate SPARKY_FITNESS_DISABLE_PASSKEY_LOGIN, which always allow passkeys. */
+  passkey?: {
+    enabled: boolean;
+  };
   oidc: {
     enabled: boolean;
     providers: OidcProvider[];
@@ -45,6 +49,7 @@ export interface AccessibleUser {
     can_view_reports?: boolean;
     can_view_food_library?: boolean;
     can_manage_medications?: boolean;
+    can_manage_symptoms?: boolean;
   };
   access_end_date: string | null;
 }

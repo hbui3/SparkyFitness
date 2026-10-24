@@ -13,6 +13,12 @@ vi.mock('../models/mealType');
 vi.mock('../utils/timezoneLoader');
 vi.mock('../models/preferenceRepository');
 vi.mock('../models/foodMisc');
+vi.mock('../db/poolManager.js', () => ({
+  getClient: vi.fn().mockResolvedValue({
+    query: vi.fn().mockResolvedValue({ rows: [] }),
+    release: vi.fn(),
+  }),
+}));
 
 describe('Linked Water Container Increment/Decrement (#2115)', () => {
   const mockUserId = 'test-user-123';
@@ -417,46 +423,56 @@ describe('Linked Water Container Increment/Decrement (#2115)', () => {
         food_ml: 0,
       });
 
-      const res = await measurementService.upsertWaterIntake(
-        mockUserId,
-        mockUserId,
-        entryDate,
-        1,
-        10
-      );
+      // @ts-expect-error TS mock
+      loadUserTimezone.mockResolvedValue('America/New_York');
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-05T14:30:00.000Z'));
 
-      // Food entry was created with food nutrition snapshot
-      expect(foodRepository.createFoodEntry).toHaveBeenCalledWith(
-        expect.objectContaining({
-          user_id: mockUserId,
-          food_id: 'food-uuid-1',
-          variant_id: 'var-uuid-1',
-          meal_type_id: 'meal-type-uuid-1',
-          calories: 120,
-        }),
-        mockUserId
-      );
+      try {
+        const res = await measurementService.upsertWaterIntake(
+          mockUserId,
+          mockUserId,
+          entryDate,
+          1,
+          10
+        );
 
-      // Water log entry was inserted with explicit water_ml * hydration_factor (240 * 0.9 = 216)
-      expect(measurementRepository.insertWaterIntakeLog).toHaveBeenCalledWith(
-        mockUserId,
-        mockUserId,
-        entryDate,
-        216,
-        10,
-        'Matcha Bowl',
-        'manual',
-        null,
-        'created-food-entry-99',
-        0.9
-      );
+        // Food entry was created with food nutrition snapshot and local entry_time (14:30 UTC -> 10:30 EDT)
+        expect(foodRepository.createFoodEntry).toHaveBeenCalledWith(
+          expect.objectContaining({
+            user_id: mockUserId,
+            food_id: 'food-uuid-1',
+            variant_id: 'var-uuid-1',
+            meal_type_id: 'meal-type-uuid-1',
+            calories: 120,
+            entry_time: '10:30',
+          }),
+          mockUserId
+        );
 
-      expect(res).toEqual({
-        water_ml: 216,
-        manual_ml: 216,
-        ledger_ml: 216,
-        food_ml: 0,
-      });
+        // Water log entry was inserted with explicit water_ml * hydration_factor (240 * 0.9 = 216)
+        expect(measurementRepository.insertWaterIntakeLog).toHaveBeenCalledWith(
+          mockUserId,
+          mockUserId,
+          entryDate,
+          216,
+          10,
+          'Matcha Bowl',
+          'manual',
+          null,
+          'created-food-entry-99',
+          0.9
+        );
+
+        expect(res).toEqual({
+          water_ml: 216,
+          manual_ml: 216,
+          ledger_ml: 216,
+          food_ml: 0,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -511,6 +527,70 @@ describe('Linked Water Container Increment/Decrement (#2115)', () => {
         food_ml: 0,
         removedFoodEntryIds: ['food-entry-to-remove-123'],
       });
+    });
+  });
+
+  describe('updateWaterIntakeLogTime - syncs linked food entry time', () => {
+    it('updates linked food entry entry_time in the user non-UTC timezone', async () => {
+      // @ts-expect-error TS mock
+      measurementRepository.getWaterIntakeLogEntryOwnerId.mockResolvedValue(
+        mockUserId
+      );
+      // @ts-expect-error TS mock
+      measurementRepository.updateWaterIntakeLogTime.mockResolvedValue({
+        id: 'log-entry-1',
+        user_id: mockUserId,
+        food_entry_id: 'food-entry-linked-1',
+        logged_at: '2026-09-05T08:42:00.000Z',
+      });
+      // @ts-expect-error TS mock
+      loadUserTimezone.mockResolvedValue('America/New_York');
+      // @ts-expect-error TS mock
+      foodRepository.updateFoodEntryTime.mockResolvedValue({
+        id: 'food-entry-linked-1',
+        entry_time: '04:42',
+      });
+
+      await measurementService.updateWaterIntakeLogTime(
+        'log-entry-1',
+        '2026-09-05T08:42:00.000Z',
+        mockUserId
+      );
+
+      expect(foodRepository.updateFoodEntryTime).toHaveBeenCalledWith(
+        'food-entry-linked-1',
+        mockUserId,
+        '04:42',
+        expect.anything()
+      );
+    });
+
+    it('rolls back and rejects if updating linked food entry returns null', async () => {
+      // @ts-expect-error TS mock
+      measurementRepository.getWaterIntakeLogEntryOwnerId.mockResolvedValue(
+        mockUserId
+      );
+      // @ts-expect-error TS mock
+      measurementRepository.updateWaterIntakeLogTime.mockResolvedValue({
+        id: 'log-entry-1',
+        user_id: mockUserId,
+        food_entry_id: 'food-entry-linked-1',
+        logged_at: '2026-09-05T08:42:00.000Z',
+      });
+      // @ts-expect-error TS mock
+      loadUserTimezone.mockResolvedValue('America/New_York');
+      // @ts-expect-error TS mock
+      foodRepository.updateFoodEntryTime.mockResolvedValue(null);
+
+      await expect(
+        measurementService.updateWaterIntakeLogTime(
+          'log-entry-1',
+          '2026-09-05T08:42:00.000Z',
+          mockUserId
+        )
+      ).rejects.toThrow(
+        /Linked food entry food-entry-linked-1 not found or update failed/i
+      );
     });
   });
 });

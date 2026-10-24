@@ -92,6 +92,7 @@ const GlobalAISettings = () => {
       showCustomModelInput: false,
       custom_model_name: '',
       chat_tool_profile: 'full',
+      supports_audio_input: false,
     });
 
   const [editingService, setEditingService] = useState<string | null>(null);
@@ -202,6 +203,7 @@ const GlobalAISettings = () => {
         showCustomModelInput: false,
         custom_model_name: '',
         chat_tool_profile: 'full',
+        supports_audio_input: false,
       });
       setShowAddForm(false);
       // Success toast is handled by the mutation meta
@@ -280,6 +282,8 @@ const GlobalAISettings = () => {
       showCustomModelInput: isCustomModel,
       custom_model_name: service.model_name ?? '',
       chat_tool_profile: service.chat_tool_profile ?? 'full',
+      reasoning_effort: service.reasoning_effort ?? 'medium',
+      supports_audio_input: service.supports_audio_input,
     });
   };
 
@@ -322,6 +326,40 @@ const GlobalAISettings = () => {
                 id="allow_user_ai_config"
                 checked={globalSettings.allow_user_ai_config !== false}
                 onCheckedChange={handleAllowUserConfigChange}
+                disabled={settingsLoading}
+              />
+            </div>
+          )}
+
+          {/* Allow Non-Admin Private Network AI Toggle */}
+          {globalSettings && (
+            <div className="flex items-center justify-between p-4 border rounded-md mb-4">
+              <div className="flex-1">
+                <Label
+                  htmlFor="allow_private_network_ai"
+                  className="font-medium"
+                >
+                  {t(
+                    'settings.aiService.globalSettings.allowPrivateNetworkAi',
+                    'Allow Private / LAN AI Endpoints'
+                  )}
+                </Label>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {t(
+                    'settings.aiService.globalSettings.allowPrivateNetworkAiDescription',
+                    'Allow non-admin users to connect custom AI services (e.g. Ollama) to private LAN IP addresses.'
+                  )}
+                </p>
+              </div>
+              <Switch
+                id="allow_private_network_ai"
+                checked={globalSettings.allow_private_network_ai === true}
+                onCheckedChange={(checked) => {
+                  updateSettings({
+                    ...globalSettings,
+                    allow_private_network_ai: checked,
+                  });
+                }}
                 disabled={settingsLoading}
               />
             </div>

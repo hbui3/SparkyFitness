@@ -1,3 +1,5 @@
+import type { CompareQuery } from '@workspace/shared';
+
 export const reportKeys = {
   all: ['reports'] as const,
   stress: {
@@ -23,6 +25,8 @@ export const reportKeys = {
       endDate,
       { userId, equipment, muscle, exercise },
     ] as const,
+  trainingConsistency: (userId?: string) =>
+    ['reports', 'trainingConsistency', { userId }] as const,
   alcoholWeek: (date: string, userId?: string) =>
     ['reports', 'alcoholWeek', date, { userId }] as const,
   hydrationNutritionRange: (
@@ -37,4 +41,18 @@ export const reportKeys = {
       endDate,
       { userId },
     ] as const,
+  compare: (query: CompareQuery, userId?: string) =>
+    [
+      'reports',
+      'compare',
+      query.a,
+      query.b,
+      query.mode,
+      query.timing,
+      query.start,
+      query.end,
+      { userId },
+    ] as const,
+  workoutDays: (startDate: string, endDate: string, userId?: string) =>
+    ['reports', 'workoutDays', startDate, endDate, { userId }] as const,
 };

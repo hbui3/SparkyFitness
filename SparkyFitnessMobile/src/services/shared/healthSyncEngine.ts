@@ -87,7 +87,8 @@ export interface HealthReadProvider {
    *  whole sync. */
   prepareInteractiveRead?(
     metrics: HealthMetric[],
-    windows: SyncWindows
+    windows: SyncWindows,
+    telemetry?: TelemetryRunContext
   ): Promise<void>;
   /** Clears platform run-scoped state before a run's reads begin. Android uses
    *  it to reset the Health Connect reconnect attempt, so "reconnect once" is
@@ -211,11 +212,21 @@ const collectMetric = async (
   // (lastSynced − 6h) can fall mid-day, and aggregating that slice would
   // replace the server's real full-day values with partial-window ones
   // (e.g. heart_rate_min losing the overnight low).
+  //
+  // Workouts need the same: the server replaces a source's workouts for every
+  // day an upload touches, keeping only the ones re-sent. A window that starts
+  // mid-day would send just the newer workouts of that day and the server would
+  // delete the earlier ones (a morning workout vanished after an afternoon
+  // background sync).
   const readStart =
     metric.aggregationStrategy != null ||
     (waterFallbackToSum && metric.type === 'water')
       ? windows.aggregatedStart
-      : rawStart;
+      : metric.id === 'exerciseSession'
+        ? new Date(
+            Math.min(windows.aggregatedStart.getTime(), rawStart.getTime())
+          )
+        : rawStart;
 
   const result = await provider.readRaw(
     metric.recordType,
@@ -278,7 +289,7 @@ export const collectHealthData = async (
     : false;
 
   if (telemetry.interactive && provider.prepareInteractiveRead) {
-    await provider.prepareInteractiveRead(metrics, windows);
+    await provider.prepareInteractiveRead(metrics, windows, telemetry);
   }
 
   const results = await runTasksInBatches(
@@ -363,6 +374,13 @@ export interface ForegroundSyncOptions {
   emptyMessage: string;
   /** Timeout label prefix, e.g. 'Health Connect query'. */
   timeoutLabelPrefix: string;
+  /**
+   * Re-collect workout telemetry for sessions the reuse cache already holds,
+   * for this run only. Set by the user's explicit "re-send workout details"
+   * choice on the manual sync; automatic runs leave it off. See
+   * TelemetryRunContext.force for why this is a run flag and not a cache wipe.
+   */
+  forceTelemetry?: boolean;
 }
 
 /**
@@ -393,6 +411,7 @@ export const runForegroundSync = async (
   const telemetry = createTelemetryRunContext({
     budget: FOREGROUND_TELEMETRY_BUDGET,
     interactive: true,
+    force: opts.forceTelemetry ?? false,
   });
 
   const outcomes = await collectHealthData(provider, metricsToSync, windows, {

@@ -2,12 +2,11 @@ import React, { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, Text, View } from 'react-native';
 import { useCSSVariable } from 'uniwind';
-import type { PresetSessionResponse } from '@workspace/shared';
+import { useClockTick } from '../hooks/useClockTick';
 import { useNativeIOSTabsActive } from '../services/nativeTabBarPreference';
-import type { CompletedSetMap } from '../stores/activeWorkoutStore';
 import { formatElapsed } from '../utils/workoutSession';
+import type { ExerciseProgress } from '../utils/workoutProgress';
 import Icon, { type IconName } from './Icon';
-import KeyboardCollapsible from './KeyboardCollapsible';
 import LiquidGlassSurface, {
   createLiquidGlassPillStyle,
 } from './LiquidGlassSurface';
@@ -16,30 +15,12 @@ import ActionSheet, {
   type ActionSheetRef,
 } from './ActionSheet';
 
-/** Per-exercise completion used by the segmented progress bar. */
-export interface ExerciseProgress {
-  entryId: string;
-  totalSets: number;
-  completedSets: number;
-}
-
-export function buildExerciseProgress(
-  session: PresetSessionResponse,
-  completedSetIds: CompletedSetMap
-): ExerciseProgress[] {
-  return session.exercises.map((exercise) => ({
-    entryId: exercise.id,
-    totalSets: exercise.sets.length,
-    completedSets: exercise.sets.filter((s) => completedSetIds[String(s.id)])
-      .length,
-  }));
-}
+export { buildExerciseProgress } from '../utils/workoutProgress';
 
 interface ActiveWorkoutHeaderProps {
   name: string;
+  location?: string | null;
   startedAt: number | null;
-  /** Epoch ms driving the elapsed clock — the screen's 1s tick. */
-  now: number;
   progress: ExerciseProgress[];
   onBack: () => void;
   onDiscard: () => void;
@@ -47,6 +28,8 @@ interface ActiveWorkoutHeaderProps {
   onEndWorkout?: () => void;
   /** Opens the rename dialog from a "Rename workout" menu action. */
   onRename?: () => void;
+  /** Opens the location modal from a "Gym / Location" menu action. */
+  onEditLocation?: () => void;
   /** When provided, adds an "Add exercise" action. */
   onAddExercise?: () => void;
   /** When provided, adds a "Reorder exercises" action. */
@@ -106,19 +89,40 @@ function HeaderIconButton({
 }
 
 /**
+ * The "MM:SS elapsed" line. It ticks on its own once a second, so neither the
+ * rest of the header nor the screen re-renders for the clock.
+ */
+function ElapsedTime({ startedAt }: { startedAt: number | null }) {
+  const { t } = useTranslation();
+  const now = useClockTick();
+  return (
+    <Text
+      className="text-xs text-text-secondary"
+      style={{ fontVariant: ['tabular-nums'] }}
+    >
+      {t('activeWorkout.header.elapsedTime', {
+        defaultValue: '{{time}} elapsed',
+        time: formatElapsed(startedAt, now),
+      })}
+    </Text>
+  );
+}
+
+/**
  * Custom chrome for the active-workout screen (the route renders with
  * `headerShown: false`): back, name + elapsed clock, kebab menu, and the
  * one segmented per-exercise progress bar.
  */
 function ActiveWorkoutHeader({
   name,
+  location,
   startedAt,
-  now,
   progress,
   onBack,
   onDiscard,
   onEndWorkout,
   onRename,
+  onEditLocation,
   onAddExercise,
   onReorder,
   onOpenSettings,
@@ -178,6 +182,21 @@ function ActiveWorkoutHeader({
       }),
       group: 'workout',
       onPress: onRename,
+    });
+  }
+  if (onEditLocation) {
+    menuItems.push({
+      key: 'location',
+      label: location
+        ? t('activeWorkout.header.gymLocationSet', {
+            defaultValue: 'Gym: {{location}}',
+            location,
+          })
+        : t('activeWorkout.header.gymLocation', {
+            defaultValue: 'Gym / Location',
+          }),
+      group: 'workout',
+      onPress: onEditLocation,
     });
   }
   if (onOpenSettings) {
@@ -242,15 +261,25 @@ function ActiveWorkoutHeader({
           >
             {name}
           </Text>
-          <Text
-            className="text-xs text-text-secondary"
-            style={{ fontVariant: ['tabular-nums'] }}
-          >
-            {t('activeWorkout.header.elapsedTime', {
-              defaultValue: '{{time}} elapsed',
-              time: formatElapsed(startedAt, now),
-            })}
-          </Text>
+          <View className="flex-row items-center gap-2">
+            <ElapsedTime startedAt={startedAt} />
+            {location ? (
+              <Pressable
+                onPress={onEditLocation}
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                className="flex-row items-center gap-0.5"
+              >
+                <Icon name="location" size={12} color={accentPrimary} />
+                <Text
+                  numberOfLines={1}
+                  className="text-xs font-medium"
+                  style={{ color: accentPrimary, maxWidth: 120 }}
+                >
+                  {location}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
 
         {/* Glass chrome is monochrome (see resolveHeaderActionColors), so the
@@ -267,52 +296,46 @@ function ActiveWorkoutHeader({
         />
       </View>
 
-      {/* Folds away with the keyboard so the log gets the row's height back;
-          the name + elapsed clock above stay visible. */}
-      <KeyboardCollapsible>
-        <View className="flex-row items-center gap-3 px-2 mt-1">
-          <View className="flex-1 flex-row gap-1">
-            {progress.map((p) => {
-              const isDone = p.totalSets > 0 && p.completedSets >= p.totalSets;
-              const fillPct =
-                p.totalSets > 0
-                  ? Math.min(1, p.completedSets / p.totalSets)
-                  : 0;
-              return (
-                <View
-                  key={p.entryId}
-                  testID={isDone ? 'header-segment-done' : 'header-segment'}
-                  className="flex-1 h-[5px] rounded-full overflow-hidden"
-                  style={{
-                    backgroundColor: isDone ? successColor : trackColor,
-                  }}
-                >
-                  {!isDone && fillPct > 0 && (
-                    <View
-                      testID="header-segment-fill"
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${fillPct * 100}%`,
-                        backgroundColor: accentPrimary,
-                      }}
-                    />
-                  )}
-                </View>
-              );
-            })}
-          </View>
-          <Text
-            className="text-xs text-text-secondary"
-            style={{ fontVariant: ['tabular-nums'] }}
-          >
-            {t('activeWorkout.header.exerciseProgress', {
-              defaultValue: '{{completed}} / {{count}} exercises',
-              completed: doneCount,
-              count: progress.length,
-            })}
-          </Text>
+      <View className="flex-row items-center gap-3 px-2 mt-1">
+        <View className="flex-1 flex-row gap-1">
+          {progress.map((p) => {
+            const isDone = p.totalSets > 0 && p.completedSets >= p.totalSets;
+            const fillPct =
+              p.totalSets > 0 ? Math.min(1, p.completedSets / p.totalSets) : 0;
+            return (
+              <View
+                key={p.entryId}
+                testID={isDone ? 'header-segment-done' : 'header-segment'}
+                className="flex-1 h-[5px] rounded-full overflow-hidden"
+                style={{
+                  backgroundColor: isDone ? successColor : trackColor,
+                }}
+              >
+                {!isDone && fillPct > 0 && (
+                  <View
+                    testID="header-segment-fill"
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${fillPct * 100}%`,
+                      backgroundColor: accentPrimary,
+                    }}
+                  />
+                )}
+              </View>
+            );
+          })}
         </View>
-      </KeyboardCollapsible>
+        <Text
+          className="text-xs text-text-secondary"
+          style={{ fontVariant: ['tabular-nums'] }}
+        >
+          {t('activeWorkout.header.exerciseProgress', {
+            defaultValue: '{{completed}} / {{count}} exercises',
+            completed: doneCount,
+            count: progress.length,
+          })}
+        </Text>
+      </View>
 
       <ActionSheet ref={menuSheetRef} title={name} items={menuItems} />
     </View>

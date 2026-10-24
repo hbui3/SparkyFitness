@@ -7,6 +7,9 @@ import exerciseDb from '../models/exercise.js';
 import exerciseEntryDb from '../models/exerciseEntry.js';
 import workoutPresetRepository from '../models/workoutPresetRepository.js';
 import { getResolvedExerciseCaloriesRange } from '../services/exerciseCalorieRangeService.js';
+import { getExerciseAlternatives } from '../services/exerciseAlternativesService.js';
+import { setWorkoutFeedbackForEntry } from '../services/workoutCoachingService.js';
+import { getWorkoutCoachingSignals } from '../services/adaptiveWorkoutService.js';
 import { toolOpts } from './helpers/toolExecutionOptions.js';
 
 vi.mock('../services/exerciseService', () => ({
@@ -26,7 +29,10 @@ vi.mock('../services/exerciseService', () => ({
 vi.mock('../services/workoutPresetService', () => ({
   default: {
     getWorkoutPresets: vi.fn(),
+    getWorkoutPresetById: vi.fn(),
     createWorkoutPreset: vi.fn(),
+    updateWorkoutPreset: vi.fn(),
+    deleteWorkoutPreset: vi.fn(),
   },
 }));
 vi.mock('../models/exercise', () => ({
@@ -52,6 +58,25 @@ vi.mock('../services/exerciseCalorieRangeService', () => ({
   getResolvedExerciseCaloriesRange: vi.fn(),
   getResolvedExerciseCaloriesTotal: vi.fn(),
 }));
+vi.mock('../services/exerciseAlternativesService', () => ({
+  getExerciseAlternatives: vi.fn(),
+}));
+vi.mock('../services/workoutCoachingService', () => {
+  class WorkoutEntryNotInSessionError extends Error {
+    constructor() {
+      super('This exercise entry is not part of a logged workout session');
+    }
+  }
+  class WorkoutSessionNotFoundError extends Error {}
+  return {
+    setWorkoutFeedbackForEntry: vi.fn(),
+    WorkoutEntryNotInSessionError,
+    WorkoutSessionNotFoundError,
+  };
+});
+vi.mock('../services/adaptiveWorkoutService', () => ({
+  getWorkoutCoachingSignals: vi.fn(),
+}));
 vi.mock('../config/logging', () => ({
   log: vi.fn(),
 }));
@@ -65,7 +90,7 @@ const NOT_FOUND_RESOURCE_TEXT =
 const ENTRY_ID = '11111111-1111-4111-8111-111111111111';
 const EXERCISE_ID = '22222222-2222-4222-8222-222222222222';
 const EXERCISE_ID_2 = '33333333-3333-4333-8333-333333333333';
-const PRESET_ID = '44444444-4444-4444-8444-444444444444';
+const PRESET_ID = 4;
 
 let tools: ReturnType<typeof buildExerciseTools>;
 
@@ -430,6 +455,7 @@ describe('log_exercise', () => {
             distance: null,
             rest_time: null,
             rpe: null,
+            rir: null,
             notes: null,
           },
           {
@@ -441,6 +467,7 @@ describe('log_exercise', () => {
             distance: null,
             rest_time: null,
             rpe: null,
+            rir: null,
             notes: null,
           },
         ],
@@ -565,12 +592,33 @@ describe('log_exercise', () => {
             distance: null,
             rest_time: null,
             rpe: null,
+            rir: null,
             notes: null,
           },
         ],
       }),
       { skipDuplicateCheck: true }
     );
+  });
+
+  it('records RIR per set and clamps it when a JSON-string set skips the schema', async () => {
+    vi.mocked(exerciseService.createExerciseEntry).mockResolvedValue({
+      id: ENTRY_ID,
+    });
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'log_exercise',
+        exercise_id: EXERCISE_ID,
+        entry_date: '2026-06-10',
+        sets: '[{"reps":8,"weight":100,"rir":2},{"reps":6,"weight":100,"rir":15}]',
+      },
+      opts
+    );
+
+    const call = vi.mocked(exerciseService.createExerciseEntry).mock
+      .calls[0]![2] as { sets: { rir: number | null }[] };
+    expect(call.sets.map((set) => set.rir)).toEqual([2, 10]);
   });
 
   it('persists per-set distance for cardio sets', async () => {
@@ -687,6 +735,7 @@ describe('list_exercise_diary', () => {
                 duration: null,
                 rest_time: 90,
                 rpe: 8,
+                rir: null,
                 notes: null,
               },
               {
@@ -777,6 +826,108 @@ describe('workout presets', () => {
     );
   });
 
+  it('get_workout_preset renders exercise ids, sets, and superset groups', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Push Day',
+      description: 'Chest focused',
+      is_public: true,
+      exercises: [
+        {
+          exercise_id: EXERCISE_ID,
+          exercise_name: 'Bench Press',
+          superset_group: 1,
+          sets: [
+            {
+              set_number: 1,
+              set_type: 'Working Set',
+              reps: 10,
+              weight: 60,
+              duration: null,
+              distance: null,
+              rest_time: null,
+              notes: null,
+            },
+          ],
+        },
+        {
+          exercise_id: EXERCISE_ID_2,
+          exercise_name: 'Incline Fly',
+          superset_group: 1,
+          sets: [],
+        },
+      ],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset', preset_id: PRESET_ID },
+      opts
+    );
+
+    expect(result).toBe(
+      `### Push Day (ID: ${PRESET_ID})\n\n` +
+        'Chest focused\n\n' +
+        'Public: yes\n\n' +
+        `1. **Bench Press** [superset group 1]\n   exercise_id: ${EXERCISE_ID}\n` +
+        '   Set 1 (Working Set): 10 reps, 60kg\n' +
+        `2. **Incline Fly** [superset group 1]\n   exercise_id: ${EXERCISE_ID_2}\n` +
+        '   No sets recorded\n'
+    );
+    expect(workoutPresetService.getWorkoutPresetById).toHaveBeenCalledWith(
+      'user-1',
+      PRESET_ID
+    );
+  });
+
+  it('get_workout_preset resolves the preset by name', async () => {
+    vi.mocked(workoutPresetRepository.getWorkoutPresetByName).mockResolvedValue(
+      { id: PRESET_ID, name: 'Push Day' }
+    );
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Push Day',
+      description: null,
+      is_public: false,
+      exercises: [],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset', preset_name: 'Push Day' },
+      opts
+    );
+
+    expect(result).toBe(
+      `### Push Day (ID: ${PRESET_ID})\n\nPublic: no\n\n_No exercises in this preset._`
+    );
+    expect(workoutPresetService.getWorkoutPresetById).toHaveBeenCalledWith(
+      'user-1',
+      PRESET_ID
+    );
+  });
+
+  it('get_workout_preset requires preset_id or preset_name', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset' },
+      opts
+    );
+    expect(result).toBe(
+      'Error [VALIDATION]: Either preset_id or preset_name must be provided'
+    );
+  });
+
+  it('get_workout_preset maps a missing preset to not found', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockRejectedValue(
+      new Error('Workout preset not found.')
+    );
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset', preset_id: PRESET_ID },
+      opts
+    );
+    expect(result).toBe(
+      `Error [NOT_FOUND]: Workout preset with ID '${PRESET_ID}' not found.\n\nSuggestion: Check the ID and try again.`
+    );
+  });
+
   it('log_workout_preset requires preset_id or preset_name', async () => {
     const result = await tools.sparky_manage_exercise.execute!(
       { action: 'log_workout_preset', entry_date: '2026-06-10' },
@@ -817,7 +968,8 @@ describe('workout presets', () => {
       'user-1',
       'user-1',
       7,
-      '2026-06-10'
+      '2026-06-10',
+      {}
     );
   });
 
@@ -863,7 +1015,10 @@ describe('workout presets', () => {
       {
         action: 'create_workout_preset',
         name: 'Leg Day',
-        exercise_ids: [EXERCISE_ID, EXERCISE_ID_2],
+        exercises: [
+          { exercise_id: EXERCISE_ID },
+          { exercise_id: EXERCISE_ID_2 },
+        ],
       },
       opts
     );
@@ -878,12 +1033,1084 @@ describe('workout presets', () => {
         name: 'Leg Day',
         description: null,
         is_public: false,
+        workout_format: 'standard',
+        time_cap_seconds: null,
         exercises: [
-          { exercise_id: EXERCISE_ID, sort_order: 0 },
-          { exercise_id: EXERCISE_ID_2, sort_order: 1 },
+          {
+            exercise_id: EXERCISE_ID,
+            sort_order: 0,
+            superset_group: null,
+            ramp_increment: null,
+            sets: undefined,
+          },
+          {
+            exercise_id: EXERCISE_ID_2,
+            sort_order: 1,
+            superset_group: null,
+            ramp_increment: null,
+            sets: undefined,
+          },
         ],
       }
     );
+  });
+
+  it('create_workout_preset builds sets and superset groups', async () => {
+    vi.mocked(workoutPresetService.createWorkoutPreset).mockResolvedValue({
+      id: 9,
+      name: 'Push/Pull Superset',
+      exercises: [{}, {}],
+    });
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Push/Pull Superset',
+        description: 'Chest + back superset',
+        is_public: true,
+        exercises: [
+          {
+            exercise_id: EXERCISE_ID,
+            superset_group: 1,
+            sets: [
+              { reps: 10, weight: 60 },
+              { reps: 8, weight: 65, set_type: 'Drop Set' },
+            ],
+          },
+          {
+            exercise_id: EXERCISE_ID_2,
+            superset_group: 1,
+            sets: [{ reps: 12, weight: 20 }],
+          },
+        ],
+      },
+      opts
+    );
+
+    expect(workoutPresetService.createWorkoutPreset).toHaveBeenCalledWith(
+      'user-1',
+      {
+        user_id: 'user-1',
+        name: 'Push/Pull Superset',
+        description: 'Chest + back superset',
+        is_public: true,
+        workout_format: 'standard',
+        time_cap_seconds: null,
+        exercises: [
+          {
+            exercise_id: EXERCISE_ID,
+            sort_order: 0,
+            superset_group: 1,
+            ramp_increment: null,
+            sets: [
+              {
+                set_number: 1,
+                set_type: 'Working Set',
+                reps: 10,
+                weight: 60,
+                duration: null,
+                distance: null,
+                rest_time: null,
+                rpe: null,
+                rir: null,
+                notes: null,
+              },
+              {
+                set_number: 2,
+                set_type: 'Drop Set',
+                reps: 8,
+                weight: 65,
+                duration: null,
+                distance: null,
+                rest_time: null,
+                rpe: null,
+                rir: null,
+                notes: null,
+              },
+            ],
+          },
+          {
+            exercise_id: EXERCISE_ID_2,
+            sort_order: 1,
+            superset_group: 1,
+            ramp_increment: null,
+            sets: [
+              {
+                set_number: 1,
+                set_type: 'Working Set',
+                reps: 12,
+                weight: 20,
+                duration: null,
+                distance: null,
+                rest_time: null,
+                rpe: null,
+                rir: null,
+                notes: null,
+              },
+            ],
+          },
+        ],
+      }
+    );
+  });
+
+  it('create_workout_preset accepts exercises as a JSON string', async () => {
+    vi.mocked(workoutPresetService.createWorkoutPreset).mockResolvedValue({
+      id: 9,
+      name: 'Leg Day',
+      exercises: [{}],
+    });
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Leg Day',
+        exercises: JSON.stringify([{ exercise_id: EXERCISE_ID }]),
+      },
+      opts
+    );
+
+    expect(workoutPresetService.createWorkoutPreset).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        exercises: [
+          {
+            exercise_id: EXERCISE_ID,
+            sort_order: 0,
+            superset_group: null,
+            ramp_increment: null,
+            sets: undefined,
+          },
+        ],
+      })
+    );
+  });
+
+  it('create_workout_preset rejects a fractional rep increment', async () => {
+    for (const exercise of [
+      {
+        exercise_id: EXERCISE_ID,
+        increment_type: 'reps' as const,
+        increment_value: 1.5,
+      },
+      {
+        exercise_id: EXERCISE_ID,
+        progression_mode: 'step_load' as const,
+        increment_value: 2.5,
+      },
+    ]) {
+      const result = await tools.sparky_manage_exercise.execute!(
+        {
+          action: 'create_workout_preset',
+          name: 'Bench',
+          exercises: [exercise],
+        },
+        opts
+      );
+      expect(String(result)).toContain('Rep increment must be a whole number');
+    }
+    expect(workoutPresetService.createWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('create_workout_preset accepts a fractional weight increment', async () => {
+    vi.mocked(workoutPresetService.createWorkoutPreset).mockResolvedValue({
+      id: 9,
+      name: 'Bench',
+      exercises: [{}],
+    });
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Bench',
+        exercises: [
+          {
+            exercise_id: EXERCISE_ID,
+            increment_type: 'weight',
+            increment_value: 2.5,
+          },
+        ],
+      },
+      opts
+    );
+    expect(workoutPresetService.createWorkoutPreset).toHaveBeenCalled();
+  });
+
+  it('create_workout_preset passes ramp_increment (kg, negative allowed) through', async () => {
+    vi.mocked(workoutPresetService.createWorkoutPreset).mockResolvedValue({
+      id: 9,
+      name: 'Bench',
+      exercises: [{}, {}],
+    });
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Bench',
+        exercises: [
+          { exercise_id: EXERCISE_ID, ramp_increment: 4.54 },
+          { exercise_id: EXERCISE_ID_2, ramp_increment: -2.5 },
+        ],
+      },
+      opts
+    );
+
+    const [, data] = vi.mocked(workoutPresetService.createWorkoutPreset).mock
+      .calls[0];
+    expect(
+      data.exercises.map(
+        (e: { ramp_increment?: number | null }) => e.ramp_increment
+      )
+    ).toEqual([4.54, -2.5]);
+  });
+
+  it('get_workout_preset renders a ramp_increment so updates can round-trip it', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Bench',
+      description: null,
+      is_public: false,
+      exercises: [
+        {
+          exercise_id: EXERCISE_ID,
+          exercise_name: 'Bench Press',
+          superset_group: null,
+          ramp_increment: 4.54,
+          sets: [],
+        },
+      ],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset', preset_id: PRESET_ID },
+      opts
+    );
+
+    expect(result).toContain('   ramp_increment: +4.54kg per working set\n');
+  });
+
+  it('create_workout_preset rejects malformed JSON exercises', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Leg Day',
+        exercises: '{not json',
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      'Error [VALIDATION]: Invalid JSON format for exercises'
+    );
+    expect(workoutPresetService.createWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('create_workout_preset rejects non-array JSON exercises', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Leg Day',
+        exercises: JSON.stringify({ exercise_id: EXERCISE_ID }),
+      },
+      opts
+    );
+
+    expect(result).toBe('Error [VALIDATION]: exercises must be a JSON array');
+    expect(workoutPresetService.createWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('create_workout_preset rejects decoded exercises that fail the preset schema', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Leg Day',
+        exercises: JSON.stringify([null]),
+      },
+      opts
+    );
+
+    expect(String(result)).toMatch(/^Error \[VALIDATION\]:/);
+    expect(workoutPresetService.createWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('create_workout_preset creates preset with workout_format and time_cap_seconds', async () => {
+    vi.mocked(workoutPresetService.createWorkoutPreset).mockResolvedValue({
+      id: 10,
+      name: 'Cindy',
+      exercises: [{}],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Cindy',
+        workout_format: 'amrap',
+        time_cap_seconds: 1200,
+        exercises: [{ exercise_id: EXERCISE_ID }],
+      },
+      opts
+    );
+
+    expect(result).toBe('✅ Workout preset "Cindy" created with 1 exercises.');
+    expect(workoutPresetService.createWorkoutPreset).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        workout_format: 'amrap',
+        time_cap_seconds: 1200,
+      })
+    );
+  });
+
+  it('create_workout_preset rejects AMRAP preset without time_cap_seconds', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'create_workout_preset',
+        name: 'Invalid AMRAP',
+        workout_format: 'amrap',
+        exercises: [{ exercise_id: EXERCISE_ID }],
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      'Error [VALIDATION]: AMRAP workout presets require time_cap_seconds to be specified.'
+    );
+    expect(workoutPresetService.createWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('get_workout_preset renders workout format and time cap', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Fight Gone Bad',
+      workout_format: 'interval',
+      time_cap_seconds: 1020,
+      is_public: false,
+      exercises: [
+        {
+          exercise_id: EXERCISE_ID,
+          exercise_name: 'Wall Ball',
+          sets: [{ reps: 20, set_type: 'Working Set' }],
+        },
+      ],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset', preset_id: PRESET_ID },
+      opts
+    );
+
+    expect(result).toContain('### Fight Gone Bad (ID: 4)');
+    expect(result).toContain('Format: **interval** (Cap: 17:00)');
+    expect(result).toContain('Wall Ball');
+  });
+
+  it('log_workout_preset logs preset with wod_score activity details', async () => {
+    vi.mocked(workoutPresetRepository.getWorkoutPresetByName).mockResolvedValue(
+      {
+        id: 7,
+        name: 'Fran',
+        workout_format: 'for_time',
+        time_cap_seconds: 600,
+      }
+    );
+    vi.mocked(exerciseService.logWorkoutPresetGrouped).mockResolvedValue({
+      id: 'pe-2',
+      exercises: [{}, {}],
+    } as never);
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'log_workout_preset',
+        preset_name: 'Fran',
+        entry_date: '2026-06-10',
+        wod_score: {
+          score_type: 'time',
+          elapsed_seconds: 245,
+          status: 'rx',
+        },
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      '✅ Workout preset logged for 2026-06-10. 2 exercises added.'
+    );
+    expect(exerciseService.logWorkoutPresetGrouped).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      7,
+      '2026-06-10',
+      {
+        activity_details: [
+          {
+            provider_name: 'SparkyFitness',
+            detail_type: 'wod_score',
+            detail_data: {
+              workout_format: 'for_time',
+              time_cap_seconds: 600,
+              score_type: 'time',
+              rounds_completed: null,
+              reps_completed: null,
+              elapsed_seconds: 245,
+              status: 'rx',
+              scaling_notes: null,
+            },
+          },
+        ],
+      }
+    );
+  });
+
+  it('duplicate_exercise copies library fields into a private custom exercise', async () => {
+    vi.mocked(exerciseService.getExerciseById).mockResolvedValue({
+      id: 'ex-1',
+      name: 'Bench Press',
+      category: 'strength',
+      modality: 'weight_reps',
+      calories_per_hour: 300,
+      description: 'Flat bench',
+      level: 'intermediate',
+      force: 'push',
+      mechanic: 'compound',
+      equipment: '["Barbell"]',
+      primary_muscles: ['chest'],
+      secondary_muscles: ['triceps'],
+      instructions: ['Lower the bar', 'Press'],
+      images: ['Bench_Press/0.jpg'],
+      source: 'free-exercise-db',
+      source_id: 'Bench_Press',
+      shared_with_public: true,
+    } as never);
+    vi.mocked(exerciseService.createExercise).mockResolvedValue({
+      id: 'ex-2',
+      name: 'Bench Press (copy)',
+    } as never);
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'duplicate_exercise',
+        exercise_id: '11111111-1111-4111-8111-111111111111',
+      },
+      opts
+    );
+
+    expect(result).toContain(
+      'Exercise "Bench Press (copy)" created as a copy of "Bench Press"'
+    );
+    expect(exerciseService.createExercise).toHaveBeenCalledWith('user-1', {
+      name: 'Bench Press (copy)',
+      category: 'strength',
+      modality: 'weight_reps',
+      calories_per_hour: 300,
+      description: 'Flat bench',
+      level: 'intermediate',
+      force: 'push',
+      mechanic: 'compound',
+      equipment: ['Barbell'],
+      primary_muscles: ['chest'],
+      secondary_muscles: ['triceps'],
+      instructions: ['Lower the bar', 'Press'],
+      images: ['Bench_Press/0.jpg'],
+      source: 'custom',
+      source_id: null,
+      is_custom: true,
+      shared_with_public: false,
+    });
+  });
+
+  it('duplicate_exercise returns NOT_FOUND for an unknown exercise', async () => {
+    vi.mocked(exerciseService.searchExercises).mockResolvedValue([] as never);
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'duplicate_exercise', exercise_name: 'Nope', name: 'X' },
+      opts
+    );
+
+    expect(result).toContain('Error [NOT_FOUND]');
+    expect(exerciseService.createExercise).not.toHaveBeenCalled();
+  });
+
+  it('log_workout_preset passes a gym location through to the session', async () => {
+    vi.mocked(workoutPresetRepository.getWorkoutPresetByName).mockResolvedValue(
+      { id: 5, name: 'Push Day', workout_format: 'standard' }
+    );
+    vi.mocked(exerciseService.logWorkoutPresetGrouped).mockResolvedValue({
+      id: 'pe-9',
+      exercises: [{}],
+    } as never);
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'log_workout_preset',
+        preset_name: 'Push Day',
+        entry_date: '2026-06-10',
+        location: '  Home Gym ',
+      },
+      opts
+    );
+
+    expect(exerciseService.logWorkoutPresetGrouped).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      5,
+      '2026-06-10',
+      { location: 'Home Gym' }
+    );
+  });
+
+  it('list_exercise_diary reads WOD scores logged by the mobile app (legacy keys)', async () => {
+    vi.mocked(exerciseService.getExerciseEntriesByDate).mockResolvedValue([
+      {
+        id: 'pe-2',
+        type: 'preset',
+        name: 'Cindy',
+        created_at: '2026-06-10T10:00:00Z',
+        activity_details: [
+          {
+            detail_type: 'wod_score',
+            detail_data: {
+              format: 'amrap',
+              rounds_completed: 5,
+              reps_completed: 3,
+              status: 'rx',
+            },
+          },
+        ],
+        exercises: [
+          {
+            id: 'ee-9',
+            name: 'Pull-up',
+            created_at: '2026-06-10T10:00:00Z',
+            sets: [],
+          },
+        ],
+      },
+    ] as never);
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'list_exercise_diary', entry_date: '2026-06-10' },
+      opts
+    );
+
+    expect(result).toContain('Score: AMRAP — 5 rounds + 3 reps (Rx)');
+  });
+
+  it('list_exercise_diary shows per-set RIR and the session location', async () => {
+    vi.mocked(exerciseService.getExerciseEntriesByDate).mockResolvedValue([
+      {
+        id: 'pe-1',
+        type: 'preset',
+        name: 'Push Day',
+        location: 'Home Gym',
+        created_at: '2026-06-10T10:00:00Z',
+        exercises: [
+          {
+            id: 'ee-1',
+            name: 'Bench Press',
+            created_at: '2026-06-10T10:00:00Z',
+            sets: [{ reps: 8, weight: 100, rir: 2 }],
+          },
+        ],
+      },
+    ] as never);
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'list_exercise_diary', entry_date: '2026-06-10' },
+      opts
+    );
+
+    expect(result).toContain('RIR 2');
+    expect(result).toContain('Location: Home Gym');
+  });
+
+  it('log_workout_preset rejects wod_score on a standard-format preset', async () => {
+    vi.mocked(workoutPresetRepository.getWorkoutPresetByName).mockResolvedValue(
+      { id: 8, name: 'Push Day', workout_format: 'standard' }
+    );
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'log_workout_preset',
+        preset_name: 'Push Day',
+        entry_date: '2026-06-10',
+        wod_score: { score_type: 'completion' },
+      },
+      opts
+    );
+
+    expect(result).toContain('Error [VALIDATION]');
+    expect(result).toContain('wod_score only applies to interval/WOD presets');
+    expect(exerciseService.logWorkoutPresetGrouped).not.toHaveBeenCalled();
+  });
+
+  it('log_workout_preset validates a wod_score sent as a JSON string', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'log_workout_preset',
+        preset_id: 7,
+        entry_date: '2026-06-10',
+        wod_score: JSON.stringify({ score_type: 'fastest' }),
+      },
+      opts
+    );
+
+    expect(result).toContain('Error [VALIDATION]');
+    expect(exerciseService.logWorkoutPresetGrouped).not.toHaveBeenCalled();
+  });
+
+  it('log_workout_preset by preset_id reads the preset format for the score', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValue({
+      id: 9,
+      name: 'Cindy',
+      workout_format: 'amrap',
+      time_cap_seconds: 1200,
+    } as never);
+    vi.mocked(exerciseService.logWorkoutPresetGrouped).mockResolvedValue({
+      id: 'pe-3',
+      exercises: [{}],
+    } as never);
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'log_workout_preset',
+        preset_id: 9,
+        entry_date: '2026-06-10',
+        wod_score: JSON.stringify({
+          score_type: 'rounds_reps',
+          rounds_completed: 18,
+          reps_completed: 7,
+        }),
+      },
+      opts
+    );
+
+    const options = vi.mocked(exerciseService.logWorkoutPresetGrouped).mock
+      .calls[0][4] as {
+      activity_details: { detail_data: Record<string, unknown> }[];
+    };
+    expect(options.activity_details[0].detail_data).toMatchObject({
+      workout_format: 'amrap',
+      time_cap_seconds: 1200,
+      rounds_completed: 18,
+    });
+  });
+
+  it('list_exercise_diary renders WOD scores when preset activity details are present', async () => {
+    vi.mocked(exerciseService.getExerciseEntriesByDate).mockResolvedValue([
+      {
+        id: 'pe-1',
+        type: 'preset',
+        name: 'Cindy',
+        created_at: '2026-06-10T10:00:00Z',
+        activity_details: [
+          {
+            detail_type: 'wod_score',
+            detail_data: {
+              workout_format: 'amrap',
+              time_cap_seconds: 1200,
+              score_type: 'rounds_reps',
+              rounds_completed: 18,
+              reps_completed: 7,
+              status: 'rx',
+            },
+          },
+        ],
+        exercises: [
+          {
+            id: 'ee-1',
+            name: 'Pull-up',
+            created_at: '2026-06-10T10:00:00Z',
+            sets: [{ reps: 5 }],
+          },
+          {
+            id: 'ee-2',
+            name: 'Push-up',
+            created_at: '2026-06-10T10:00:01Z',
+            sets: [{ reps: 10 }],
+          },
+        ],
+      },
+    ] as never);
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'list_exercise_diary', entry_date: '2026-06-10' },
+      opts
+    );
+
+    expect(result).toContain('**Pull-up** — 1 sets');
+    expect(result).toContain(
+      'Score: AMRAP 20:00 cap — 18 rounds + 7 reps (Rx)'
+    );
+    // One score per session, not repeated on every exercise.
+    expect(String(result).split('Score:').length - 1).toBe(1);
+  });
+
+  it('update_workout_preset updates only the provided fields and confirms', async () => {
+    vi.mocked(workoutPresetService.updateWorkoutPreset).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Leg Day (updated)',
+      exercises: [{}],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        name: 'Leg Day (updated)',
+        confirmed: true,
+      },
+      opts
+    );
+
+    expect(result).toBe('✅ Workout preset "Leg Day (updated)" updated.');
+    expect(workoutPresetService.updateWorkoutPreset).toHaveBeenCalledWith(
+      'user-1',
+      PRESET_ID,
+      {
+        name: 'Leg Day (updated)',
+        description: undefined,
+        is_public: undefined,
+        exercises: undefined,
+      }
+    );
+  });
+
+  it('update_workout_preset keeps progression and ramp settings the model left out', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValueOnce({
+      id: PRESET_ID,
+      name: 'Bench',
+      exercises: [
+        {
+          exercise_id: EXERCISE_ID,
+          progression_mode: 'fixed',
+          rep_goal: 8,
+          increment_type: 'weight',
+          increment_value: 2.5,
+          equipment_brand: 'Rogue',
+          ramp_increment: 4.54,
+          sets: [],
+        },
+        {
+          exercise_id: EXERCISE_ID_2,
+          progression_mode: 'rep_goal',
+          rep_goal: 30,
+          ramp_increment: -2.5,
+          sets: [],
+        },
+      ],
+    });
+    vi.mocked(workoutPresetService.updateWorkoutPreset).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Bench',
+    });
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+        exercises: [
+          // Only sets change: settings carry over.
+          { exercise_id: EXERCISE_ID, sets: [{ reps: 5, weight: 100 }] },
+          // Explicit values win; an explicit null clears the ramp.
+          { exercise_id: EXERCISE_ID_2, rep_goal: 36, ramp_increment: null },
+        ],
+      },
+      opts
+    );
+
+    const [, , data] = vi.mocked(workoutPresetService.updateWorkoutPreset).mock
+      .calls[0];
+    expect(data.exercises[0]).toMatchObject({
+      progression_mode: 'fixed',
+      rep_goal: 8,
+      increment_type: 'weight',
+      increment_value: 2.5,
+      equipment_brand: 'Rogue',
+      ramp_increment: 4.54,
+    });
+    expect(data.exercises[1]).toMatchObject({
+      progression_mode: 'rep_goal',
+      rep_goal: 36,
+      ramp_increment: null,
+    });
+  });
+
+  it('get_workout_preset renders an active progression configuration', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValueOnce({
+      id: PRESET_ID,
+      name: 'Bench',
+      description: null,
+      is_public: false,
+      exercises: [
+        {
+          exercise_id: EXERCISE_ID,
+          exercise_name: 'Bench Press',
+          progression_mode: 'fixed',
+          rep_goal: 8,
+          increment_type: 'weight',
+          increment_value: 2.5,
+          equipment_brand: 'Rogue',
+          sets: [],
+        },
+        {
+          // Stored defaults with no rep goal never fire: not rendered.
+          exercise_id: EXERCISE_ID_2,
+          exercise_name: 'Row',
+          progression_mode: 'rep_goal',
+          rep_goal: null,
+          increment_type: 'weight',
+          increment_value: 5,
+          sets: [],
+        },
+      ],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_preset', preset_id: PRESET_ID },
+      opts
+    );
+
+    expect(result).toContain(
+      '   progression: progression_mode fixed, rep_goal 8, increment_type weight, increment_value 2.5kg\n   equipment_brand: Rogue\n'
+    );
+    expect(String(result).match(/progression:/g)).toHaveLength(1);
+  });
+
+  it('update_workout_preset replaces the exercise list, sets, and superset groups when exercises is provided', async () => {
+    vi.mocked(workoutPresetService.updateWorkoutPreset).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Leg Day',
+      exercises: [{}, {}],
+    });
+
+    await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+        exercises: [
+          {
+            exercise_id: EXERCISE_ID,
+            superset_group: 2,
+            sets: [{ reps: 5, weight: 100 }],
+          },
+          { exercise_id: EXERCISE_ID_2 },
+        ],
+      },
+      opts
+    );
+
+    expect(workoutPresetService.updateWorkoutPreset).toHaveBeenCalledWith(
+      'user-1',
+      PRESET_ID,
+      {
+        name: undefined,
+        description: undefined,
+        is_public: undefined,
+        exercises: [
+          {
+            exercise_id: EXERCISE_ID,
+            sort_order: 0,
+            superset_group: 2,
+            ramp_increment: null,
+            sets: [
+              {
+                set_number: 1,
+                set_type: 'Working Set',
+                reps: 5,
+                weight: 100,
+                duration: null,
+                distance: null,
+                rest_time: null,
+                rpe: null,
+                rir: null,
+                notes: null,
+              },
+            ],
+          },
+          {
+            exercise_id: EXERCISE_ID_2,
+            sort_order: 1,
+            superset_group: null,
+            ramp_increment: null,
+            sets: undefined,
+          },
+        ],
+      }
+    );
+  });
+
+  it('update_workout_preset rejects malformed JSON exercises', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+        exercises: '{not json',
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      'Error [VALIDATION]: Invalid JSON format for exercises'
+    );
+    expect(workoutPresetService.updateWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('update_workout_preset rejects non-array JSON exercises', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+        exercises: JSON.stringify({ exercise_id: EXERCISE_ID }),
+      },
+      opts
+    );
+
+    expect(result).toBe('Error [VALIDATION]: exercises must be a JSON array');
+    expect(workoutPresetService.updateWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('update_workout_preset rejects decoded exercises that fail the preset schema', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+        exercises: JSON.stringify([null]),
+      },
+      opts
+    );
+
+    expect(String(result)).toMatch(/^Error \[VALIDATION\]:/);
+    expect(workoutPresetService.updateWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('infers update_workout_preset from exercises plus preset_id, not from preset_name', async () => {
+    vi.mocked(workoutPresetService.updateWorkoutPreset).mockResolvedValue({
+      id: PRESET_ID,
+      name: 'Leg Day',
+      exercises: [{}],
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        preset_id: PRESET_ID,
+        confirmed: true,
+        exercises: [{ exercise_id: EXERCISE_ID }],
+      },
+      opts
+    );
+
+    expect(result).toBe('✅ Workout preset "Leg Day" updated.');
+    expect(workoutPresetService.updateWorkoutPreset).toHaveBeenCalled();
+    expect(workoutPresetService.createWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('does not infer update_workout_preset from exercises plus preset_name', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        preset_name: 'Push Day',
+        exercises: [{ exercise_id: EXERCISE_ID }],
+      },
+      opts
+    );
+
+    expect(String(result)).toMatch(/Error \[VALIDATION\]/);
+    expect(workoutPresetService.updateWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('update_workout_preset maps a forbidden/missing preset to not found', async () => {
+    vi.mocked(workoutPresetService.updateWorkoutPreset).mockRejectedValue(
+      new Error(
+        'Forbidden: You do not have permission to update this workout preset.'
+      )
+    );
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        name: 'X',
+        confirmed: true,
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      `Error [NOT_FOUND]: Workout preset with ID '${PRESET_ID}' not found.\n\nSuggestion: Check the ID and try again.`
+    );
+  });
+
+  it('delete_workout_preset deletes and confirms', async () => {
+    vi.mocked(workoutPresetService.deleteWorkoutPreset).mockResolvedValue({
+      message: 'Workout preset deleted successfully.',
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'delete_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+      },
+      opts
+    );
+
+    expect(result).toBe('✅ Workout preset deleted.');
+    expect(workoutPresetService.deleteWorkoutPreset).toHaveBeenCalledWith(
+      'user-1',
+      PRESET_ID
+    );
+  });
+
+  it('delete_workout_preset maps a forbidden/missing preset to not found', async () => {
+    vi.mocked(workoutPresetService.deleteWorkoutPreset).mockRejectedValue(
+      new Error(
+        'Forbidden: You do not have permission to delete this workout preset.'
+      )
+    );
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'delete_workout_preset',
+        preset_id: PRESET_ID,
+        confirmed: true,
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      `Error [NOT_FOUND]: Workout preset with ID '${PRESET_ID}' not found.\n\nSuggestion: Check the ID and try again.`
+    );
+  });
+
+  it('update_workout_preset does not mutate without confirmed=true', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'update_workout_preset',
+        preset_id: PRESET_ID,
+        name: 'Leg Day (updated)',
+      },
+      opts
+    );
+
+    expect(result).toBe(
+      `Updating workout preset ${PRESET_ID} can overwrite its exercise list. Confirm with the user first. If they agree, call update_workout_preset again with the same fields and confirmed=true. Nothing was changed.`
+    );
+    expect(workoutPresetService.updateWorkoutPreset).not.toHaveBeenCalled();
+  });
+
+  it('delete_workout_preset does not mutate without confirmed=true', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'delete_workout_preset', preset_id: PRESET_ID },
+      opts
+    );
+
+    expect(result).toBe(
+      `Deleting workout preset ${PRESET_ID} is permanent. Confirm with the user first. If they agree, call delete_workout_preset again with preset_id=${PRESET_ID} and confirmed=true. Nothing was deleted.`
+    );
+    expect(workoutPresetService.deleteWorkoutPreset).not.toHaveBeenCalled();
   });
 });
 
@@ -922,6 +2149,7 @@ describe('update_exercise_entry / delete_exercise_entry', () => {
             distance: null,
             rest_time: null,
             rpe: null,
+            rir: null,
             notes: null,
           },
         ],
@@ -1466,6 +2694,342 @@ describe('sparky_get_exercise_progress', () => {
         next_offset: null,
         total_count: 1,
       })
+    );
+  });
+});
+
+describe('suggest_alternatives (manage action)', () => {
+  const benchRow = {
+    id: EXERCISE_ID,
+    name: 'Bench Press',
+    category: 'Strength',
+    equipment: '["barbell"]',
+    primary_muscles: '["chest"]',
+  };
+  const alternative = {
+    origin: 'library' as const,
+    id: EXERCISE_ID_2,
+    name: 'Dumbbell Bench Press',
+    source: 'custom',
+    category: 'strength',
+    modality: 'weight_reps' as const,
+    level: null,
+    mechanic: null,
+    force: null,
+    equipment: ['dumbbell'],
+    primary_muscles: ['chest'],
+    secondary_muscles: [],
+    images: [],
+    instructions: [],
+    description: null,
+    calories_per_hour: 300,
+    score: 70,
+    reasons: ['same_primary_muscles' as const, 'recently_performed' as const],
+    last_performed_date: '2026-09-20',
+  };
+
+  it('resolves by name and passes filters through', async () => {
+    vi.mocked(exerciseService.searchExercises).mockResolvedValue([benchRow]);
+    vi.mocked(getExerciseAlternatives).mockResolvedValue({
+      source: {
+        id: EXERCISE_ID,
+        name: 'Bench Press',
+        primary_muscles: ['chest'],
+        equipment: ['barbell'],
+      },
+      alternatives: [
+        alternative,
+        {
+          ...alternative,
+          origin: 'catalog',
+          id: 'Cable_Crossover',
+          name: 'Cable Crossover',
+          equipment: ['cable'],
+          reasons: ['same_primary_muscles', 'different_equipment'],
+          last_performed_date: null,
+        },
+      ],
+      rankable: true,
+      catalog_available: false,
+    });
+
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'suggest_alternatives',
+        exercise_name: 'bench press',
+        alternative_mode: 'different_equipment',
+        equipment: 'dumbbell, cable',
+        avoid_muscles: 'shoulders',
+        limit: 5,
+      },
+      opts
+    );
+
+    expect(getExerciseAlternatives).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      EXERCISE_ID,
+      {
+        mode: 'different_equipment',
+        equipment: ['dumbbell', 'cable'],
+        excludeMuscles: ['shoulders'],
+        excludeIds: [],
+        includeCatalog: true,
+        limit: 5,
+      }
+    );
+    expect(result).toBe(
+      '### Alternatives to Bench Press\n\n' +
+        '1. **Dumbbell Bench Press**\n' +
+        '   Muscles: chest | Equipment: dumbbell | Last done: 2026-09-20\n' +
+        '   Why: same primary muscles, done recently\n' +
+        `   ID: ${EXERCISE_ID_2}\n` +
+        '2. **Cable Crossover**\n' +
+        '   Muscles: chest | Equipment: cable\n' +
+        '   Why: same primary muscles, different equipment\n' +
+        '   Free Exercise DB (not in library yet), catalog ID: Cable_Crossover\n\n' +
+        '_Free Exercise DB is unavailable right now, so only library exercises are listed._'
+    );
+  });
+
+  it('explains when the exercise has no muscles to rank against', async () => {
+    vi.mocked(exerciseService.getExerciseById).mockResolvedValue(benchRow);
+    vi.mocked(getExerciseAlternatives).mockResolvedValue({
+      source: {
+        id: EXERCISE_ID,
+        name: 'Bench Press',
+        primary_muscles: [],
+        equipment: [],
+      },
+      alternatives: [],
+      rankable: false,
+      catalog_available: true,
+    });
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'suggest_alternatives', exercise_id: EXERCISE_ID },
+      opts
+    );
+    expect(result).toBe(
+      '### Alternatives to Bench Press\n\nBench Press has no primary muscles recorded, so alternatives cannot be ranked. Use search_exercises instead.'
+    );
+    expect(vi.mocked(getExerciseAlternatives).mock.calls[0][3]).toMatchObject({
+      mode: 'similar',
+      limit: 10,
+    });
+  });
+
+  it('maps an unknown exercise to the generic not-found text', async () => {
+    vi.mocked(exerciseService.searchExercises).mockResolvedValue([]);
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'suggest_alternatives', exercise_name: 'Nope' },
+      opts
+    );
+    expect(result).toBe(NOT_FOUND_RESOURCE_TEXT);
+  });
+});
+
+describe('rate_workout (manage action)', () => {
+  it('rates the whole session and confirms what was saved', async () => {
+    vi.mocked(setWorkoutFeedbackForEntry).mockResolvedValue({
+      exercise_preset_entry_id: 'session-1',
+      session: {
+        difficulty: 'too_hard',
+        pain: true,
+        pain_note: 'left knee',
+        updated_at: 'x',
+      },
+      exercises: [],
+    });
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'rate_workout',
+        entry_id: ENTRY_ID,
+        difficulty: 'too_hard',
+        pain: true,
+        pain_note: 'left knee',
+      },
+      opts
+    );
+    expect(setWorkoutFeedbackForEntry).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      ENTRY_ID,
+      'session',
+      { difficulty: 'too_hard', pain: true, pain_note: 'left knee' }
+    );
+    expect(result).toContain(
+      'Workout feedback saved (too hard, pain: left knee). Adaptive suggestions will use it next time.'
+    );
+  });
+
+  it('rates a single exercise', async () => {
+    vi.mocked(setWorkoutFeedbackForEntry).mockResolvedValue({
+      exercise_preset_entry_id: 'session-1',
+      session: null,
+      exercises: [
+        {
+          exercise_entry_id: ENTRY_ID,
+          difficulty: 'too_easy',
+          pain: false,
+          pain_note: null,
+          updated_at: 'x',
+        },
+      ],
+    });
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'rate_workout',
+        entry_id: ENTRY_ID,
+        scope: 'exercise',
+        difficulty: 'too_easy',
+      },
+      opts
+    );
+    expect(vi.mocked(setWorkoutFeedbackForEntry).mock.calls[0][3]).toBe(
+      'exercise'
+    );
+    expect(result).toContain('Exercise feedback saved (too easy).');
+  });
+
+  it('rejects a note together with pain=false', async () => {
+    const result = await tools.sparky_manage_exercise.execute!(
+      {
+        action: 'rate_workout',
+        entry_id: ENTRY_ID,
+        pain: false,
+        pain_note: 'sore',
+      },
+      opts
+    );
+    expect(result).toContain('pain_note cannot be combined with pain=false');
+    expect(setWorkoutFeedbackForEntry).not.toHaveBeenCalled();
+  });
+
+  it('passes omitted fields through so saved pain is kept', async () => {
+    vi.mocked(setWorkoutFeedbackForEntry).mockResolvedValue({
+      exercise_preset_entry_id: 'session-1',
+      session: {
+        difficulty: 'too_hard',
+        pain: true,
+        pain_note: 'knee',
+        updated_at: 'x',
+      },
+      exercises: [],
+    });
+    await tools.sparky_manage_exercise.execute!(
+      { action: 'rate_workout', entry_id: ENTRY_ID, difficulty: 'too_hard' },
+      opts
+    );
+    expect(vi.mocked(setWorkoutFeedbackForEntry).mock.calls[0][4]).toEqual({
+      difficulty: 'too_hard',
+      pain: undefined,
+      pain_note: undefined,
+    });
+  });
+
+  it('explains when the entry is not part of a session', async () => {
+    const { WorkoutEntryNotInSessionError } =
+      await import('../services/workoutCoachingService.js');
+    vi.mocked(setWorkoutFeedbackForEntry).mockRejectedValue(
+      new WorkoutEntryNotInSessionError()
+    );
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'rate_workout', entry_id: ENTRY_ID, difficulty: 'just_right' },
+      opts
+    );
+    expect(result).toContain(
+      'This exercise entry is not part of a logged workout session'
+    );
+  });
+});
+
+describe('get_workout_coaching (manage action)', () => {
+  const baseSignal = {
+    exercise_id: EXERCISE_ID,
+    last_performed_date: '2026-09-24',
+    days_since_last_performed: 2,
+    last_difficulty: null,
+    last_pain: null,
+    too_easy_streak: 0,
+    too_hard_streak: 0,
+    pain_streak: 0,
+    avg_rpe: null,
+    avg_rir: null,
+    sessions_in_variation_window: 1,
+  };
+
+  it('explains the adjustment for each exercise of a preset', async () => {
+    vi.mocked(workoutPresetService.getWorkoutPresetById).mockResolvedValue({
+      id: PRESET_ID,
+      exercises: [
+        { exercise_id: EXERCISE_ID, exercise_name: 'Bench Press' },
+        {
+          exercise_id: EXERCISE_ID_2,
+          exercise_name: 'Cable Fly',
+          exercise: { mechanic: 'isolation' },
+        },
+      ],
+    } as never);
+    vi.mocked(getWorkoutCoachingSignals).mockResolvedValue({
+      adaptive_suggestions: true,
+      signals: [
+        { ...baseSignal, last_pain: 'exercise', pain_streak: 1 },
+        {
+          ...baseSignal,
+          exercise_id: EXERCISE_ID_2,
+          sessions_in_variation_window: 7,
+        },
+      ],
+    });
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_coaching', preset_id: PRESET_ID },
+      opts
+    );
+    expect(getWorkoutCoachingSignals).toHaveBeenCalledWith(
+      'user-1',
+      'user-1',
+      [EXERCISE_ID, EXERCISE_ID_2],
+      null
+    );
+    expect(result).toBe(
+      '### Adaptive coaching\n\n' +
+        '- **Bench Press** (last done 2026-09-24): lighter (-10%): pain was reported in this exercise last time\n' +
+        '- **Cable Fly** (last done 2026-09-24): done in most recent workouts; consider a variation (suggest_alternatives)\n\n' +
+        'The user can decline any change in the app ("Use my usual").'
+    );
+  });
+
+  it('says when adaptive suggestions are off', async () => {
+    vi.mocked(exerciseService.getExerciseById).mockResolvedValue({
+      id: EXERCISE_ID,
+      name: 'Bench Press',
+    });
+    vi.mocked(getWorkoutCoachingSignals).mockResolvedValue({
+      adaptive_suggestions: false,
+      signals: [],
+    });
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_coaching', exercise_id: EXERCISE_ID },
+      opts
+    );
+    expect(result).toContain('Adaptive suggestions are turned off');
+  });
+
+  it('reports normal progression without recent history', async () => {
+    vi.mocked(exerciseService.getExerciseById).mockResolvedValue({
+      id: EXERCISE_ID,
+      name: 'Bench Press',
+    });
+    vi.mocked(getWorkoutCoachingSignals).mockResolvedValue({
+      adaptive_suggestions: true,
+      signals: [],
+    });
+    const result = await tools.sparky_manage_exercise.execute!(
+      { action: 'get_workout_coaching', exercise_id: EXERCISE_ID },
+      opts
+    );
+    expect(result).toContain(
+      '- **Bench Press**: no recent history: normal progression'
     );
   });
 });

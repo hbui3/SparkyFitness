@@ -12,6 +12,9 @@ import {
   useSuggestedExercises,
 } from '../../src/hooks';
 import { useExternalExerciseSearch } from '../../src/hooks/useExternalExerciseSearch';
+import { useExerciseAlternatives } from '../../src/hooks/useExerciseAlternatives';
+import type { ExerciseAlternative } from '@workspace/shared';
+import type { ExerciseReplaceContext } from '../../src/utils/exerciseReplace';
 import { useNavigationActionGuard } from '../../src/hooks/useNavigationActionGuard';
 import { importExercise } from '../../src/services/api/externalExerciseSearchApi';
 import {
@@ -28,6 +31,10 @@ jest.mock('../../src/hooks', () => ({
   useProfile: jest.fn(() => ({ profile: undefined, isLoading: false })),
   useServerConnection: jest.fn(),
   useSuggestedExercises: jest.fn(),
+}));
+
+jest.mock('../../src/hooks/useExerciseAlternatives', () => ({
+  useExerciseAlternatives: jest.fn(),
 }));
 
 jest.mock('../../src/hooks/useExternalExerciseSearch', () => ({
@@ -167,14 +174,14 @@ const nutritionixItem: ExternalExerciseItem = {
 
 let queryClient: QueryClient;
 
-const renderScreen = () => {
+const renderScreen = (replaceFor?: ExerciseReplaceContext) => {
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const route = {
     key: 'ExerciseSearch-key',
     name: 'ExerciseSearch' as const,
-    params: { returnKey: 'workout-form-key' },
+    params: { returnKey: 'workout-form-key', replaceFor },
   };
   return render(
     <QueryClientProvider client={queryClient}>
@@ -544,6 +551,180 @@ describe('ExerciseSearchScreen', () => {
 
       await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalled());
       expect(mockImportExercise).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('replace mode (Suggested tab)', () => {
+    const mockUseExerciseAlternatives =
+      useExerciseAlternatives as jest.MockedFunction<
+        typeof useExerciseAlternatives
+      >;
+    const replaceFor: ExerciseReplaceContext = {
+      exerciseId: localExercise.id,
+      exerciseName: 'Bench Press',
+      excludeIds: ['other-id'],
+    };
+    const base: Omit<ExerciseAlternative, 'origin' | 'id' | 'name'> = {
+      source: 'custom',
+      category: 'strength',
+      modality: 'weight_reps',
+      level: null,
+      mechanic: null,
+      force: null,
+      equipment: ['dumbbell'],
+      primary_muscles: ['chest'],
+      secondary_muscles: [],
+      images: [],
+      instructions: ['Press.'],
+      description: null,
+      calories_per_hour: 250,
+      score: 70,
+      reasons: ['same_primary_muscles', 'recently_performed'],
+      last_performed_date: '2026-09-20',
+    };
+    const libraryAlt: ExerciseAlternative = {
+      ...base,
+      origin: 'library',
+      id: '22222222-2222-4222-8222-222222222222',
+      name: 'Dumbbell Press',
+    };
+    const catalogAlt: ExerciseAlternative = {
+      ...base,
+      origin: 'catalog',
+      id: 'Cable_Crossover',
+      name: 'Cable Crossover',
+      source: 'free-exercise-db',
+      calories_per_hour: null,
+      reasons: ['same_primary_muscles'],
+      last_performed_date: null,
+    };
+
+    beforeEach(() => {
+      mockUseExerciseAlternatives.mockReturnValue({
+        data: {
+          source: {
+            id: localExercise.id,
+            name: 'Bench Press',
+            primary_muscles: ['chest'],
+            equipment: ['barbell'],
+          },
+          alternatives: [libraryAlt, catalogAlt],
+          rankable: true,
+          catalog_available: true,
+        },
+        isLoading: false,
+        isError: false,
+        refetch: jest.fn(),
+      } as any);
+    });
+
+    it('opens on ranked alternatives with their reasons', () => {
+      const screen = renderScreen(replaceFor);
+
+      expect(screen.getByText('Instead of Bench Press')).toBeTruthy();
+      expect(screen.getByText('Dumbbell Press')).toBeTruthy();
+      expect(screen.getAllByText('Same muscles').length).toBe(2);
+      expect(screen.getByText('Done recently')).toBeTruthy();
+      expect(screen.getByText('New')).toBeTruthy();
+      expect(mockUseExerciseAlternatives).toHaveBeenCalledWith(
+        localExercise.id,
+        'similar',
+        ['other-id']
+      );
+    });
+
+    it('switches to the different-equipment ranking', () => {
+      const screen = renderScreen(replaceFor);
+      fireEvent.press(screen.getByText('Other equipment'));
+      expect(mockUseExerciseAlternatives).toHaveBeenLastCalledWith(
+        localExercise.id,
+        'different_equipment',
+        ['other-id']
+      );
+    });
+
+    it('selects a library alternative with its calories and instructions', () => {
+      const screen = renderScreen(replaceFor);
+      fireEvent.press(screen.getByTestId(`alternative-${libraryAlt.id}`));
+      expect(mockNavigation.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            params: expect.objectContaining({
+              selectedExercise: expect.objectContaining({
+                id: libraryAlt.id,
+                calories_per_hour: 250,
+                instructions: ['Press.'],
+              }),
+            }),
+          }),
+        })
+      );
+      expect(mockNavigation.goBack).toHaveBeenCalled();
+    });
+
+    it('imports a catalog alternative before selecting it', async () => {
+      mockImportExercise.mockResolvedValue({
+        ...localExercise,
+        id: 'imported-id',
+        name: 'Cable Crossover',
+      });
+      const screen = renderScreen(replaceFor);
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('alternative-Cable_Crossover'));
+      });
+      expect(mockImportExercise).toHaveBeenCalledWith(
+        'free-exercise-db',
+        'Cable_Crossover'
+      );
+      await waitFor(() =>
+        expect(mockNavigation.dispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              params: expect.objectContaining({
+                selectedExercise: expect.objectContaining({
+                  id: 'imported-id',
+                }),
+              }),
+            }),
+          })
+        )
+      );
+    });
+
+    it('keeps free search one tap away', () => {
+      const screen = renderScreen(replaceFor);
+      fireEvent.press(screen.getByText('Search all exercises'));
+      expect(screen.getByText('Bench Press')).toBeTruthy();
+      expect(screen.getByPlaceholderText('Search exercises...')).toBeTruthy();
+    });
+
+    it('explains when the exercise has no muscles to rank against', () => {
+      mockUseExerciseAlternatives.mockReturnValue({
+        data: {
+          source: {
+            id: localExercise.id,
+            name: 'Bench Press',
+            primary_muscles: [],
+            equipment: [],
+          },
+          alternatives: [],
+          rankable: false,
+          catalog_available: true,
+        },
+        isLoading: false,
+        isError: false,
+        refetch: jest.fn(),
+      } as any);
+      const screen = renderScreen(replaceFor);
+      expect(
+        screen.getByText('No muscles recorded for Bench Press')
+      ).toBeTruthy();
+    });
+
+    it('shows no Suggested tab when adding rather than replacing', () => {
+      const screen = renderScreen();
+      expect(screen.queryByText('Suggested')).toBeNull();
+      expect(mockUseExerciseAlternatives).not.toHaveBeenCalled();
     });
   });
 });
