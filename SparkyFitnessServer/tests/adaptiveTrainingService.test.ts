@@ -211,6 +211,32 @@ describe('adaptiveTrainingService', () => {
     expect(dashboard.recommendation.rationale[0]?.code).toBe('low_readiness');
   });
 
+  it('keeps missing readiness unknown and identifies the cautious training estimate', async () => {
+    vi.mocked(adaptiveTrainingRepository.getReadiness).mockResolvedValue({
+      sleep_hours: null,
+      sleep_score: null,
+      training_readiness_score: null,
+    });
+    const dashboard =
+      await adaptiveTrainingService.getAdaptiveTrainingDashboard(
+        'owner',
+        'owner',
+        '2026-10-24'
+      );
+    expect(dashboard.readiness.score).toBeNull();
+    expect(dashboard.recommendation.volumeFactor).toBeLessThan(1);
+    expect(dashboard.recommendation.rationale).toContainEqual({
+      code: 'insufficient_recovery_data',
+      muscles: [],
+      value: null,
+    });
+    expect(
+      dashboard.recommendation.rationale.some(
+        (reason) => reason.code === 'muscles_ready'
+      )
+    ).toBe(false);
+  });
+
   it('rejects preset ids that do not belong to the active user', async () => {
     await expect(
       adaptiveTrainingService.updateAdaptiveTrainingSettings(

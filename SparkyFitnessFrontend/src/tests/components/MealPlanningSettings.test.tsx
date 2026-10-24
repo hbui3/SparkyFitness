@@ -997,4 +997,72 @@ describe('MealPlanningSettings', () => {
       expect.objectContaining({ onSuccess: expect.any(Function) })
     );
   });
+  it('shows overdue open meals with their actions', () => {
+    mockDashboard({
+      ...dashboard,
+      planEntries: [],
+      overdueEntries: [{ ...dashboard.planEntries[0]!, date: '2026-08-20' }],
+    });
+    render(<MealPlanningSettings />);
+    expect(screen.getByText(/Still open/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: /Mark Red lentil bowl on .* as prepared/,
+      })
+    ).toBeEnabled();
+  });
+
+  it('blocks preparation of a meal that no longer satisfies the food rules', () => {
+    mockDashboard({
+      ...dashboard,
+      planEntries: [
+        { ...dashboard.planEntries[0]!, safetyStatus: 'needs_user_input' },
+      ],
+    });
+    render(<MealPlanningSettings />);
+    expect(
+      screen.getByRole('button', {
+        name: /Mark Red lentil bowl on .* as prepared/,
+      })
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/no longer matches your current food rules/)
+    ).toBeInTheDocument();
+  });
+
+  it('offers undo for prepared meals', () => {
+    mockDashboard({
+      ...dashboard,
+      planEntries: [{ ...dashboard.planEntries[0]!, status: 'prepared' }],
+    });
+    render(<MealPlanningSettings />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo last action' }));
+    expect(actionMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entryId: ENTRY_ID,
+        request: expect.objectContaining({ action: 'planned' }),
+      })
+    );
+  });
+
+  it('allows editing portion size and moving a planned meal to another date', () => {
+    render(<MealPlanningSettings />);
+    fireEvent.click(
+      screen.getByRole('button', { name: /Replace Red lentil bowl on / })
+    );
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Portion size'), {
+      target: { value: '1.5' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Meal date'), {
+      target: { value: '2026-09-03' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace' }));
+    expect(replaceMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entryId: ENTRY_ID,
+        request: expect.objectContaining({ servings: 1.5, date: '2026-09-03' }),
+      })
+    );
+  });
 });

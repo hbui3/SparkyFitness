@@ -98,6 +98,11 @@ function reasonText(
         'adaptiveTraining.reason.insufficientMuscleData',
         'The workout template has no muscle assignments yet.'
       );
+    case 'insufficient_recovery_data':
+      return t(
+        'adaptiveTraining.reason.insufficientRecoveryData',
+        'Recovery cannot be assessed yet. This is a cautious training estimate.'
+      );
     case 'adaptive_disabled':
       return t(
         'adaptiveTraining.reason.disabled',
@@ -182,7 +187,8 @@ export default function AdaptiveTrainingDashboard({
       state: createWorkoutPlaybackRouteState(
         preset,
         data.date,
-        `${location.pathname}${location.search}`
+        `${location.pathname}${location.search}`,
+        recommendation.volumeFactor
       ),
     });
   };
@@ -308,7 +314,11 @@ export default function AdaptiveTrainingDashboard({
             <div className="grid grid-cols-3 gap-3 text-center">
               <Metric
                 label={t('adaptiveTraining.readiness', 'Readiness')}
-                value={`${data.readiness.score}/100`}
+                value={
+                  data.readiness.score === null
+                    ? t('adaptiveTraining.notEnoughData', 'Not enough data')
+                    : `${data.readiness.score}/100`
+                }
               />
               <Metric
                 label={t('adaptiveTraining.sleep', 'Sleep')}
@@ -334,7 +344,7 @@ export default function AdaptiveTrainingDashboard({
             <p className="text-sm text-muted-foreground">
               {t(
                 'adaptiveTraining.noMuscleLoad',
-                'No recent strength load found. Your muscles are treated as ready.'
+                'No recent strength load found. Missing records do not confirm recovery.'
               )}
             </p>
           ) : (

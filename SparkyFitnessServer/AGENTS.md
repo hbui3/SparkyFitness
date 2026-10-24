@@ -363,3 +363,5 @@ Before adding a feature or changing auth/permission behavior, read:
 - Background jobs use `services/backgroundJobScheduler.ts`; it also registers the proactive coach heartbeat. `services/providerSyncScheduler.ts` includes Speediance and iGPSPORT with their hourly/daily frequency checks and shared sync claims. Telegram inbox processing starts independently in the app shell.
 
 - Upstream training consistency, training load and comparison workout metrics also use canonical provider selection through `workoutDeduplicationService.ts`. Pass canonical entry IDs to duration/volume SQL so mirrored workouts never inflate load or comparisons.
+
+- Meal-plan corrections reuse entry actions/replacements: `planned` undoes terminal actions and compensates consumed stock through pantry ledger events. Dashboard-only overdue entries stay separate from range-scoped nutrition totals; revalidate current food rules at preparation. Preserve owner-today expiry checks and goal-aware v3 generation.

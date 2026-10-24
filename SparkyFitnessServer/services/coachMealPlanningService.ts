@@ -519,17 +519,31 @@ export async function getDashboard(
       coachMealPlanningRepository.listMealPlanEntries(
         userId,
         startDate,
-        endDate
+        endDate,
+        true
       ),
       coachMealPlanningRepository.getOpenShoppingList(userId),
       getCoachMealCatalog(userId),
       coachProfileRepository.getCoachLanguage(userId),
       goalService.getUserGoalsForRange(userId, startDate, endDate, true),
     ]);
+  const safeKeys = new Set(catalog.map((meal) => meal.id));
+  const visibleEntry = (entry: MealPlanEntryRow) => {
+    const response = mealPlanEntryResponse(entry);
+    return entry.status === 'planned' && !safeKeys.has(entry.recipe_key)
+      ? { ...response, safetyStatus: 'needs_user_input' as const }
+      : response;
+  };
+  const currentEntries = planEntries.filter(
+    (entry) => entry.plan_date >= startDate
+  );
+  const overdueEntries = planEntries.filter(
+    (entry) => entry.plan_date < startDate
+  );
   const dailyNutrition = buildDailyNutrition(
     startDate,
     days,
-    planEntries,
+    currentEntries,
     goalRange
   );
   return {
@@ -539,7 +553,8 @@ export async function getDashboard(
     shoppingList: shopping
       ? shoppingListResponse(shopping.list, shopping.items)
       : null,
-    planEntries: planEntries.map(mealPlanEntryResponse),
+    planEntries: currentEntries.map(visibleEntry),
+    overdueEntries: overdueEntries.map(visibleEntry),
     dailyNutrition,
     mealCatalog: catalog.map(recipeCatalogItem),
     warnings: dashboardWarnings(pantry, planEntries, language, dailyNutrition),
@@ -1100,6 +1115,22 @@ export async function applyMealPlanAction(
   entryId: string,
   input: CoachMealPlanActionRequest
 ): Promise<void> {
+  if (input.action === 'prepared') {
+    const entry = await coachMealPlanningRepository.getMealPlanEntry(
+      userId,
+      entryId
+    );
+    if (!entry)
+      throw new CoachMealPlanningNotFoundError('Meal-plan entry not found.');
+    if (
+      entry.status === 'planned' &&
+      !(await getCoachMealSuggestionById(userId, entry.recipe_key))
+    ) {
+      throw new CoachMealPlanningConflictError(
+        'Diese Mahlzeit erfüllt deine aktuellen Ernährungsregeln nicht mehr. Bitte wähle zuerst eine passende Alternative.'
+      );
+    }
+  }
   const status = await coachMealPlanningRepository.applyPlanEntryAction(
     userId,
     entryId,
@@ -1137,9 +1168,11 @@ export async function replaceMealPlanEntry(
     input.operationId,
     planEntryInput(
       meal,
-      oldEntry.plan_date,
+      input.date ?? oldEntry.plan_date,
       oldEntry.meal_slot,
-      oldEntry.estimated_calories
+      input.servings === undefined
+        ? oldEntry.estimated_calories
+        : meal.calories * input.servings
     )
   );
   if (!replaced) {

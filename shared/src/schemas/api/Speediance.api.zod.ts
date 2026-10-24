@@ -356,7 +356,7 @@ export const speedianceSyncRequestSchema = z
   });
 
 export const speedianceSyncResponseSchema = z.object({
-  success: z.literal(true),
+  success: z.boolean(),
   importedWorkouts: z.number().int().nonnegative(),
   importedExercises: z.number().int().nonnegative(),
   skippedWorkouts: z.number().int().nonnegative(),

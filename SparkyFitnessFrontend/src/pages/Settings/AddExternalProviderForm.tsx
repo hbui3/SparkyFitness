@@ -271,13 +271,18 @@ const AddExternalProviderForm = ({
         }
       }
 
-      toast({
-        title: t('common.success', 'Success'),
-        description: t(
-          'settings.addExternalProviderForm.externalDataProviderAddedSuccessfully',
-          'External data provider added successfully'
-        ),
-      });
+      if (!(
+        ['speediance', 'igpsport'].includes(newProvider.provider_type ?? '') &&
+        newProvider.is_active
+      )) {
+        toast({
+          title: t('common.success', 'Success'),
+          description: t(
+            'settings.addExternalProviderForm.externalDataProviderAddedSuccessfully',
+            'External data provider added successfully'
+          ),
+        });
+      }
 
       setNewProvider({
         provider_name: '',

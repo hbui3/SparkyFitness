@@ -5,7 +5,7 @@ import type {
   UpdateCoachMemoryRequest,
   UpdateCoachProfileRequest,
 } from '@workspace/shared';
-import { preferencesKeys } from '@/api/keys/settings';
+import { preferencesKeys, coachMealPlanningKeys } from '@/api/keys/settings';
 import {
   createCoachTelegramLink,
   createCoachMemory,
@@ -43,6 +43,9 @@ export const useUpdateCoachProfile = () => {
       updateCoachProfile(profile),
     onSuccess: (profile) => {
       queryClient.setQueryData(preferencesKeys.coachProfile(), profile);
+      void queryClient.invalidateQueries({
+        queryKey: coachMealPlanningKeys.all,
+      });
     },
     meta: {
       errorMessage: t(

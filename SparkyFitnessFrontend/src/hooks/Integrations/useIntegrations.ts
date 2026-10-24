@@ -51,6 +51,10 @@ import { garminKeys } from '@/api/keys/integrations';
 import { externalProviderKeys } from '@/api/keys/settings';
 import { useDiaryInvalidation } from '@/hooks/useInvalidateKeys';
 import i18n from 'i18next';
+import {
+  workoutSyncSummary,
+  type WorkoutSyncResponse,
+} from '@/utils/workoutSyncSummary';
 export const useLinkFitbitMutation = () => {
   const { t } = useTranslation();
   const invalidate = useDiaryInvalidation();
@@ -646,9 +650,18 @@ interface WorkoutProviderSyncVariables {
   endDate?: string;
 }
 
-export const useSyncSpeedianceMutation = () => {
+function useWorkoutProviderSync(
+  sync: (
+    fullSync: boolean,
+    providerId?: string,
+    startDate?: string,
+    endDate?: string
+  ) => Promise<WorkoutSyncResponse>
+) {
   const { t } = useTranslation();
   const invalidate = useDiaryInvalidation();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   return useMutation({
     mutationFn: ({
@@ -657,43 +670,36 @@ export const useSyncSpeedianceMutation = () => {
       startDate,
       endDate,
     }: WorkoutProviderSyncVariables) =>
-      syncSpeedianceData(fullSync, providerId, startDate, endDate),
-    onSuccess: invalidate,
+      sync(fullSync, providerId, startDate, endDate),
+    onSuccess: (result) => {
+      invalidate();
+      void queryClient.invalidateQueries({
+        queryKey: externalProviderKeys.lists(),
+      });
+      const counts = workoutSyncSummary(result);
+      toast({
+        title:
+          counts.failed > 0
+            ? t('integrations.workoutSyncPartial', 'Sync partially completed')
+            : t('integrations.workoutSyncComplete', 'Sync completed'),
+        description: t(
+          'integrations.workoutSyncCounts',
+          '{{imported}} imported, {{updated}} updated, {{failed}} failed.',
+          counts
+        ),
+        variant: counts.failed > 0 ? 'destructive' : 'default',
+      });
+    },
     meta: {
-      successMessage: t(
-        'integrations.speedianceSyncSuccess',
-        'Speediance workouts synced successfully.'
-      ),
       errorMessage: t(
-        'integrations.speedianceSyncError',
-        'Speediance sync failed. Check the email, password, and region.'
+        'integrations.workoutSyncError',
+        'Sync failed. Check the account credentials and region, then retry the period.'
       ),
     },
   });
-};
+}
 
-export const useSyncIGPSportMutation = () => {
-  const { t } = useTranslation();
-  const invalidate = useDiaryInvalidation();
-
-  return useMutation({
-    mutationFn: ({
-      fullSync = false,
-      providerId,
-      startDate,
-      endDate,
-    }: WorkoutProviderSyncVariables) =>
-      syncIGPSportData(fullSync, providerId, startDate, endDate),
-    onSuccess: invalidate,
-    meta: {
-      successMessage: t(
-        'integrations.igpsportSyncSuccess',
-        'iGPSPORT activities synced successfully.'
-      ),
-      errorMessage: t(
-        'integrations.igpsportSyncError',
-        'iGPSPORT sync failed. Check the account, password, and region.'
-      ),
-    },
-  });
-};
+export const useSyncSpeedianceMutation = () =>
+  useWorkoutProviderSync(syncSpeedianceData);
+export const useSyncIGPSportMutation = () =>
+  useWorkoutProviderSync(syncIGPSportData);

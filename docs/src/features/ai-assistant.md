@@ -36,6 +36,7 @@
 - **Missed Workout Follow-up**: Adaptive training check-ins name today's still-open planned workout. If yesterday's planned session remains incomplete, the scheduler carries it to today, attempts the matching Speediance reservation, acknowledges the miss the next morning, and continues concrete reminders until completion or an explicit plan change.
 - **Proactive Messages**: Optional adaptive check-ins wake at deterministic, varied 3–8 minute intervals inside the user's local activity window, quietly assess live nutrition, hydration, training, recovery, and progress context, and only write when a timely action or genuine win is worth mentioning. A configurable minimum message interval, conversation cooldown, topic cooldown, state-change detection, and recent-wording checks prevent spam and repetition. Daily check-ins and weekly reviews remain separately schedulable.
 - **Scheduled Reviews**: Optional daily check-ins and weekly reviews can still be scheduled in the user's local timezone. Nutrition gaps and weekly meal-prep moments include a concrete meal and shopping action when the food profile allows one. During an enabled evening coaching window, an unchanged open shopping need can trigger a restock reminder so the next days' plan remains cookable. Every proactive message is written privately into Ask Sparky history and appears in web and mobile chat when it is opened.
+
 ### Voice input on web and mobile
 
 In **Ask Sparky** on the web, Android, or iOS, tap the microphone, dictate a message, then stop recording. Review or edit the recognized text and tap **Send**. Dictation does not automatically send messages or add food to your diary; the existing chat handles your request after you send it.
@@ -133,3 +134,7 @@ Small local models (roughly 3B–8B, e.g. an 8 GB Mac) can drive the chatbot's t
 2. **Use the `core` tool profile.** When you add an Ollama service, SparkyFitness now preselects the **core** tool profile (in the service's settings). Core exposes the everyday logging tools plus goals (~20 tools) instead of the full ~35, which small models select from far more reliably and which fits a smaller context window. Pick **full** only on a strong local machine with a raised context window.
 
 The server logs a warning when an Ollama service runs the `full` profile, since that combination most often overflows the default context. Also prefer models trained for tool calling (e.g. `qwen2.5:7b-instruct`, `llama3.1:8b`) — plain small chat models make unreliable tool calls.
+
+### Reviewing and correcting planned meals
+
+The meal planner keeps unfinished meals from earlier days visible. You can change a meal’s date or portion size, replace its recipe, or skip it; ingredient reservations and shopping quantities are recalculated together. Undoing a prepared meal restores the stock consumed by that meal once. Current food rules are checked again before preparation, and meals that need a safer alternative cannot be marked as prepared. Daily nutrition comparisons remain tied to the selected planning period.

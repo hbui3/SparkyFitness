@@ -21,6 +21,7 @@ export const adaptiveTrainingReasonCodeSchema = z.enum([
   'poor_sleep',
   'no_eligible_presets',
   'insufficient_muscle_data',
+  'insufficient_recovery_data',
   'adaptive_disabled',
 ]);
 
@@ -64,7 +65,7 @@ export const adaptiveTrainingPresetSchema = z.object({
 });
 
 export const adaptiveTrainingReadinessSchema = z.object({
-  score: z.number().min(0).max(100),
+  score: z.number().min(0).max(100).nullable(),
   sleepHours: z.number().nullable(),
   sleepScore: z.number().nullable(),
   trainingReadinessScore: z.number().nullable(),

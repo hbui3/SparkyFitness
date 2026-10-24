@@ -394,7 +394,7 @@ export const generateCoachMealPlanRequestSchema = z
 export const coachMealPlanActionRequestSchema = z
   .object({
     operationId: z.string().uuid(),
-    action: z.enum(['prepared', 'eaten_out', 'skipped']),
+    action: z.enum(['prepared', 'eaten_out', 'skipped', 'planned']),
     notes: z.string().trim().min(1).max(2_000).optional(),
   })
   .strict();
@@ -403,6 +403,8 @@ export const replaceCoachMealPlanEntryRequestSchema = z
   .object({
     operationId: z.string().uuid(),
     recipeKey: compactTextSchema,
+    servings: z.number().min(0.1).max(6).multipleOf(0.001).optional(),
+    date: coachMealPlanningDaySchema.optional(),
   })
   .strict();
 
@@ -413,6 +415,7 @@ export const coachMealPlanningDashboardResponseSchema = z
     pantry: z.array(coachPantryItemResponseSchema),
     shoppingList: coachShoppingListResponseSchema.nullable(),
     planEntries: z.array(coachMealPlanEntryResponseSchema),
+    overdueEntries: z.array(coachMealPlanEntryResponseSchema).optional(),
     dailyNutrition: z
       .array(coachMealPlanningDailyNutritionSchema)
       .min(1)

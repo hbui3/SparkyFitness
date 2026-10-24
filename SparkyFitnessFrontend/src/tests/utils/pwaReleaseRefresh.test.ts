@@ -7,7 +7,7 @@ import {
 interface ServiceWorkerHarness {
   runtime: PwaReleaseRefreshRuntime;
   update: jest.Mock<Promise<void>, []>;
-  reload: jest.Mock<void, []>;
+  notify: jest.Mock<void, []>;
   startInterval: jest.Mock<unknown, [() => void, number]>;
   clearInterval: jest.Mock<void, [unknown]>;
   emitControllerChange: () => void;
@@ -18,7 +18,7 @@ const createServiceWorkerHarness = (
 ): ServiceWorkerHarness => {
   let controllerChangeListener: EventListener | undefined;
   const update = jest.fn<Promise<void>, []>().mockResolvedValue(undefined);
-  const reload = jest.fn<void, []>();
+  const notify = jest.fn<void, []>();
   const intervalId = Symbol('pwa-update-interval');
   const startInterval = jest
     .fn<unknown, [() => void, number]>()
@@ -39,12 +39,12 @@ const createServiceWorkerHarness = (
           }
         },
       }),
-      reloadWindowLocation: reload,
+      notifyUpdateAvailable: notify,
       startInterval,
       clearInterval,
     },
     update,
-    reload,
+    notify,
     startInterval,
     clearInterval,
     emitControllerChange: () =>
@@ -53,7 +53,7 @@ const createServiceWorkerHarness = (
 };
 
 describe('pwaReleaseRefresh', () => {
-  it('checks immediately, polls, and reloads once when an update takes control', async () => {
+  it('checks immediately, polls, and notifies once without reloading when an update takes control', async () => {
     const harness = createServiceWorkerHarness();
 
     const stop = startPwaReleaseRefresh(harness.runtime);
@@ -69,13 +69,13 @@ describe('pwaReleaseRefresh', () => {
     harness.emitControllerChange();
     harness.emitControllerChange();
 
-    expect(harness.reload).toHaveBeenCalledTimes(1);
+    expect(harness.notify).toHaveBeenCalledTimes(1);
 
     stop();
     expect(harness.clearInterval).toHaveBeenCalledTimes(1);
   });
 
-  it('does not reload when the first service worker is installed', async () => {
+  it('does not notify when the first service worker is installed', async () => {
     const harness = createServiceWorkerHarness(false);
 
     startPwaReleaseRefresh(harness.runtime);
@@ -83,23 +83,25 @@ describe('pwaReleaseRefresh', () => {
 
     harness.emitControllerChange();
 
-    expect(harness.reload).not.toHaveBeenCalled();
+    expect(harness.notify).not.toHaveBeenCalled();
+    harness.emitControllerChange();
+    expect(harness.notify).toHaveBeenCalledTimes(1);
   });
 
   it('does nothing when service workers are unavailable', () => {
-    const reload = jest.fn<void, []>();
+    const notify = jest.fn<void, []>();
     const startInterval = jest.fn<unknown, [() => void, number]>();
 
     const stop = startPwaReleaseRefresh({
       getServiceWorker: () => null,
-      reloadWindowLocation: reload,
+      notifyUpdateAvailable: notify,
       startInterval,
       clearInterval: jest.fn<void, [unknown]>(),
     });
 
     stop();
 
-    expect(reload).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
     expect(startInterval).not.toHaveBeenCalled();
   });
 });

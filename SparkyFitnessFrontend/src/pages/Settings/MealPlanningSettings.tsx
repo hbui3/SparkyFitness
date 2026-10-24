@@ -4,6 +4,8 @@ import { AlertTriangle, CalendarDays, RefreshCw } from 'lucide-react';
 import { todayInZone } from '@workspace/shared';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import MealPlanView from '@/components/MealPlanning/MealPlanView';
@@ -23,7 +25,10 @@ const MealPlanningSettings = () => {
   const { t } = useTranslation();
   const { timezone } = usePreferences();
   const [days, setDays] = useState(5);
-  const startDate = todayInZone(timezone);
+  const [selectedStartDate, setSelectedStartDate] = useState<string | null>(
+    null
+  );
+  const startDate = selectedStartDate ?? todayInZone(timezone);
   const dashboard = useCoachMealPlanningDashboard(startDate, days);
   const generatePlan = useGenerateCoachMealPlan();
   const applyAction = useApplyCoachMealPlanAction();
@@ -107,6 +112,18 @@ const MealPlanningSettings = () => {
         </p>
       </div>
 
+      <div className="space-y-2">
+        <Label htmlFor="meal-plan-start-date">
+          {t('settings.mealPlanning.plan.startDate', 'Plan starting on')}
+        </Label>
+        <Input
+          id="meal-plan-start-date"
+          type="date"
+          className="w-auto"
+          value={startDate}
+          onChange={(event) => setSelectedStartDate(event.target.value || null)}
+        />
+      </div>
       {data.warnings.length > 0 && (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
@@ -138,7 +155,7 @@ const MealPlanningSettings = () => {
 
         <TabsContent value="plan" className="mt-5">
           <MealPlanView
-            entries={data.planEntries}
+            entries={[...(data.overdueEntries ?? []), ...data.planEntries]}
             dailyNutrition={data.dailyNutrition}
             catalog={data.mealCatalog}
             startDate={startDate}
@@ -158,10 +175,15 @@ const MealPlanningSettings = () => {
                 request: { operationId: generateClientId(), action },
               })
             }
-            onReplace={(entryId, recipeKey) =>
+            onReplace={(entryId, recipeKey, servings, date) =>
               replaceEntry.mutate({
                 entryId,
-                request: { operationId: generateClientId(), recipeKey },
+                request: {
+                  operationId: generateClientId(),
+                  recipeKey,
+                  servings,
+                  date,
+                },
               })
             }
             onDelete={(entryId) => deleteEntry.mutate(entryId)}

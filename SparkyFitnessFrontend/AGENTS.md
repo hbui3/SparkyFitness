@@ -134,3 +134,5 @@ When searching, ignore `node_modules/`, `dist/`, and every locale except `public
 - For work inside `SparkyFitnessFrontend/`, this file wins over repo-root guidance on package-specific details.
 - If a task spans packages, combine this guide with the other affected package guides.
 - If you add a new domain folder, route family, or cross-cutting convention, update the Domain list, Source Map, and Quick Routing sections of this file in the same change.
+
+- PWA release updates are announced by `src/components/PwaUpdateNotice.tsx` through `src/utils/pwaReleaseRefresh.ts`; never force a reload while the person may be editing. `WorkoutSyncResult.tsx` displays workout-provider counts and retries the original period.

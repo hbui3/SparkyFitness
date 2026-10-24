@@ -1,5 +1,16 @@
 export const PWA_UPDATE_CHECK_INTERVAL_MS = 60_000;
 
+let updateAvailable = false;
+const updateListeners = new Set<() => void>();
+
+export const isPwaUpdateAvailable = () => updateAvailable;
+export const subscribeToPwaUpdate = (listener: () => void) => {
+  updateListeners.add(listener);
+  return () => {
+    updateListeners.delete(listener);
+  };
+};
+
 interface PwaServiceWorkerRegistration {
   update: () => Promise<unknown>;
 }
@@ -16,7 +27,7 @@ interface PwaServiceWorkerContainer {
 
 export interface PwaReleaseRefreshRuntime {
   getServiceWorker: () => PwaServiceWorkerContainer | null;
-  reloadWindowLocation: () => void;
+  notifyUpdateAvailable: () => void;
   startInterval: (callback: () => void, delay: number) => unknown;
   clearInterval: (intervalId: unknown) => void;
 }
@@ -29,7 +40,10 @@ export const pwaReleaseRefreshRuntime: PwaReleaseRefreshRuntime = {
 
     return navigator.serviceWorker;
   },
-  reloadWindowLocation: () => window.location.reload(),
+  notifyUpdateAvailable: () => {
+    updateAvailable = true;
+    updateListeners.forEach((listener) => listener());
+  },
   startInterval: (callback, delay) => window.setInterval(callback, delay),
   clearInterval: (intervalId) => window.clearInterval(intervalId as number),
 };
@@ -48,18 +62,22 @@ export const startPwaReleaseRefresh = (
     return () => undefined;
   }
 
-  const hadControllerAtStartup = serviceWorker.controller !== null;
-  let reloadStarted = false;
+  let hasController = serviceWorker.controller !== null;
+  let updateNotified = false;
   let stopped = false;
   let intervalId: unknown;
 
   const handleControllerChange: EventListener = () => {
-    if (!hadControllerAtStartup || reloadStarted || stopped) {
+    if (stopped || updateNotified) {
+      return;
+    }
+    if (!hasController) {
+      hasController = true;
       return;
     }
 
-    reloadStarted = true;
-    runtime.reloadWindowLocation();
+    updateNotified = true;
+    runtime.notifyUpdateAvailable();
   };
 
   serviceWorker.addEventListener('controllerchange', handleControllerChange);

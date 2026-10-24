@@ -50,6 +50,50 @@ const createPresetFixture = (): WorkoutPreset =>
   }) as unknown as WorkoutPreset;
 
 describe('workoutPlayback utils', () => {
+  it('preserves warm-up sets and reduces the actual working set', () => {
+    const preset = createPresetFixture();
+    preset.exercises[0]!.sets = [
+      { set_number: 1, reps: 10, weight: 20, set_type: 'Warm-up' },
+      { set_number: 2, reps: 10, weight: 80, set_type: 'Working Set' },
+    ];
+    const state = createWorkoutPlaybackRouteState(
+      preset,
+      '2026-10-24',
+      '/reports',
+      0.75
+    );
+    expect(state.draft?.exercises[0]?.sets).toHaveLength(2);
+    expect(state.draft?.exercises[0]?.sets[0]?.reps).toBe(10);
+    expect(state.draft?.exercises[0]?.sets[1]?.reps).toBe(7);
+  });
+  it('applies reduced volume to the started draft without modifying the saved preset', () => {
+    const preset = createPresetFixture();
+    const state = createWorkoutPlaybackRouteState(
+      preset,
+      '2026-10-24',
+      '/reports',
+      0.75
+    );
+    expect(state.draft?.exercises[0]?.sets).toHaveLength(1);
+    expect(state.draft?.exercises[1]?.sets[0]?.reps).toBe(7);
+    expect(preset.exercises[0]?.sets).toHaveLength(2);
+    expect(preset.exercises[1]?.sets[0]?.reps).toBe(10);
+  });
+
+  it('reduces the duration of a single timed set', () => {
+    const preset = createPresetFixture();
+    preset.exercises[1]!.sets = [
+      { set_number: 1, duration: 120, rest_time: 60 },
+    ];
+    const state = createWorkoutPlaybackRouteState(
+      preset,
+      '2026-10-24',
+      '/reports',
+      0.75
+    );
+    expect(state.draft?.exercises[1]?.sets[0]?.duration).toBe(90);
+    expect(preset.exercises[1]?.sets[0]?.duration).toBe(120);
+  });
   it('creates a local draft from a workout preset', () => {
     const draft = createWorkoutPlaybackDraftFromPreset(
       createPresetFixture(),
