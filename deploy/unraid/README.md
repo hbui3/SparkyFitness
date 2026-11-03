@@ -233,3 +233,5 @@ node --test deploy/unraid/deploy.test.mjs
 Weiterführend: [Unraid Tailscale](https://docs.unraid.net/unraid-os/system-administration/secure-your-server/tailscale/),
 [Tailscale GitHub Action](https://github.com/tailscale/github-action),
 [GitHub Container Registry](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
+
+Build containers need at least 3 GiB of memory for frontend validation and bundling. The frontend Dockerfile gives the build process a bounded 2 GiB Node heap; `NODE_BUILD_MAX_OLD_SPACE_SIZE` can be overridden as a build argument. This setting is confined to the builder stage.
