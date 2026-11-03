@@ -134,7 +134,7 @@ jobs:
           node-version: "24"
 
       - name: Verify deployment revision policy
-        run: node --test .github/scripts/unraid-cd.test.cjs
+        run: node --test .github/scripts/unraid-cd.test.cjs deploy/unraid/deploy.test.mjs
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -398,7 +398,7 @@ jobs:
           # Initialization reapplies policies, so run it after the other database tests.
           RUN_DATABASE_INITIALIZATION_TEST=1 pnpm exec vitest run tests/initializeDatabase.integration.test.ts
         env:
-          # Default-on (SKIP_RLS_MATRIX unset) — runs against the Postgres this
+          # Default-on (SKIP_RLS_MATRIX unset) â€” runs against the Postgres this
           # job provisions, with policies already applied by the steps above.
           # betterAuthSchemaCheck catches a Better Auth upgrade that expects
           # columns no migration adds (the #2469 / #2470 auth outage).
@@ -465,7 +465,7 @@ jobs:
 
       # Apply base migrations, then this PR's migrations on top of the same DB.
       # The schema_migrations table persists between runs, so phase 2 applies
-      # only the newly added migrations — exactly what an upgrade does.
+      # only the newly added migrations â€” exactly what an upgrade does.
       - name: Apply base migrations, then this PR's migrations on top
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha || github.event.before }}
