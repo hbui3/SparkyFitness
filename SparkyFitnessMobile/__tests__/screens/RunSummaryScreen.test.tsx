@@ -87,9 +87,9 @@ it('shows the headline figures and the splits', () => {
   expect(screen.getByText('Run saved')).toBeTruthy();
   expect(screen.getByText('2.50')).toBeTruthy();
   expect(screen.getByText('12:30')).toBeTruthy();
-  expect(screen.getByText('5:00')).toBeTruthy();
+  expect(screen.getAllByText('5:00').length).toBeGreaterThan(0);
   expect(screen.getByText('Splits')).toBeTruthy();
-  expect(screen.getByText(/Fastest/)).toBeTruthy();
+  expect(screen.getByTestId('splits-table')).toBeTruthy();
   expect(screen.queryByText('Avg heart rate')).toBeNull();
   expect(screen.queryByText(/Workout \d+ of/)).toBeNull();
 });
@@ -435,4 +435,23 @@ describe('running form', () => {
       expect(setExerciseEntryStrideLength).not.toHaveBeenCalled();
     });
   });
+});
+
+it('drops distance and pace for a jump rope, and shows its measured calories', () => {
+  renderScreen(
+    params({
+      activity: 'jumpRope',
+      distanceMeters: 0,
+      activeSeconds: 600,
+      activeEnergyKcal: 84,
+      avgHeartRate: 121,
+    })
+  );
+  expect(screen.getByText('Jump Rope saved')).toBeTruthy();
+  expect(screen.getByText('10:00')).toBeTruthy();
+  expect(screen.getByText('84')).toBeTruthy();
+  expect(screen.getByText('121')).toBeTruthy();
+  expect(screen.queryByText('Distance')).toBeNull();
+  expect(screen.queryByText('Avg pace')).toBeNull();
+  expect(screen.queryByText('Treadmill distance')).toBeNull();
 });

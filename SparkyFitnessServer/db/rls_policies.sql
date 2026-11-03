@@ -1,7 +1,7 @@
 -- File: rls_policies.sql
 -- =============================================================================
 -- THIS FILE IS THE SINGLE SOURCE OF TRUTH FOR ALL RLS POLICIES IN THE APPLICATION.
--- It is executed on every server startup after migrations to ensure a consistent security state.
+-- Server startup applies it after migrations whenever it, or the policies it defines in the database, changed.
 -- This script is generated from the db_schema_backup.sql to ensure all custom policies are included.
 -- =============================================================================
 
@@ -45,6 +45,9 @@ BEGIN
     'telegram_coach_settings',
     'custom_categories',
     'custom_measurements',
+    'lab_markers',
+    'lab_results',
+    'lab_reports',
     'exercise_entries',
     'exercise_entry_sets',
     'exercise_entry_activity_details',
@@ -67,8 +70,12 @@ BEGIN
     'mood_entries',
     'mindfulness_sessions',
     'run_programs',
+    'run_goals',
     'shoes',
+    'plate_inventories',
+    'action_tags',
     'custom_run_programs',
+    'fitness_tests',
     'routes',
     'onboarding_data',
     'onboarding_status',
@@ -82,6 +89,16 @@ BEGIN
     'food_assistant_operations',
     'admin_activity_logs',
     'api_key',
+    'jwks',
+    'oauth_client',
+    'oauth_resource',
+    'oauth_client_resource',
+    'oauth_refresh_token',
+    'oauth_access_token',
+    'oauth_consent',
+    'oauth_authorization_revocation',
+    'oauth_client_assertion',
+    'user_calorie_rule_history',
     'user_goals',
     'user_ignored_updates',
     'user_meal_visibilities',
@@ -664,7 +681,8 @@ SELECT create_owner_policy('food_assistant_operations');
 CREATE POLICY select_policy ON public.profiles FOR SELECT TO PUBLIC USING (has_profile_read_access(id));
 CREATE POLICY modify_policy ON public.profiles FOR ALL TO PUBLIC USING (authenticated_user_id() = id) WITH CHECK (authenticated_user_id() = id);
 
--- max_heart_rate, resting_heart_rate, hr_zone_method and hr_zone_custom_floors
+-- max_heart_rate, resting_heart_rate, hr_zone_method, hr_zone_custom_floors and
+-- hr_zone_display_count
 -- (heart rate zones) also follow these policies: only the owner writes them.
 -- Delegates can read the row, but the /api/v2/heart-rate-zones route is
 -- owner-only and refuses a delegated context for reads as well.
@@ -674,8 +692,16 @@ CREATE POLICY modify_policy ON public.profiles FOR ALL TO PUBLIC USING (authenti
 -- Weekly weight goals are ordinary calculation preferences on this row: the
 -- existing profile-read and owner-write policies cover them without new grants.
 -- adaptive_activity_separate inherits the existing preference read/write rules.
+-- adjust_macros_with_exercise uses the same owner-write, delegate-read rules.
+-- use_move_ring_active_calories inherits the existing preference read/write rules.
 CREATE POLICY select_policy ON public.user_preferences FOR SELECT TO PUBLIC USING (has_profile_read_access(user_id));
 CREATE POLICY modify_policy ON public.user_preferences FOR ALL TO PUBLIC
+USING (authenticated_user_id() = user_id)
+WITH CHECK (authenticated_user_id() = user_id);
+-- The calorie and percentage-macro settings each past day used (#1795), written by a trigger when
+-- user_preferences changes, so they follow the same owner-write/delegate-read rules.
+CREATE POLICY select_policy ON public.user_calorie_rule_history FOR SELECT TO PUBLIC USING (has_profile_read_access(user_id));
+CREATE POLICY modify_policy ON public.user_calorie_rule_history FOR ALL TO PUBLIC
 USING (authenticated_user_id() = user_id)
 WITH CHECK (authenticated_user_id() = user_id);
 
@@ -736,6 +762,11 @@ SELECT create_diary_policy('adaptive_training_settings');
 SELECT create_diary_policy('adaptive_training_recommendations');
 -- Running shoes belong to the exercise diary, so diary delegates manage them.
 SELECT create_diary_policy('shoes');
+-- Plate inventories are the person's own gear: owner-only, no delegates.
+SELECT create_owner_policy('plate_inventories');
+-- NFC tag actions can span diary, check-in and medication data, so they are
+-- owner-only: a delegate must not define an action that logs on the owner's behalf.
+SELECT create_owner_policy('action_tags');
 -- Custom policy for exercise_entries to allow access if linked to an owned exercise_preset_entry
 CREATE POLICY select_exercise_preset_entry_linked_policy ON public.exercise_entries FOR SELECT TO PUBLIC
 USING (
@@ -810,7 +841,10 @@ SELECT create_owner_policy('pregnancy_photos');
 SELECT create_owner_policy('pregnancy_checklist_state');
 SELECT create_owner_policy('health_appointments');
 SELECT create_owner_policy('run_programs');
+SELECT create_owner_policy('run_goals');
 SELECT create_owner_policy('custom_run_programs');
+-- Running fitness tests (5K, 30-minute run, Cooper) and the paces they gave: personal training data, owner-only.
+SELECT create_owner_policy('fitness_tests');
 SELECT create_owner_policy('routes');
 
 -- User-defined mood tags. Mood is check-in data (mood_entries uses the check-in
@@ -819,6 +853,11 @@ SELECT create_owner_policy('routes');
 -- consistency (a delegate managing the owner's check-in sees the owner's moods).
 SELECT create_checkin_policy('user_custom_moods');
 SELECT create_checkin_policy('mindfulness_sessions');
+-- Lab results are check-in data. Built-in markers live in @workspace/shared; only a
+-- user's own markers and their results are stored, both under the check-in policy.
+SELECT create_checkin_policy('lab_markers');
+SELECT create_checkin_policy('lab_results');
+SELECT create_checkin_policy('lab_reports');
 
 -- Mood display preferences: personal picker config, owner-only.
 SELECT create_owner_policy('user_mood_display_preferences');
@@ -1087,6 +1126,20 @@ WITH CHECK (has_symptom_access(user_id) AND (source <> 'cycle' OR authenticated_
 -- Medications Display Preferences (Tier 2 - Owner-Only Write, Delegate Read)
 CREATE POLICY select_policy ON public.user_medication_display_preferences FOR SELECT TO PUBLIC USING (has_medication_read_access(user_id));
 CREATE POLICY modify_policy ON public.user_medication_display_preferences FOR ALL TO PUBLIC USING (authenticated_user_id() = user_id) WITH CHECK (authenticated_user_id() = user_id);
+
+-- MCP OAuth tables (system/internal). Better Auth and the explicit OAuth
+-- repositories use the owner pool, which bypasses RLS. Deny the app role so
+-- signing keys, client secrets, grants, and tokens can never be reached by a
+-- user-scoped query even if a future GRANT is too broad.
+CREATE POLICY deny_all_policy ON public.jwks FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_client FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_resource FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_client_resource FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_refresh_token FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_access_token FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_consent FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_authorization_revocation FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY deny_all_policy ON public.oauth_client_assertion FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
 
 -- Passkey registration tickets (Tier 3 - system/internal). These short-lived,
 -- single-use rows are only ever read/written by getSystemClient (which bypasses

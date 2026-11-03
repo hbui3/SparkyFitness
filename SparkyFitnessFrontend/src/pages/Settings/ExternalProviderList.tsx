@@ -242,6 +242,7 @@ const ExternalProviderList = ({
         editData.provider_type === 'tandoor' ||
         editData.provider_type === 'norish' ||
         editData.provider_type === 'valhalla' ||
+        editData.provider_type === 'open_meteo' ||
         editData.provider_type === 'free-exercise-db' ||
         editData.provider_type === 'openfoodfacts' ||
         editData.provider_type === 'speediance' ||
@@ -301,6 +302,7 @@ const ExternalProviderList = ({
         editData.provider_type === 'speediance' ||
         editData.provider_type === 'igpsport' ||
         editData.provider_type === 'liftosaur' ||
+        editData.provider_type === 'intervals' ||
         editData.provider_type === 'strava' ||
         editData.provider_type === 'polar' ||
         editData.provider_type === 'coros_mcp'
@@ -423,6 +425,7 @@ const ExternalProviderList = ({
       coros_last_sync_at: provider.coros_last_sync_at || '',
       coros_token_expires: provider.coros_token_expires || '',
       liftosaur_last_sync_at: provider.liftosaur_last_sync_at || '',
+      intervals_last_sync_at: provider.intervals_last_sync_at || '',
     });
   };
 

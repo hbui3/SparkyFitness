@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import reportRepository from '../models/reportRepository.js';
 import * as timezoneLoader from '../utils/timezoneLoader.js';
+import measurementRepository from '../models/measurementRepository.js';
+import { getAdaptiveActivityCalories } from '../services/adaptiveActivityService.js';
 import type { ReportExerciseEntryRow } from '../models/reportRepository.js';
 import {
   calculateCanonicalWorkoutAggregates,
@@ -48,6 +50,94 @@ function workoutRow(
 }
 
 describe('workoutDeduplicationService', () => {
+  it.each([
+    [undefined, 300],
+    [null, 300],
+    [0, 0],
+    [125, 125],
+  ])(
+    'uses applied calories %s in canonical splits and workout aggregates',
+    (applied, expected) => {
+      const rows = [
+        workoutRow({
+          id: 'direct',
+          exercise_source: 'Speediance',
+          calories_burned: 300,
+          calories_applied: applied,
+        }),
+      ];
+      expect(
+        calculateExerciseCalorieSplitsByDate(rows)[0]?.other_calories
+      ).toBe(expected);
+      expect(
+        calculateCanonicalWorkoutAggregates(rows).total_calories_burned
+      ).toBe(expected);
+    }
+  );
+
+  it('uses canonical applied workout calories for adaptive goals without reading forbidden check-ins', async () => {
+    const start = '2026-08-19T06:45:56Z';
+    const rows = [
+      workoutRow({
+        id: 'direct',
+        exercise_source: 'Speediance',
+        activity_started_at: start,
+        calories_burned: 300,
+        calories_applied: 150,
+      }),
+      workoutRow({
+        id: 'mirror',
+        exercise_source: 'HealthKit',
+        activity_started_at: start,
+        calories_burned: 300,
+      }),
+      workoutRow({
+        id: 'zeroed',
+        exercise_source: 'iGPSPORT',
+        activity_started_at: '2026-08-19T10:00:00Z',
+        calories_burned: 400,
+        calories_applied: 0,
+      }),
+      workoutRow({
+        id: 'device-total',
+        exercise_source: 'HealthKit',
+        exercise_name: 'Active Calories',
+        activity_started_at: null,
+        calories_burned: 800,
+        calories_applied: 120,
+      }),
+    ];
+    const entries = vi
+      .spyOn(reportRepository, 'getExerciseEntries')
+      .mockResolvedValue(rows);
+    const timezone = vi
+      .spyOn(timezoneLoader, 'loadUserTimezone')
+      .mockResolvedValue('Europe/Berlin');
+    const checkins = vi.spyOn(
+      measurementRepository,
+      'getLatestCheckInMeasurementsOnOrBeforeDate'
+    );
+    const body = vi.spyOn(measurementRepository, 'getLatestWeightHeight');
+    try {
+      const activity = await getAdaptiveActivityCalories(
+        'owner',
+        '2026-08-19',
+        '2026-08-19',
+        [],
+        false
+      );
+      expect(activity.get('2026-08-19')).toBe(150);
+      expect(entries).toHaveBeenCalledTimes(1);
+      expect(checkins).not.toHaveBeenCalled();
+      expect(body).not.toHaveBeenCalled();
+    } finally {
+      entries.mockRestore();
+      timezone.mockRestore();
+      checkins.mockRestore();
+      body.mockRestore();
+    }
+  });
+
   it('does not resurrect a HealthKit mirror when a report filter excludes its direct provider workout', async () => {
     const direct = workoutRow({
       id: 'direct',

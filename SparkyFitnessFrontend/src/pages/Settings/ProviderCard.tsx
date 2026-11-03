@@ -54,6 +54,8 @@ import {
   useSyncIGPSportMutation,
   useSyncLiftosaurMutation,
   useDisconnectLiftosaurMutation,
+  useSyncIntervalsMutation,
+  useDisconnectIntervalsMutation,
   useConnectCorosMutation,
   useDisconnectCorosMutation,
   useManualSyncCorosMutation,
@@ -251,6 +253,12 @@ export const ProviderCard = ({
     mutate: handleDisconnectLiftosaur,
     isPending: isDisconnectLiftosaurPending,
   } = useDisconnectLiftosaurMutation();
+  const { mutate: syncIntervalsData, isPending: isSyncIntervalsPending } =
+    useSyncIntervalsMutation();
+  const {
+    mutate: handleDisconnectIntervals,
+    isPending: isDisconnectIntervalsPending,
+  } = useDisconnectIntervalsMutation();
 
   const [isSyncDialogOpen, setIsSyncDialogOpen] = useState(false);
 
@@ -323,6 +331,14 @@ export const ProviderCard = ({
           endDate,
         });
         break;
+      case 'intervals':
+        syncIntervalsData({
+          providerId: provider.id,
+          startDate,
+          endDate,
+          ...mock,
+        });
+        break;
       case 'speediance':
         syncSpeedianceData({
           fullSync: false,
@@ -375,7 +391,9 @@ export const ProviderCard = ({
     isSyncIGPSportPending ||
     isSyncCorosPending ||
     isSyncLiftosaurPending ||
-    isDisconnectLiftosaurPending;
+    isDisconnectLiftosaurPending ||
+    isSyncIntervalsPending ||
+    isDisconnectIntervalsPending;
 
   const handleToggleActive = async (providerId: string, isActive: boolean) => {
     try {
@@ -454,7 +472,8 @@ export const ProviderCard = ({
       provider.hevy_connect_status === 'connected' ||
       provider.speediance_connect_status === 'connected' ||
       provider.igpsport_connect_status === 'connected' ||
-      provider.liftosaur_connect_status === 'connected';
+      provider.liftosaur_connect_status === 'connected' ||
+      provider.intervals_connect_status === 'connected';
 
     // Polar's is the only token expiry shown: the other OAuth providers refresh their
     // access tokens on their own, so their short expiry misleads users into reconnecting.
@@ -564,6 +583,15 @@ export const ProviderCard = ({
           disconnect: () => handleDisconnectLiftosaur(provider.id),
           sync: () => setIsSyncDialogOpen(true),
           lastSync: provider.liftosaur_last_sync_at,
+          tokenExpires: null,
+          hasToken: isLinked && provider.is_active,
+        };
+      case 'intervals':
+        return {
+          connect: null,
+          disconnect: () => handleDisconnectIntervals(provider.id),
+          sync: () => setIsSyncDialogOpen(true),
+          lastSync: provider.intervals_last_sync_at,
           tokenExpires: null,
           hasToken: isLinked && provider.is_active,
         };
@@ -768,6 +796,7 @@ export const ProviderCard = ({
               'tandoor',
               'norish',
               'valhalla',
+              'open_meteo',
               'free-exercise-db',
               'wger',
             ].includes(provider.provider_type) && (
@@ -1037,6 +1066,15 @@ export const ProviderCard = ({
               </span>
             )}
           </div>
+        )}
+
+        {provider.provider_type === 'intervals' && (
+          <p className="text-xs text-muted-foreground mt-2">
+            {t(
+              'integrations.intervalsGarminNote',
+              'Activities that Intervals.icu received from Garmin Connect are skipped while Garmin is connected here, so they are not imported twice.'
+            )}
+          </p>
         )}
 
         {provider.availability_error && (

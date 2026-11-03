@@ -13,6 +13,7 @@ import {
   projectRoute,
   routeRegion,
   usableRoutePoints,
+  splitsFromTrack,
 } from '../../src/utils/cardioSession';
 
 const point = (lat: number, lon: number, t = '2026-09-20T12:00:00Z') =>
@@ -326,6 +327,30 @@ describe('cardioSessionFromDiaryEntry', () => {
     });
   });
 
+  it('carries the weather, reading a temperature that arrives as text', () => {
+    const item = cardioSessionFromDiaryEntry(
+      entry({
+        weather_temp_celsius: '0.0' as unknown as number,
+        weather_condition: 'Light rain',
+      }),
+      'km'
+    );
+    expect(item).toMatchObject({
+      weatherTempCelsius: 0,
+      weatherCondition: 'Light rain',
+    });
+  });
+
+  it('leaves the weather temperature null when none was recorded', () => {
+    for (const missing of [null, undefined, '']) {
+      const item = cardioSessionFromDiaryEntry(
+        entry({ weather_temp_celsius: missing as unknown as number }),
+        'km'
+      );
+      expect(item?.weatherTempCelsius).toBeNull();
+    }
+  });
+
   it('reads floors and elevation that arrive as numeric strings', () => {
     // The diary entry is a raw database row; numeric columns come back as text.
     const item = cardioSessionFromDiaryEntry(
@@ -407,6 +432,17 @@ describe('cardioSessionFromDiaryEntry', () => {
     expect(
       cardioSessionFromDiaryEntry(entry({ sets: [], exercise_snapshot }), 'km')
     ).toBeNull();
+  });
+
+  it('carries the modality so a duration-only workout hides its route', () => {
+    const exercise_snapshot = {
+      modality: 'duration',
+    } as IndividualSessionResponse['exercise_snapshot'];
+    const item = cardioSessionFromDiaryEntry(
+      entry({ sets: [], exercise_snapshot }),
+      'km'
+    );
+    expect(item!.modality).toBe('duration');
   });
 });
 
@@ -516,5 +552,41 @@ describe('paceSeriesFromDistance', () => {
         1000
       )
     ).toEqual([]);
+  });
+});
+
+describe('splitsFromTrack', () => {
+  const track = (count: number, metersPerStep = 20, alt = false) =>
+    Array.from({ length: count }, (_, i) => ({
+      t: new Date(Date.UTC(2026, 9, 6, 10, 0, i * 5)).toISOString(),
+      lat: 51.5 + (i * metersPerStep) / 111_195,
+      lon: -0.12,
+      ...(alt ? { alt: 100 + i } : {}),
+    }));
+
+  it('cuts a stored track into kilometres with pace, climb and heart rate', () => {
+    const points = track(120, 20, true);
+    const t0 = Date.UTC(2026, 9, 6, 10, 0, 0);
+    const splits = splitsFromTrack(points, 1000, [
+      { timestamp: t0 + 60_000, bpm: 150 },
+    ]);
+    expect(splits.length).toBeGreaterThanOrEqual(2);
+    expect(splits[0].partial).toBe(false);
+    expect(splits[0].durationSeconds).toBeCloseTo(250, 0);
+    expect(splits[0].elevationChangeMeters).toBeGreaterThan(0);
+    expect(splits[0].avgHeartRate).toBe(150);
+    expect(splits[1].avgHeartRate).toBeNull();
+  });
+
+  it('returns nothing for a track too short to split', () => {
+    expect(splitsFromTrack(track(1), 1000)).toEqual([]);
+  });
+
+  it('skips repeated and out-of-order timestamps', () => {
+    const points = track(60, 20);
+    const shuffled = [points[0], points[0], ...points.slice(1)];
+    expect(splitsFromTrack(shuffled, 1000)).toEqual(
+      splitsFromTrack(points, 1000)
+    );
   });
 });

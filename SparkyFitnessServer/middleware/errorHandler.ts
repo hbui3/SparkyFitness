@@ -1,11 +1,21 @@
 import type { NextFunction, Request, Response } from 'express';
 import { log } from '../config/logging.js';
+import { isConnectionError } from '../db/connectRetry.js';
 import { describeError, isInternalError } from '../utils/errors.js';
+
+const unavailableRetryAfterSeconds = 5;
+
+const labConstraintMessages: Record<string, string> = {
+  lab_markers_ref_range_check: 'ref_range_low must not exceed ref_range_high',
+  lab_results_ref_range_check: 'ref_range_low must not exceed ref_range_high',
+  lab_results_value_check: 'Provide value_numeric or value_text',
+};
 
 interface ErrorFields {
   name?: unknown;
   message?: unknown;
   code?: unknown;
+  constraint?: unknown;
   type?: unknown;
   stack?: unknown;
   status?: unknown;
@@ -30,6 +40,18 @@ const errorHandler = (
   const explicitStatus = [error.status, error.statusCode].find(
     (status): status is number => typeof status === 'number'
   );
+  // An unreachable database (restart, failover, outage) is temporary: tell
+  // the client to come back instead of reporting a server fault.
+  if (
+    isConnectionError(err) &&
+    (explicitStatus === undefined || explicitStatus >= 500)
+  ) {
+    res.set('Retry-After', String(unavailableRetryAfterSeconds));
+    res
+      .status(503)
+      .json({ error: 'Service temporarily unavailable. Please try again.' });
+    return;
+  }
   // Default to 500 Internal Server Error
   let statusCode = explicitStatus ?? 500;
   let message =
@@ -65,6 +87,16 @@ const errorHandler = (
           statusCode = 409;
           message =
             'Conflict: A resource with this unique identifier already exists.';
+        } else if (
+          error.code === '23514' &&
+          typeof error.constraint === 'string' &&
+          error.constraint in labConstraintMessages
+        ) {
+          // A partial update can leave a lab value or reference bound in a
+          // state only the database sees, such as a new bound on the wrong
+          // side of the stored one.
+          statusCode = 400;
+          message = labConstraintMessages[error.constraint];
         } else if (
           statusCode >= 500 &&
           process.env.NODE_ENV !== 'development' &&

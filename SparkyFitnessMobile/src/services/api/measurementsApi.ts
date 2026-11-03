@@ -19,6 +19,7 @@ import type {
   CustomCategory,
   CustomMeasurementEntry,
   LatestManualCustomEntry,
+  SaveCustomCategoryPayload,
   SaveCustomMeasurementPayload,
 } from '../../types/customMeasurements';
 import { reduceLatestManualEntries } from '../../utils/measurementHistory';
@@ -368,19 +369,37 @@ export const fetchCustomCategories = async (): Promise<CustomCategory[]> => {
   });
 };
 
-export const createCustomCategory = async (body: {
-  name: string;
-  display_name: string;
-  measurement_type: string;
-  frequency: string;
-  data_type: string;
-}): Promise<CustomCategory> => {
+export const createCustomCategory = async (
+  payload: SaveCustomCategoryPayload
+): Promise<CustomCategory> => {
   return apiFetch<CustomCategory>({
     endpoint: '/api/measurements/custom-categories',
     serviceName: 'Measurements API',
     operation: 'create custom category',
     method: 'POST',
-    body,
+    body: payload,
+  });
+};
+
+export const updateCustomCategory = async (
+  id: string,
+  payload: SaveCustomCategoryPayload
+): Promise<CustomCategory> => {
+  return apiFetch<CustomCategory>({
+    endpoint: `/api/measurements/custom-categories/${id}`,
+    serviceName: 'Measurements API',
+    operation: 'update custom category',
+    method: 'PUT',
+    body: payload,
+  });
+};
+
+export const deleteCustomCategory = async (id: string): Promise<void> => {
+  return apiFetch<void>({
+    endpoint: `/api/measurements/custom-categories/${id}`,
+    serviceName: 'Measurements API',
+    operation: 'delete custom category',
+    method: 'DELETE',
   });
 };
 
@@ -415,6 +434,33 @@ export const fetchDailyVo2Max = async (
     endpoint: `/api/generic-health/metrics?startDate=${startDate}&endDate=${endDate}`,
     serviceName: 'Measurements API',
     operation: 'fetch daily VO2 max',
+  });
+  return response?.data ?? [];
+};
+
+/**
+ * Daily heart rate metrics from /api/generic-health/metrics.
+ */
+export const fetchDailyHeartRateMetrics = async (
+  startDate: string,
+  endDate: string
+): Promise<
+  {
+    entry_date: string;
+    resting_heart_rate: number | null;
+    heart_rate_recovery_1min?: number | null;
+  }[]
+> => {
+  const response = await apiFetch<{
+    data: {
+      entry_date: string;
+      resting_heart_rate: number | null;
+      heart_rate_recovery_1min?: number | null;
+    }[];
+  }>({
+    endpoint: `/api/generic-health/metrics?startDate=${startDate}&endDate=${endDate}`,
+    serviceName: 'Measurements API',
+    operation: 'fetch daily heart rate metrics',
   });
   return response?.data ?? [];
 };

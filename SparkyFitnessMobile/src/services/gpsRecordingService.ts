@@ -43,6 +43,8 @@ import {
   planHasDistanceSteps,
   stepHeartRateAlert,
   stepPaceAlert,
+  type FitnessTestType,
+  zone2LiveBand,
   type HeartRateAlertState,
   type HeartRateBand,
   type IntervalCursor,
@@ -166,6 +168,8 @@ export interface RecordingSession {
   coaching?: CoachingState;
   /** The program workout this recording is, so finishing it can tick it off. */
   program?: { id: string; index: number };
+  /** The fitness test this recording is, so saving it can work out the result. */
+  fitnessTest?: FitnessTestType;
   /**
    * A pace band to stay inside: the phone buzzes, and speaks when voice cues
    * are on, after the pace has been outside it for a few seconds.
@@ -753,7 +757,17 @@ export function noteLiveHeartRate(
       );
       if (position && !position.done) {
         stepIndex = position.index;
-        if (!session.heartRateStepsOff) band = position.step.heartRate ?? band;
+        if (!session.heartRateStepsOff && position.step.heartRate) {
+          // A Zone 2 stretch is judged by the range loosened for settling and
+          // drift, so a long steady run is not nagged for a few beats.
+          band =
+            position.step.effort === 'zone2'
+              ? zone2LiveBand(
+                  position.step.heartRate,
+                  position.step.seconds - position.remaining
+                )
+              : position.step.heartRate;
+        }
       }
     }
     if (stepIndex !== heartRateAlertStep) {
@@ -1122,6 +1136,8 @@ export interface StartRecordingOptions {
   indoor?: boolean;
   /** The program workout the plan came from, if any. */
   program?: { id: string; index: number };
+  /** The fitness test being run (5K, 30-minute run or Cooper), outdoors or on a treadmill. */
+  fitnessTest?: FitnessTestType;
   /** Text for the Android foreground-service notification. */
   notification: { title: string; body: string };
 }
@@ -1241,6 +1257,7 @@ export function startRecording(options: StartRecordingOptions): Promise<void> {
         ? { heartRateBand: normalizeHeartRateBand(options.heartRateBand)! }
         : {}),
       ...(options.program && intervals ? { program: options.program } : {}),
+      ...(options.fitnessTest ? { fitnessTest: options.fitnessTest } : {}),
       savedEntryId: null,
       ...(indoor && { indoor: true }),
       ...(stepCounterAtStart != null && { stepCounterAtStart }),

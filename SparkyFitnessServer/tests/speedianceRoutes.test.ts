@@ -42,6 +42,7 @@ vi.mock('../integrations/speediance/speedianceWorkoutService.js', () => ({
 import speedianceRoutes from '../routes/speedianceRoutes.js';
 import speedianceService from '../integrations/speediance/speedianceService.js';
 import speedianceWorkoutService from '../integrations/speediance/speedianceWorkoutService.js';
+import { SpeedianceApiError } from '../integrations/speediance/speedianceApiClient.js';
 
 const app = express();
 app.use(express.json());
@@ -49,6 +50,96 @@ app.use('/api/integrations/speediance', speedianceRoutes);
 
 describe('Speediance routes', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  describe.each(['sync', 'manager'] as const)(
+    '%s server errors',
+    (endpoint) => {
+      it('hides system details in a provider 502 response', async () => {
+        const error = Object.assign(
+          new SpeedianceApiError(
+            'getaddrinfo ENOTFOUND private.speediance.internal'
+          ),
+          {
+            code: 'ENOTFOUND',
+            errno: -3008,
+            syscall: 'getaddrinfo',
+          }
+        );
+        vi.mocked(
+          endpoint === 'sync'
+            ? speedianceService.syncSpeedianceData
+            : speedianceWorkoutService.listSpeedianceWorkouts
+        ).mockRejectedValue(error);
+
+        const response =
+          endpoint === 'sync'
+            ? await request(app)
+                .post('/api/integrations/speediance/sync')
+                .send({})
+            : await request(app).get('/api/integrations/speediance/workouts');
+
+        expect(response.status).toBe(502);
+        expect(response.body).toEqual({
+          message:
+            endpoint === 'sync'
+              ? 'Speediance sync failed.'
+              : 'Speediance request failed.',
+        });
+      });
+
+      it('preserves actionable noninternal provider messages', async () => {
+        vi.mocked(
+          endpoint === 'sync'
+            ? speedianceService.syncSpeedianceData
+            : speedianceWorkoutService.listSpeedianceWorkouts
+        ).mockRejectedValue(
+          new SpeedianceApiError('Speediance rejected this workout definition.')
+        );
+
+        const response =
+          endpoint === 'sync'
+            ? await request(app)
+                .post('/api/integrations/speediance/sync')
+                .send({})
+            : await request(app).get('/api/integrations/speediance/workouts');
+
+        expect(response.status).toBe(502);
+        expect(response.body).toEqual({
+          message: 'Speediance rejected this workout definition.',
+        });
+      });
+
+      it('hides database details in unclassified 500 responses', async () => {
+        const error = Object.assign(
+          new Error('relation "private_provider_tokens" does not exist'),
+          {
+            code: '42P01',
+            severity: 'ERROR',
+          }
+        );
+        vi.mocked(
+          endpoint === 'sync'
+            ? speedianceService.syncSpeedianceData
+            : speedianceWorkoutService.listSpeedianceWorkouts
+        ).mockRejectedValue(error);
+
+        const response =
+          endpoint === 'sync'
+            ? await request(app)
+                .post('/api/integrations/speediance/sync')
+                .send({})
+            : await request(app).get('/api/integrations/speediance/workouts');
+
+        expect(response.status).toBe(500);
+        expect(response.body).toEqual({
+          message:
+            endpoint === 'sync'
+              ? 'Speediance sync failed.'
+              : 'Speediance operation failed.',
+        });
+      });
+    }
+  );
 
   it('rejects an incomplete date range', async () => {
     const response = await request(app)

@@ -6,6 +6,7 @@ export const providerRequirements: Record<string, string[]> = {
   tandoor: ['base_url', 'app_key'],
   norish: ['base_url', 'app_key'],
   valhalla: ['base_url'],
+  open_meteo: ['base_url'],
   nutritionix: ['app_id', 'app_key'],
   fatsecret: ['app_id', 'app_key'],
   withings: ['app_id', 'app_key'],
@@ -19,6 +20,7 @@ export const providerRequirements: Record<string, string[]> = {
   speediance: ['app_id', 'app_key'],
   igpsport: ['app_id', 'app_key'],
   liftosaur: ['app_key'],
+  intervals: ['app_id', 'app_key'],
   yazio: ['app_id', 'app_key', 'yazio_client_id', 'yazio_client_secret'],
   coros_mcp: [],
 };
@@ -41,6 +43,10 @@ const providerFieldLabels: Record<string, Record<string, string>> = {
   liftosaur: {
     app_key: 'Liftosaur API Key',
   },
+  intervals: {
+    app_id: 'Athlete ID',
+    app_key: 'API Key',
+  },
 };
 
 // Per-type credential-shape exceptions consumed by
@@ -57,6 +63,7 @@ const PROVIDERS_WITHOUT_APP_ID = [
   'tandoor',
   'norish',
   'valhalla',
+  'open_meteo',
   'free-exercise-db',
   'wger',
   'liftosaur',

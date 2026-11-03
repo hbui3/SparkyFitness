@@ -37,8 +37,17 @@ export interface CanonicalWorkoutAggregates {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Applied diary overrides include an intentional zero; absent values use the estimate. */
+export function countedExerciseCalories(row: {
+  calories_burned: number | string;
+  calories_applied?: number | string | null;
+}): number {
+  return finiteNumber(row.calories_applied ?? row.calories_burned) ?? 0;
 }
 
 function toCandidate(
@@ -159,7 +168,7 @@ export function calculateExerciseCalorieSplitsByDate(
       workouts: 0,
       steps: 0,
     };
-    const calories = finiteNumber(row.calories_burned) ?? 0;
+    const calories = countedExerciseCalories(row);
     if (
       row.exercise_name === 'Active Calories' &&
       row.exercise_preset_entry_id === null
@@ -205,7 +214,7 @@ export function calculateCanonicalWorkoutAggregates(
   );
   return {
     total_calories_burned: workoutRows.reduce(
-      (sum, row) => sum + (finiteNumber(row.calories_burned) ?? 0),
+      (sum, row) => sum + countedExerciseCalories(row),
       0
     ),
     workout_count: workoutKeys.size,

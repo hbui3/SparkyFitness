@@ -692,6 +692,74 @@ describe('chatService', () => {
       ]);
     });
 
+    it('keeps OpenCode affinity stable per owner and conversation without confusing interaction options', async () => {
+      vi.mocked(chatRepository.getAiServiceSettingForBackend).mockResolvedValue(
+        {
+          ...aiServiceSetting,
+          service_type: 'opencode_go',
+        }
+      );
+      const turns = [
+        { actor: actorUserId, conversationId: 'conversation-a' },
+        { actor: actorUserId, conversationId: 'conversation-a' },
+        { actor: actorUserId, conversationId: 'conversation-b' },
+        { actor: 'another-owner', conversationId: 'conversation-a' },
+        { actor: actorUserId, conversationId: undefined },
+        { actor: actorUserId, conversationId: undefined },
+      ];
+      for (const turn of turns) {
+        scriptModel([textStep('Hello')]);
+        await chatService.processChatMessage(
+          [{ role: 'user', content: 'Hello' }],
+          'svc-1',
+          activeUserId,
+          turn.actor,
+          false,
+          ['food'],
+          { conversationId: turn.conversationId, allowAskUser: false }
+        );
+      }
+      const sessions = vi
+        .mocked(createOpenAI)
+        .mock.calls.map(
+          ([options]) => options?.headers?.['x-opencode-session']
+        );
+      expect(sessions).toHaveLength(6);
+      expect(sessions[0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(sessions[1]).toBe(sessions[0]);
+      expect(sessions[2]).not.toBe(sessions[0]);
+      expect(sessions[3]).not.toBe(sessions[0]);
+      expect(sessions[4]).not.toBe(sessions[5]);
+    });
+
+    it('uses one OpenCode session for classification and a distinct training planner model', async () => {
+      vi.mocked(chatRepository.getAiServiceSettingForBackend).mockResolvedValue(
+        {
+          ...aiServiceSetting,
+          service_type: 'opencode_go',
+          planning_model_name: 'training-planner',
+        }
+      );
+      scriptModel([textStep('I can propose a training plan.')]);
+      await chatService.processChatMessage(
+        [{ role: 'user', content: 'Baue mir einen A/B Trainingsplan.' }],
+        'svc-1',
+        activeUserId,
+        actorUserId,
+        false,
+        ['exercise'],
+        { conversationId: 'training-conversation' }
+      );
+      const sessions = vi
+        .mocked(createOpenAI)
+        .mock.calls.map(
+          ([options]) => options?.headers?.['x-opencode-session']
+        );
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(sessions[1]).toBe(sessions[0]);
+    });
+
     it.each([true, false])(
       'executes a log_food tool call and avoids inviting a duplicate retry when summary=%s',
       async (hasSummary) => {
@@ -859,6 +927,49 @@ describe('chatService', () => {
       expect(toolNames).toContain('sparky_manage_food');
       expect(toolNames).toContain('sparky_manage_exercise');
       expect(toolNames).toContain('sparky_get_report');
+    });
+
+    it('holds the food assistant state tool back from plain logging', async () => {
+      const send = async (
+        messages: Parameters<typeof chatService.processChatMessage>[0]
+      ) => {
+        const model = scriptModel([textStep('Sure.')]);
+        await chatService.processChatMessage(
+          messages,
+          'svc-1',
+          activeUserId,
+          actorUserId
+        );
+        return modelToolNames(model);
+      };
+
+      const plain = await send([
+        { role: 'user', content: 'I ate 2 eggs and 50g bread' },
+      ]);
+      expect(plain).toContain('sparky_manage_food');
+      expect(plain).not.toContain('sparky_food_assistant_state');
+
+      expect(
+        await send([{ role: 'user', content: 'import this recipe for me' }])
+      ).toContain('sparky_food_assistant_state');
+
+      // A follow-up in a chat that already used it keeps it, keyword or not.
+      expect(
+        await send([
+          { role: 'user', content: 'save this' },
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-sparky_food_assistant_state',
+                input: { action: 'list_tasks' },
+                output: '[]',
+              },
+            ],
+          },
+          { role: 'user', content: 'the second one' },
+        ])
+      ).toContain('sparky_food_assistant_state');
     });
 
     it('completes with an ERRORS string as the tool result when a backing service throws', async () => {
@@ -1605,8 +1716,12 @@ describe('chatService', () => {
       outputTokens: { total: 5, text: 5, reasoning: 0 },
     };
 
-    const streamModel = (parts: unknown[]) => {
+    const streamModel = (
+      parts: unknown[],
+      supportedUrls?: Record<string, RegExp[]>
+    ) => {
       const model = new MockLanguageModelV3({
+        supportedUrls,
         doStream: async () => ({
           stream: simulateReadableStream({
             chunks: parts as never[],
@@ -1636,6 +1751,51 @@ describe('chatService', () => {
       vi.mocked(measurementRepository.getCustomCategories).mockResolvedValue(
         []
       );
+    });
+
+    it('shares stable OpenCode options across streamed turns while honoring allowAskUser', async () => {
+      vi.mocked(chatRepository.getAiServiceSettingForBackend).mockResolvedValue(
+        {
+          ...aiServiceSetting,
+          service_type: 'opencode_go',
+        }
+      );
+      for (let turn = 0; turn < 2; turn += 1) {
+        const model = streamModel([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'Hello' },
+          { type: 'text-end', id: 't1' },
+          {
+            type: 'finish',
+            finishReason: { unified: 'stop', raw: 'stop' },
+            usage,
+          },
+        ]);
+        const { stream } = await chatService.processChatMessageStream(
+          [{ role: 'user', content: 'Hello' }],
+          'svc-1',
+          activeUserId,
+          actorUserId,
+          false,
+          ['food'],
+          { conversationId: 'stream-conversation', allowAskUser: false }
+        );
+        await drainStream(stream);
+        expect(model.doStreamCalls[0]?.tools).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: ASK_USER_TOOL_NAME }),
+          ])
+        );
+      }
+      const sessions = vi
+        .mocked(createOpenAI)
+        .mock.calls.map(
+          ([options]) => options?.headers?.['x-opencode-session']
+        );
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(sessions[1]).toBe(sessions[0]);
     });
 
     // The streaming path cannot retry a rejected parameter in place, so the
@@ -2078,22 +2238,8 @@ describe('chatService', () => {
     });
 
     it('maps remote image URLs with detected media types based on extension', async () => {
-      const originalFetch = global.fetch;
-      global.fetch = vi
-        .fn()
-        .mockImplementation(async (url: string | URL | Request) => {
-          const urlStr = typeof url === 'string' ? url : url.toString();
-          if (urlStr.includes('example.com/meal.webp')) {
-            return new Response(new Uint8Array([0x52, 0x49, 0x46, 0x46]), {
-              status: 200,
-              headers: { 'content-type': 'image/webp' },
-            });
-          }
-          return originalFetch(url as RequestInfo, undefined);
-        });
-
-      try {
-        const model = streamModel([
+      const model = streamModel(
+        [
           { type: 'stream-start', warnings: [] },
           { type: 'text-start', id: 't1' },
           { type: 'text-delta', id: 't1', delta: 'ok' },
@@ -2103,37 +2249,39 @@ describe('chatService', () => {
             finishReason: { unified: 'stop', raw: undefined },
             usage,
           },
-        ]);
+        ],
+        // Declared as natively supported so the SDK passes the URL through
+        // instead of downloading it (the SDK's own guarded fetcher is not the
+        // global fetch).
+        { 'image/*': [/^https:\/\/.*$/] }
+      );
 
-        const { stream } = await chatService.processChatMessageStream(
-          [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: 'Analyze this photo' },
-                {
-                  type: 'image_url',
-                  image_url: { url: 'https://example.com/meal.webp' },
-                },
-              ],
-            },
-          ],
-          'svc-1',
-          activeUserId,
-          actorUserId
-        );
-        await drainStream(stream);
+      const { stream } = await chatService.processChatMessageStream(
+        [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Analyze this photo' },
+              {
+                type: 'image_url',
+                image_url: { url: 'https://example.com/meal.webp' },
+              },
+            ],
+          },
+        ],
+        'svc-1',
+        activeUserId,
+        actorUserId
+      );
+      await drainStream(stream);
 
-        const prompt = model.doStreamCalls[0].prompt;
-        const userMessage = prompt.find((m) => m.role === 'user');
-        const filePart = (
-          userMessage?.content as Array<{ type: string; mediaType?: string }>
-        ).find((p) => p.type === 'file');
-        expect(filePart).toBeDefined();
-        expect(filePart?.mediaType).toBe('image/webp');
-      } finally {
-        global.fetch = originalFetch;
-      }
+      const prompt = model.doStreamCalls[0].prompt;
+      const userMessage = prompt.find((m) => m.role === 'user');
+      const filePart = (
+        userMessage?.content as Array<{ type: string; mediaType?: string }>
+      ).find((p) => p.type === 'file');
+      expect(filePart).toBeDefined();
+      expect(filePart?.mediaType).toBe('image/webp');
     });
 
     it('retains the immediately preceding image for a short logging confirmation', async () => {

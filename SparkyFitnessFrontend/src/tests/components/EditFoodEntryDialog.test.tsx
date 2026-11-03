@@ -198,9 +198,9 @@ describe('EditFoodEntryDialog', () => {
         availableMealTypes={mealTypes}
       />
     );
-    const input = await screen.findByLabelText(/^Quantity$/i);
+    const input = screen.getByLabelText(/^Quantity$/i);
     fireEvent.change(input, { target: { value: '50+10' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save Changes/i }));
+    fireEvent.click(screen.getByText(/Save Changes/i, { selector: 'button' }));
     await waitFor(() =>
       expect(mockUpdateFoodEntry).toHaveBeenCalledWith({
         id: 'entry-1',
@@ -209,7 +209,7 @@ describe('EditFoodEntryDialog', () => {
     );
   });
 
-  it('shows the manual warning, hides preview, and disables save for unresolved incompatible units', async () => {
+  it('shows the manual warning, hides preview, and disables save for unresolved incompatible units', () => {
     render(
       <EditFoodEntryDialog
         entry={entry}
@@ -219,20 +219,18 @@ describe('EditFoodEntryDialog', () => {
       />
     );
 
-    await waitFor(() => {
-      expect(screen.getByText('Cornstarch')).toBeInTheDocument();
-    });
+    expect(screen.getByText('Cornstarch')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^tsp$/i }));
+    // The select stub renders every option at once. Target its visible label
+    // instead of resolving accessible names for all of the dialog's buttons.
+    fireEvent.click(screen.getByText(/^tsp$/i));
 
-    await waitFor(() => {
-      expect(screen.getByText(/These units can/i)).toBeInTheDocument();
-    });
+    expect(screen.getByText(/These units can/i)).toBeInTheDocument();
 
     expect(screen.getByPlaceholderText(/e\.g\. 1/i)).toBeInTheDocument();
     expect(screen.queryByTestId('nutrient-grid')).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /Save Changes/i })
+      screen.getByText(/Save Changes/i, { selector: 'button' })
     ).toBeDisabled();
   });
 
@@ -270,7 +268,7 @@ describe('EditFoodEntryDialog', () => {
     expect(tbspButton.querySelector('svg.text-green-500')).toBeNull();
   });
 
-  it('shows provider serving descriptions in the variant picker', async () => {
+  it('shows provider serving descriptions in the variant picker', () => {
     mockFoodData = {
       id: 'food-1',
       name: 'Apple',
@@ -301,11 +299,9 @@ describe('EditFoodEntryDialog', () => {
       />
     );
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: /1 Whole \(200g\)/i })
-      ).toBeInTheDocument();
-    });
+    expect(
+      screen.getByText(/1 Whole \(200g\)/i).closest('button')
+    ).toBeInTheDocument();
   });
 
   it('shows deleted food notice and uses snapshot details when food is deleted or not found', async () => {
@@ -341,9 +337,7 @@ describe('EditFoodEntryDialog', () => {
       />
     );
 
-    await waitFor(() => {
-      expect(screen.getByText('Deleted Idli')).toBeInTheDocument();
-    });
+    expect(screen.getByText('Deleted Idli')).toBeInTheDocument();
 
     expect(screen.getByText('Deep')).toBeInTheDocument();
 
@@ -363,7 +357,7 @@ describe('EditFoodEntryDialog', () => {
     expect(screen.getByTestId('nutrient-grid')).toBeInTheDocument();
 
     // Form can be saved with snapshot variant
-    fireEvent.click(screen.getByRole('button', { name: /Save Changes/i }));
+    fireEvent.click(screen.getByText(/Save Changes/i, { selector: 'button' }));
 
     await waitFor(() => {
       expect(mockUpdateFoodEntry).toHaveBeenCalledWith({

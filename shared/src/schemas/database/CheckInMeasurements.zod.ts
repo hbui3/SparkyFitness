@@ -37,6 +37,7 @@ export const checkInMeasurementsSchema = z.object({
   body_water_percentage: z.number().nullable(),
   source_provenance: measurementSourceProvenanceSchema,
   bmr: z.number().nullable(),
+  resting_heart_rate: z.number().nullable().optional(),
 });
 
 export const checkInMeasurementsInitializerSchema = z.object({
@@ -59,6 +60,7 @@ export const checkInMeasurementsInitializerSchema = z.object({
   body_water_percentage: z.number().optional().nullable(),
   source_provenance: measurementSourceProvenanceSchema.optional(),
   bmr: z.number().optional().nullable(),
+  resting_heart_rate: z.number().optional().nullable(),
 });
 
 export const checkInMeasurementsMutatorSchema =

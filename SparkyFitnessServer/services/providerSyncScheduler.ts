@@ -1,6 +1,6 @@
 import speedianceService from '../integrations/speediance/speedianceService.js';
 import igpsportService from '../integrations/igpsport/igpsportService.js';
-import cron, { type ScheduledTask } from 'node-cron';
+import { scheduleJob, type ScheduledTask } from './scheduledJobs.js';
 import externalProviderRepository from '../models/externalProviderRepository.js';
 import withingsServiceCentral from './withingsService.js';
 import garminService from './garminService.js';
@@ -12,15 +12,24 @@ import corosService from './corosService.js';
 import stravaService from './stravaService.js';
 import googleHealthService from './googleHealthService.js';
 import hevyService from '../integrations/hevy/hevyService.js';
+import hevyProviderRepository from '../integrations/hevy/hevyProviderRepository.js';
 import liftosaurService from '../integrations/liftosaur/liftosaurService.js';
+import intervalsService from '../integrations/intervals/intervalsService.js';
 import { log } from '../config/logging.js';
 import { startProviderSync } from './providerSyncClaim.js';
+import { isShuttingDown } from '../utils/shutdownHooks.js';
+import {
+  compareDays,
+  instantHourMinute,
+  instantToDay,
+} from '@workspace/shared';
+import { loadUserTimezone } from '../utils/timezoneLoader.js';
 
 export interface ProviderSyncTarget {
   id: string;
   user_id: string;
   is_active: boolean;
-  sync_frequency: string;
+  sync_frequency?: string | null;
   last_sync_at?: Date | string | null;
 }
 
@@ -28,13 +37,62 @@ export interface ProviderSyncConfig {
   name: string;
   types: string[];
   cronExpression?: string;
+  isDue?: (provider: ProviderSyncTarget) => Promise<boolean>;
   sync: (provider: ProviderSyncTarget) => Promise<void>;
 }
+
+async function isHevySyncDue(p: ProviderSyncTarget): Promise<boolean> {
+  if (p.sync_frequency === 'hourly') return true;
+  if (p.sync_frequency !== 'daily') return false;
+  const timezone = await loadUserTimezone(p.user_id);
+  const now = new Date();
+  if (instantHourMinute(now, timezone).hour < 21) return false;
+  if (!p.last_sync_at) return true;
+  const lastSyncAt = new Date(p.last_sync_at);
+  if (Number.isNaN(lastSyncAt.getTime())) return true;
+  const dayOrder = compareDays(
+    instantToDay(lastSyncAt, timezone),
+    instantToDay(now, timezone)
+  );
+  return (
+    dayOrder < 0 ||
+    (dayOrder === 0 && instantHourMinute(lastSyncAt, timezone).hour < 21)
+  );
+}
+
+function isCredentialProviderSyncDue(
+  provider: ProviderSyncTarget
+): Promise<boolean> {
+  return Promise.resolve(
+    (provider.sync_frequency === 'hourly' ||
+      provider.sync_frequency === 'daily') &&
+      isProviderSyncDue(provider)
+  );
+}
+
+const updateLastSyncIfComplete = async (
+  name: string,
+  p: ProviderSyncTarget,
+  failedRequiredFetches: string[],
+  failedItems = 0
+): Promise<void> => {
+  const failures = [...failedRequiredFetches];
+  if (failedItems > 0) failures.push(`${failedItems} items not saved`);
+  if (failures.length === 0) {
+    await externalProviderRepository.updateProviderLastSync(p.id, new Date());
+  } else {
+    log(
+      'warn',
+      `[CRON] ${name} sync is incomplete for user ${p.user_id}; last_sync_at not updated: ${failures.join(', ')}`
+    );
+  }
+};
 
 export const PROVIDER_SYNC_CONFIGS: readonly ProviderSyncConfig[] = [
   {
     name: 'Speediance',
     types: ['speediance'],
+    isDue: isCredentialProviderSyncDue,
     sync: async (p) => {
       await speedianceService.syncSpeedianceData(p.user_id, p.user_id, {
         providerId: p.id,
@@ -45,6 +103,7 @@ export const PROVIDER_SYNC_CONFIGS: readonly ProviderSyncConfig[] = [
   {
     name: 'iGPSPORT',
     types: ['igpsport'],
+    isDue: isCredentialProviderSyncDue,
     sync: async (p) => {
       await igpsportService.syncIGPSportData(p.user_id, p.user_id, {
         providerId: p.id,
@@ -92,16 +151,26 @@ export const PROVIDER_SYNC_CONFIGS: readonly ProviderSyncConfig[] = [
     name: 'Oura',
     types: ['oura'],
     sync: async (p) => {
-      await ouraService.syncOuraData(p.user_id, 'scheduled');
-      await externalProviderRepository.updateProviderLastSync(p.id, new Date());
+      const result = await ouraService.syncOuraData(p.user_id, 'scheduled');
+      await updateLastSyncIfComplete(
+        'Oura',
+        p,
+        result.failedRequiredFetches,
+        result.workoutsFailed
+      );
     },
   },
   {
     name: 'Strava',
     types: ['strava'],
     sync: async (p) => {
-      await stravaService.syncStravaData(p.user_id, 'scheduled');
-      await externalProviderRepository.updateProviderLastSync(p.id, new Date());
+      const result = await stravaService.syncStravaData(p.user_id, 'scheduled');
+      await updateLastSyncIfComplete(
+        'Strava',
+        p,
+        result.failedRequiredFetches,
+        result.activitiesFailed
+      );
     },
   },
   {
@@ -116,22 +185,51 @@ export const PROVIDER_SYNC_CONFIGS: readonly ProviderSyncConfig[] = [
     name: 'COROS',
     types: ['coros_mcp'],
     sync: async (p) => {
-      await corosService.syncCorosData(p.user_id, 'scheduled', p.id);
-      await externalProviderRepository.updateProviderLastSync(p.id, new Date());
+      const result = await corosService.syncCorosData(
+        p.user_id,
+        'scheduled',
+        p.id
+      );
+      await updateLastSyncIfComplete(
+        'COROS',
+        p,
+        result.deferred > 0
+          ? [
+              ...result.failedRequiredFetches,
+              `${result.deferred} deferred downloads`,
+            ]
+          : result.failedRequiredFetches,
+        result.activitiesFailed
+      );
     },
   },
   {
     name: 'Google Health',
     types: ['googlehealth'],
     sync: async (p) => {
-      await googleHealthService.syncGoogleHealthData(p.user_id, 'scheduled');
-      await externalProviderRepository.updateProviderLastSync(p.id, new Date());
+      const result = await googleHealthService.syncGoogleHealthData(
+        p.user_id,
+        'scheduled'
+      );
+      await updateLastSyncIfComplete(
+        'Google Health',
+        p,
+        result.failedRequiredFetches
+      );
     },
   },
   {
     name: 'Hevy',
     types: ['hevy'],
+    isDue: isHevySyncDue,
     sync: async (p) => {
+      // The callback runs after acquiring the account's sync claim. An earlier
+      // account may have taken a long time, so discard the batch's stale state.
+      const current = await hevyProviderRepository.getSyncSettings(
+        p.user_id,
+        p.id
+      );
+      if (!current?.is_active || !(await isHevySyncDue(current))) return;
       await hevyService.syncHevyData(p.user_id, p.user_id, false, p.id);
     },
   },
@@ -147,7 +245,34 @@ export const PROVIDER_SYNC_CONFIGS: readonly ProviderSyncConfig[] = [
       );
     },
   },
+  {
+    // The cron is hourly, but sync_frequency decides whether a provider is due.
+    // Each run covers yesterday and today in the user's timezone.
+    name: 'Intervals.icu',
+    types: ['intervals'],
+    sync: async (p) => {
+      await intervalsService.syncIntervalsData(p.user_id, p.user_id, p.id);
+    },
+  },
 ];
+
+// The cron fires on the hour and a sync finishes a few minutes later, so
+// last_sync_at lands just past the hour. A 24 h threshold would then miss the
+// same tick the next day and push the daily sync back an hour every day; 23 h
+// does not.
+const DAILY_SYNC_INTERVAL_MS = 23 * 60 * 60 * 1000;
+
+export const isProviderSyncDue = (
+  provider: Pick<ProviderSyncTarget, 'sync_frequency' | 'last_sync_at'>,
+  now: Date = new Date()
+): boolean => {
+  if (provider.sync_frequency === 'manual') return false;
+  if (provider.sync_frequency !== 'daily') return true;
+  if (!provider.last_sync_at) return true;
+  const lastSyncMs = new Date(provider.last_sync_at).getTime();
+  if (Number.isNaN(lastSyncMs)) return true;
+  return now.getTime() - lastSyncMs >= DAILY_SYNC_INTERVAL_MS;
+};
 
 export const runProviderSync = async (
   config: ProviderSyncConfig
@@ -161,38 +286,44 @@ export const runProviderSync = async (
     const providers = providerBatches.flat() as unknown as ProviderSyncTarget[];
 
     for (const provider of providers) {
-      const credentialProvider = config.types.some(
-        (type) => type === 'speediance' || type === 'igpsport'
-      );
-      if (
-        credentialProvider &&
-        (!['hourly', 'daily'].includes(provider.sync_frequency) ||
-          (provider.sync_frequency === 'daily' &&
-            provider.last_sync_at &&
-            Date.now() - new Date(provider.last_sync_at).getTime() <
-              20 * 60 * 60 * 1000))
-      )
-        continue;
-      if (provider.is_active && provider.sync_frequency !== 'manual') {
-        try {
-          const started = await startProviderSync(
-            { userId: provider.user_id, providerId: provider.id },
-            () => config.sync(provider)
-          );
-          if (started) {
-            await started.running;
-          } else {
+      if (isShuttingDown()) {
+        log(
+          'info',
+          `[CRON] ${config.name} sync stopped for shutdown before user ${provider.user_id}.`
+        );
+        return;
+      }
+      if (!provider.is_active) continue;
+      try {
+        const isDue = config.isDue
+          ? await config.isDue(provider)
+          : isProviderSyncDue(provider);
+        if (!isDue) {
+          if (!config.isDue && provider.sync_frequency === 'daily') {
             log(
-              'info',
-              `[CRON] ${config.name} sync skipped for user ${provider.user_id}: another sync for this account is still running.`
+              'debug',
+              `[CRON] ${config.name} sync skipped for user ${provider.user_id}: daily sync already ran in the last 23 hours.`
             );
           }
-        } catch (error) {
+          continue;
+        }
+        const started = await startProviderSync(
+          { userId: provider.user_id, providerId: provider.id },
+          () => config.sync(provider)
+        );
+        if (started) {
+          await started.running;
+        } else {
           log(
-            'error',
-            `[CRON] ${config.name} sync failed for user ${provider.user_id}: ${error instanceof Error ? error.message : String(error)}`
+            'info',
+            `[CRON] ${config.name} sync skipped for user ${provider.user_id}: another sync for this account is still running.`
           );
         }
+      } catch (error) {
+        log(
+          'error',
+          `[CRON] ${config.name} sync failed for user ${provider.user_id}: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
   } catch (error) {
@@ -206,9 +337,11 @@ export const runProviderSync = async (
 export const scheduleProviderSync = (
   config: ProviderSyncConfig
 ): ScheduledTask => {
-  // Returning the run lets noOverlap skip a tick while the previous pass over
-  // every user is still going, so two passes never sync the same account at once.
-  return cron.schedule(
+  // Returning the run lets noOverlap skip a tick while this instance's previous
+  // pass is still going; a pass on another instance skips the accounts this
+  // one is syncing, since each sync claims its account.
+  return scheduleJob(
+    `provider-sync:${config.name.toLowerCase().replace(/\s+/g, '-')}`,
     config.cronExpression ?? '0 * * * *',
     () => runProviderSync(config),
     { noOverlap: true }

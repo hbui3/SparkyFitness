@@ -86,6 +86,7 @@ export interface DailyExerciseEntry {
   calories_burned: number;
   source?: string | null;
   source_id?: string | null;
+  calories_applied?: number | null;
   notes?: string;
   exercises: Exercise; // Use the comprehensive Exercise interface
   exercise_entry_id?: string; // New field

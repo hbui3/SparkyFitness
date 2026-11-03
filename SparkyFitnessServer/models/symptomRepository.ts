@@ -1,3 +1,4 @@
+import { addDays, dayToUtcRange } from '@workspace/shared';
 import { getClient } from '../db/poolManager.js';
 import type {
   CreateCustomSymptomBody,
@@ -116,6 +117,14 @@ export interface ListSymptomEntriesOptions {
   medicationId?: string;
   source?: string;
   episodesOnly?: boolean;
+  /**
+   * Also return episodes that overlap the date range without being logged in
+   * it: one that started before fromDate and was still going on it, or one
+   * logged under a later day that started by toDate.
+   */
+  overlapping?: boolean;
+  /** The timezone the range's days are read in when `overlapping` is set. */
+  timezone?: string;
 }
 
 const DEFINITION_COLS = `id, user_id, name, display_name, scale_type, unit, is_glp1_flagged, category, template,
@@ -460,19 +469,37 @@ async function createSymptomEntry(
 
 /**
  * Applies the given fields to an entry. `treatments`, when provided, replaces the
- * entry's whole treatment list (an empty array clears it).
+ * entry's whole treatment list (an empty array clears it). `fromCurrent`, when
+ * provided, adds the fields worked out from the entry as stored, read under a
+ * row lock, so two overlapping updates both build on the other's result.
  */
 async function updateSymptomEntry(
   userId: string,
   id: string,
   data: SymptomEntryWrite,
-  treatments?: SymptomTreatmentInput[]
+  treatments?: SymptomTreatmentInput[],
+  fromCurrent?: (current: SymptomEntryRow) => SymptomEntryWrite
 ): Promise<SymptomEntryWithDetails | null> {
   const client = await getClient(userId);
   try {
     await client.query('BEGIN');
     try {
-      const { sql, params } = buildSetClause(entryColumns(data), 3);
+      let write = data;
+      if (fromCurrent) {
+        const locked = await client.query(
+          `SELECT ${ENTRY_COLS} FROM symptom_entries
+            WHERE id = $1 AND user_id = $2
+            FOR UPDATE`,
+          [id, userId]
+        );
+        const current = locked.rows[0] as SymptomEntryRow | undefined;
+        if (!current) {
+          await client.query('ROLLBACK');
+          return null;
+        }
+        write = { ...data, ...fromCurrent(current) };
+      }
+      const { sql, params } = buildSetClause(entryColumns(write), 3);
       const result = await client.query(
         `UPDATE symptom_entries
             SET ${sql ? sql + ', ' : ''}updated_at = NOW()
@@ -499,6 +526,23 @@ async function updateSymptomEntry(
   }
 }
 
+/**
+ * The instant a day starts or ends in `tz`, or null when the date helpers
+ * cannot place it (such as the end of 9999-12-31, a common "no limit" value);
+ * that side of an overlapping range is then left open instead of failing.
+ */
+function dayEdge(day: string, tz: string, edge: 'start' | 'end'): Date | null {
+  try {
+    // A day starts where the one before ends, which still works on the last
+    // day the helpers can place.
+    return edge === 'start'
+      ? dayToUtcRange(addDays(day, -1), tz).end
+      : dayToUtcRange(day, tz).end;
+  } catch {
+    return null;
+  }
+}
+
 async function listSymptomEntries(
   userId: string,
   opts: ListSymptomEntriesOptions = {}
@@ -508,13 +552,35 @@ async function listSymptomEntries(
     const params: unknown[] = [userId];
     const where: string[] = ['user_id = $1'];
 
+    const dayRange: string[] = [];
     if (opts.fromDate) {
       params.push(opts.fromDate);
-      where.push(`entry_date >= $${params.length}`);
+      dayRange.push(`entry_date >= $${params.length}`);
     }
     if (opts.toDate) {
       params.push(opts.toDate);
-      where.push(`entry_date <= $${params.length}`);
+      dayRange.push(`entry_date <= $${params.length}`);
+    }
+    if (opts.overlapping && dayRange.length > 0) {
+      // An episode overlaps the range when it started before the range ends
+      // and had not ended before it began; one still going has no end.
+      const tz = opts.timezone ?? 'UTC';
+      const span: string[] = ['started_at IS NOT NULL'];
+      const rangeEnd = opts.toDate ? dayEdge(opts.toDate, tz, 'end') : null;
+      if (rangeEnd) {
+        params.push(rangeEnd);
+        span.push(`started_at < $${params.length}`);
+      }
+      const rangeStart = opts.fromDate
+        ? dayEdge(opts.fromDate, tz, 'start')
+        : null;
+      if (rangeStart) {
+        params.push(rangeStart);
+        span.push(`(ended_at IS NULL OR ended_at >= $${params.length})`);
+      }
+      where.push(`((${dayRange.join(' AND ')}) OR (${span.join(' AND ')}))`);
+    } else {
+      where.push(...dayRange);
     }
     if (opts.symptomName) {
       params.push(opts.symptomName.toLowerCase().trim());

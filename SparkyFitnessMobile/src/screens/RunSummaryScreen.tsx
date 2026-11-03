@@ -11,6 +11,7 @@ import RouteMap from '../components/exerciseStats/RouteMap';
 import PaceChart from '../components/exerciseStats/PaceChart';
 import { paceSeriesFromDistance } from '../utils/cardioSession';
 import { SplitRow, Stat } from '../components/recording/SplitRow';
+import SplitsTable from '../components/recording/SplitsTable';
 import {
   EASY_RATING,
   HARD_RATING,
@@ -224,7 +225,9 @@ const RunSummaryScreen: React.FC<Props> = ({ navigation, route }) => {
       ? t('runSummary.walkSaved', { defaultValue: 'Walk saved' })
       : summary.activity === 'ride'
         ? t('runSummary.rideSaved', { defaultValue: 'Ride saved' })
-        : t('runSummary.runSaved', { defaultValue: 'Run saved' });
+        : summary.activity === 'jumpRope'
+          ? t('runSummary.jumpRopeSaved', { defaultValue: 'Jump Rope saved' })
+          : t('runSummary.runSaved', { defaultValue: 'Run saved' });
 
   const avgPace = paceSecondsPerUnit(
     distanceMeters,
@@ -274,20 +277,33 @@ const RunSummaryScreen: React.FC<Props> = ({ navigation, route }) => {
         </View>
 
         <View className="flex-row mb-3">
-          <Stat
-            label={t('recordActivity.distance', { defaultValue: 'Distance' })}
-            value={number(distanceMeters / unitMeters)}
-            unit={unitLabel}
-          />
+          {summary.activity !== 'jumpRope' ? (
+            <Stat
+              label={t('recordActivity.distance', { defaultValue: 'Distance' })}
+              value={number(distanceMeters / unitMeters)}
+              unit={unitLabel}
+            />
+          ) : null}
           <Stat
             label={t('recordActivity.time', { defaultValue: 'Time' })}
             value={formatClock(summary.activeSeconds)}
           />
-          <Stat
-            label={t('recordActivity.avgPace', { defaultValue: 'Avg pace' })}
-            value={formatPace(avgPace)}
-            unit={paceUnit}
-          />
+          {summary.activity !== 'jumpRope' ? (
+            <Stat
+              label={t('recordActivity.avgPace', { defaultValue: 'Avg pace' })}
+              value={formatPace(avgPace)}
+              unit={paceUnit}
+            />
+          ) : null}
+          {summary.activity === 'jumpRope' &&
+          summary.activeEnergyKcal != null &&
+          summary.activeEnergyKcal > 0 ? (
+            <Stat
+              label={t('watchRunLive.calories', { defaultValue: 'Calories' })}
+              value={String(Math.round(summary.activeEnergyKcal))}
+              unit={t('watchRunLive.kcal', { defaultValue: 'kcal' })}
+            />
+          ) : null}
         </View>
         {summary.elevationGainMeters >= 1 || summary.avgHeartRate != null ? (
           <View className="flex-row mb-3">
@@ -555,38 +571,36 @@ const RunSummaryScreen: React.FC<Props> = ({ navigation, route }) => {
                 ? t('recordActivity.laps', { defaultValue: 'Laps' })
                 : t('recordActivity.splits', { defaultValue: 'Splits' })}
             </Text>
-            {rows.map((row, i) => (
-              <SplitRow
-                key={row.index}
-                label={
-                  usesLaps
-                    ? t('recordActivity.lapLabel', {
-                        defaultValue: 'Lap {{number}}',
-                        number: row.index,
-                      })
-                    : `${
-                        row.partial
-                          ? number(row.distanceMeters / unitMeters)
-                          : String(row.index)
-                      } ${unitLabel}`
-                }
-                detail={
-                  usesLaps
-                    ? `${number(row.distanceMeters / unitMeters, 2)} ${unitLabel} · ${formatClock(row.durationSeconds)}`
-                    : undefined
-                }
-                pace={`${formatPace(
-                  paceSecondsPerUnit(
-                    row.distanceMeters,
-                    row.durationSeconds,
-                    unitMeters
-                  )
-                )} ${paceUnit}`}
-                fraction={bars[i].fraction}
-                fastest={bars[i].fastest}
-                fastestLabel={fastestLabel}
+            {usesLaps ? (
+              <>
+                {rows.map((row, i) => (
+                  <SplitRow
+                    key={row.index}
+                    label={t('recordActivity.lapLabel', {
+                      defaultValue: 'Lap {{number}}',
+                      number: row.index,
+                    })}
+                    detail={`${number(row.distanceMeters / unitMeters, 2)} ${unitLabel} · ${formatClock(row.durationSeconds)}`}
+                    pace={`${formatPace(
+                      paceSecondsPerUnit(
+                        row.distanceMeters,
+                        row.durationSeconds,
+                        unitMeters
+                      )
+                    )} ${paceUnit}`}
+                    fraction={bars[i].fraction}
+                    fastest={bars[i].fastest}
+                    fastestLabel={fastestLabel}
+                  />
+                ))}
+              </>
+            ) : (
+              <SplitsTable
+                splits={rows}
+                unitMeters={unitMeters}
+                unit={summary.distanceUnit}
               />
-            ))}
+            )}
           </View>
         ) : null}
 

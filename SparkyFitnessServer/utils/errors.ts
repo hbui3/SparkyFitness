@@ -80,6 +80,20 @@ export function isInternalError(err: unknown): boolean {
   );
 }
 
+/**
+ * The message a hand-written 5xx response may show the client: the error's
+ * own message, or `fallback` when that would leak a database or system error
+ * (see `isInternalError`) or is missing.
+ */
+export function publicErrorMessage(
+  error: unknown,
+  fallback = 'Internal Server Error'
+): string {
+  if (isInternalError(error)) return fallback;
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  return typeof message === 'string' && message ? message : fallback;
+}
+
 // A thrown value only has to be renderable, not an Error, and `error.message`
 // on its own is not always enough to diagnose one. Node's Happy Eyeballs
 // connector rejects with an `AggregateError` whose `message` is the empty

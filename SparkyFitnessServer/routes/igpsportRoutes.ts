@@ -12,6 +12,7 @@ import {
   IGPSportAuthenticationError,
 } from '../integrations/igpsport/igpsportApiClient.js';
 import authMiddleware from '../middleware/authMiddleware.js';
+import { publicErrorMessage } from '../utils/errors.js';
 
 const router = express.Router();
 const statusQuerySchema = z.object({
@@ -57,7 +58,9 @@ router.post('/sync', authMiddleware.authenticate, async (req, res) => {
       return res.status(401).json({ message });
     }
     if (error instanceof IGPSportApiError) {
-      return res.status(502).json({ message });
+      return res.status(502).json({
+        message: publicErrorMessage(error, 'iGPSPORT sync failed.'),
+      });
     }
     return res.status(500).json({ message: 'iGPSPORT sync failed.' });
   }

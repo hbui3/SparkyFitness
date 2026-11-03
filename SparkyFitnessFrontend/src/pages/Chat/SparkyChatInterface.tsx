@@ -17,12 +17,14 @@ import { Thread } from '@/components/thread';
 import { useToast } from '@/hooks/use-toast';
 import { useChatToolCategories } from '@/contexts/ChatToolCategoriesContext';
 import { useEffect } from 'react';
+import { useActiveUser } from '@/contexts/ActiveUserContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { FoodAssistantState } from '@/components/ai/FoodAssistantState';
 
 import { MessagePart, ImagePart, MessageMetadata } from '@/types/Chatbot_types';
 import { type UIMessage } from 'ai';
 import { resizeImageBase64 } from '@/utils/imageResize';
+import { getChatConversationId } from '@/utils/chatConversationId';
 
 import { useTranslation } from 'react-i18next';
 interface SparkyChatInnerProps {
@@ -49,6 +51,7 @@ const SparkyChatInner = ({
   const queryClient = useQueryClient();
   const userDate = formatDateToYYYYMMDD(new Date());
   const { toast } = useToast();
+  const { activeUserId } = useActiveUser();
 
   // Runtime tool-category selection, scoped to the active service and prefilled
   // from its full/core profile. getSelected() is stable and reads the latest
@@ -146,6 +149,8 @@ const SparkyChatInner = ({
             // profile-derived Full/Core default. The server persists it so
             // Telegram can use the identical category set for this service.
             toolCategories: getSelected(),
+            // Stable provider session affinity for this owner and conversation.
+            conversationId: await getChatConversationId(activeUserId ?? ''),
             messages: processedMessages,
           },
         };
@@ -196,6 +201,7 @@ const SparkyChatInner = ({
 
 const SparkyChatInterface = () => {
   const { user } = useAuth();
+  const { activeUserId } = useActiveUser();
   const { data: activeAIServiceSetting, isLoading: isActiveServiceLoading } =
     useActiveAIService(!!user);
   const { data: preferences, isLoading: isPrefsLoading } =
@@ -215,6 +221,7 @@ const SparkyChatInterface = () => {
 
   return (
     <SparkyChatInner
+      key={activeUserId ?? ''}
       activeAIServiceSetting={activeAIServiceSetting || null}
       history={history || []}
     />

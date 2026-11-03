@@ -24,8 +24,10 @@ export const runProgramStepSchema = z.object({
   pace: runProgramPaceSchema.optional(),
   /** A heart-rate range to hold in this step; only the person's own programs set one. */
   heartRate: runProgramHeartRateSchema.optional(),
-  /** What the stretch is for (an easy run, a stride, a tempo or marathon-pace effort, a hill repeat); picks its pace range. */
-  effort: z.enum(['easy', 'stride', 'tempo', 'marathon', 'hill']).optional(),
+  /** What the stretch is for (an easy run, a stride, a tempo or marathon-pace effort, a hill repeat, a steady Zone 2 run); picks its pace range. */
+  effort: z
+    .enum(['easy', 'stride', 'tempo', 'marathon', 'hill', 'zone2'])
+    .optional(),
 });
 
 export const runProgramPlanSchema = z.object({
@@ -80,7 +82,7 @@ const isRealDay = (value: string): boolean => {
     date.getUTCDate() === d
   );
 };
-const dayString = z
+export const runDayStringSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .refine(isRealDay, { message: 'Not a real calendar day.' });
@@ -109,11 +111,11 @@ export const runProgramResponseSchema = z.object({
   /** Weekdays (0 = Sunday) the person plans to run; empty means every day. */
   run_days: z.array(weekday).max(7),
   /** First day (YYYY-MM-DD) the Diary offers the workout, or null for any. */
-  start_date: dayString.nullable(),
+  start_date: runDayStringSchema.nullable(),
   /** The person's goal day (e.g. race day), or null. Nothing is scheduled after it. */
-  end_date: dayString.nullable(),
+  end_date: runDayStringSchema.nullable(),
   /** The last day a program workout was completed (the person's local day). */
-  last_done_date: dayString.nullable(),
+  last_done_date: runDayStringSchema.nullable(),
   updated_at: z.string(),
 });
 export type RunProgramResponse = z.infer<typeof runProgramResponseSchema>;
@@ -187,8 +189,8 @@ export const upsertRunProgramBodySchema = z
     next_index: z.number().int().min(0).max(1000).optional(),
     run_days: z.array(weekday).max(7).optional(),
     /** null clears it; absent leaves it as it is. */
-    start_date: dayString.nullable().optional(),
-    end_date: dayString.nullable().optional(),
+    start_date: runDayStringSchema.nullable().optional(),
+    end_date: runDayStringSchema.nullable().optional(),
   })
   .refine(
     (body) =>
@@ -206,7 +208,7 @@ export const completeRunProgramWorkoutBodySchema = z.object({
   /** The program the workout belonged to; ignored if the person has switched since. */
   program_id: z.string().min(1).max(40).optional(),
   /** The person's local day, recorded as the last day a workout was done. */
-  day: dayString.optional(),
+  day: runDayStringSchema.optional(),
   /** The diary exercise entry the workout was done as, so it can be shown as part of the program. */
   entry_id: z.string().min(1).max(64).optional(),
 });
@@ -266,11 +268,11 @@ export const runProgramRealignPreviewSchema = z.object({
   before: z.object({
     workouts: z.number().int().min(0),
     /** The day the last workout falls on today, goal day ignored. */
-    finishDay: dayString.nullable(),
+    finishDay: runDayStringSchema.nullable(),
   }),
   after: z.object({
     workouts: z.number().int().min(0),
-    finishDay: dayString.nullable(),
+    finishDay: runDayStringSchema.nullable(),
   }),
   changes: z.array(runProgramRealignChangeSchema).max(100),
   dropped: z.number().int().min(0),
@@ -333,7 +335,7 @@ export const runProgramRealignResultSchema = z.discriminatedUnion('state', [
     weeksLeft: z.number().int().min(0),
     distance: realignDistanceSchema.nullable(),
     /** The day the whole remaining plan would end on if the goal moved. */
-    laterDay: dayString.nullable(),
+    laterDay: runDayStringSchema.nullable(),
     /** The next shorter race, if there is one. */
     lowerDistance: realignDistanceSchema.nullable(),
     options: z.array(runProgramRealignOptionSchema),
@@ -357,7 +359,7 @@ export const realignRunProgramBodySchema = z.object({
   /** The race distance, when the plan does not make it clear. */
   distance: realignDistanceSchema.optional(),
   /** The person's local day. */
-  today: dayString.optional(),
+  today: runDayStringSchema.optional(),
   /** The `token` of the preview the person saw; a changed plan is refused. */
   token: z.string().max(100).optional(),
 });

@@ -3,13 +3,14 @@ import type { FormMetrics } from './stride';
 import {
   computeLaps,
   computeSplits,
+  withSplitHeartRate,
   METERS_PER_KM,
   METERS_PER_MILE,
   summarizeRecording,
   toWorkoutGpsPoints,
   type RecordedPoint,
   type RecordedSplit,
-  type RecordingActivity,
+  type DiaryActivity,
 } from './gpsRecording';
 
 /** Route points kept for the summary's map: enough for the shape, small for navigation params. */
@@ -21,7 +22,7 @@ const SUMMARY_ROUTE_POINTS = 250;
  * the screen cannot read it back.
  */
 export interface RunSummaryParams {
-  activity: RecordingActivity;
+  activity: DiaryActivity;
   /** The diary day the activity was filed on, YYYY-MM-DD. */
   entryDate: string;
   distanceUnit: 'km' | 'miles';
@@ -29,6 +30,8 @@ export interface RunSummaryParams {
   activeSeconds: number;
   elevationGainMeters: number;
   avgHeartRate: number | null;
+  /** Calories the watch measured, when it sent any. */
+  activeEnergyKcal?: number | null;
   /** A thinned route, empty for a recording with no usable track. */
   route: GpsTrackPoint[];
   /** Per km or mile splits. */
@@ -70,16 +73,19 @@ export function buildRunSummary({
   points,
   lapMarks,
   avgHeartRate,
+  heartRateSamples,
   program,
   entryId,
   form,
 }: {
-  activity: RecordingActivity;
+  activity: DiaryActivity;
   entryDate: string;
   distanceUnit: 'km' | 'miles';
   points: readonly RecordedPoint[];
   lapMarks: readonly number[] | undefined;
   avgHeartRate: number | null;
+  /** Readings (epoch ms) that give each split its own average, when held. */
+  heartRateSamples?: readonly { t: number; bpm: number }[];
   program: RunSummaryParams['program'];
   entryId?: string | null;
   form?: RunSummaryParams['form'];
@@ -100,7 +106,10 @@ export function buildRunSummary({
             ({ t, lat, lon }) => ({ t, lat, lon })
           )
         : [],
-    splits: computeSplits(points, unitMeters),
+    splits: withSplitHeartRate(
+      computeSplits(points, unitMeters),
+      heartRateSamples ?? []
+    ),
     laps: lapMarks && lapMarks.length > 0 ? computeLaps(points, lapMarks) : [],
     program,
     entryId: entryId ?? null,

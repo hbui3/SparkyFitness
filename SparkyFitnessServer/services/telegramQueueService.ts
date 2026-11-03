@@ -13,6 +13,7 @@ import {
 import { log } from '../config/logging.js';
 import type { TelegramUpdate } from './telegramCoachService.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import { isShuttingDown, trackBackgroundWork } from '../utils/shutdownHooks.js';
 
 type TelegramUpdateHandler = (update: TelegramUpdate) => Promise<void>;
 
@@ -158,7 +159,7 @@ async function processOneDelivery(): Promise<boolean> {
 export async function processTelegramQueues(
   handler: TelegramUpdateHandler
 ): Promise<void> {
-  if (processing) return;
+  if (processing || isShuttingDown()) return;
   processing = true;
   try {
     if (Date.now() - lastCleanupAt > 60 * 60_000) {
@@ -170,8 +171,10 @@ export async function processTelegramQueues(
         );
     }
     for (let count = 0; count < 20; count += 1) {
+      if (isShuttingDown()) break;
       // Apply connection changes such as /stop before sending a queued reply.
       const hadUpdate = await processOneUpdate(handler);
+      if (isShuttingDown()) break;
       const hadDelivery = await processOneDelivery();
       if (!hadUpdate && !hadDelivery) break;
     }
@@ -181,9 +184,9 @@ export async function processTelegramQueues(
 }
 
 export function startTelegramQueueWorker(handler: TelegramUpdateHandler): void {
-  if (workerTimer) return;
+  if (workerTimer || isShuttingDown()) return;
   const run = (): void => {
-    void processTelegramQueues(handler).catch((error) =>
+    void trackBackgroundWork(processTelegramQueues(handler)).catch((error) =>
       log('error', 'Telegram queue worker failed:', error)
     );
   };

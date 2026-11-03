@@ -72,6 +72,24 @@ describe('DiaryCalorieMacroSummary', () => {
     __resetAppPreferencesStoreForTests();
   });
 
+  it('shows the food budget including credited activity beside eaten calories', () => {
+    useAppPreferencesStore.setState({ diarySummaryVisible: true });
+    const { getByText } = renderWidget({
+      summary: buildSummary({
+        calorieBalance: {
+          ...buildSummary().calorieBalance,
+          eaten: 1225,
+          goal: 1800,
+          burned: 681,
+          remaining: 1256,
+          progress: 49,
+        },
+      }),
+    });
+    expect(getByText(/1,225 \/ 2,481 kcal/)).toBeTruthy();
+    expect(getByText(/1,256/)).toBeTruthy();
+  });
+
   it('renders nothing when diarySummaryVisible is off', () => {
     useAppPreferencesStore.setState({ diarySummaryVisible: false });
     const { toJSON } = renderWidget();
@@ -152,7 +170,7 @@ describe('DiaryCalorieMacroSummary', () => {
     expect(queryByText(/1,500/)).toBeNull();
   });
 
-  it('shows the projected Health Connect TDEE and Goal Mode target', () => {
+  it('shows the projected device TDEE and Goal Mode target', () => {
     useAppPreferencesStore.setState({
       diarySummaryVisible: true,
       diarySummaryExpanded: false,
@@ -176,7 +194,7 @@ describe('DiaryCalorieMacroSummary', () => {
 
     expect(getByText('Projected TDEE: 2,400 kcal')).toBeTruthy();
     expect(getByText('Goal Mode target: 2,160 kcal')).toBeTruthy();
-    expect(getByText('Health Connect total calories')).toBeTruthy();
+    expect(getByText('Device total calories')).toBeTruthy();
   });
 
   it('supports the prior-server projection shape during rolling upgrades', () => {

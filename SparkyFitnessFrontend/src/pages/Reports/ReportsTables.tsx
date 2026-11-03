@@ -51,6 +51,7 @@ import {
   CustomCategoriesResponse,
   getPrecision,
   bodyWeightOnDay,
+  entryCaloriesCounted,
   isBodyweightModality,
   resolveExerciseModality,
   setVolumeKg,
@@ -441,8 +442,9 @@ const ReportsTables = ({
     if (sortConfig !== null) {
       sortableItems.sort((a, b) => {
         const key = sortConfig.key as keyof typeof a;
-        const aValue = a[key] ?? '';
-        const bValue = b[key] ?? '';
+        const counted = key === 'calories_burned';
+        const aValue = counted ? entryCaloriesCounted(a) : (a[key] ?? '');
+        const bValue = counted ? entryCaloriesCounted(b) : (b[key] ?? '');
         if (aValue < bValue) {
           return sortConfig.direction === 'ascending' ? -1 : 1;
         }
@@ -870,7 +872,7 @@ const ReportsTables = ({
                           <TableCell>
                             {Math.round(
                               convertEnergy(
-                                entry.calories_burned,
+                                entryCaloriesCounted(entry),
                                 'kcal',
                                 energyUnit
                               )

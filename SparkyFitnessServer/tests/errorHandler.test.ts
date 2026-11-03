@@ -53,6 +53,48 @@ describe('errorHandler', () => {
     expect(line).toContain('relation "secret_table" does not exist');
   });
 
+  it.each([
+    [
+      'ENOTFOUND',
+      withFields('getaddrinfo ENOTFOUND sparky-db.internal', {
+        code: 'ENOTFOUND',
+      }),
+    ],
+    [
+      '57P01',
+      withFields('terminating connection due to administrator command', {
+        code: '57P01',
+      }),
+    ],
+    [
+      'pg-pool timeout',
+      new Error('Connection terminated due to connection timeout'),
+    ],
+    [
+      'a 500 caused by ECONNREFUSED',
+      withFields('Failed to get session', {
+        statusCode: 500,
+        cause: withFields('connect ECONNREFUSED 10.0.0.5:5432', {
+          code: 'ECONNREFUSED',
+        }),
+      }),
+    ],
+  ])(
+    'answers a connection failure (%s) with 503, Retry-After and no detail',
+    async (_name, error) => {
+      const res = await request(appThrowing(error)).get('/boom');
+
+      expect(res.status).toBe(503);
+      expect(res.headers['retry-after']).toBe('5');
+      expect(res.body).toEqual({
+        error: 'Service temporarily unavailable. Please try again.',
+      });
+      expect(vi.mocked(log).mock.calls[0]![1]).toContain(
+        (error as Error).message
+      );
+    }
+  );
+
   it('keeps the message of an app error thrown without a status', async () => {
     const res = await request(appThrowing(new Error('Food not found.'))).get(
       '/boom'
@@ -78,14 +120,6 @@ describe('errorHandler', () => {
           code: '42703',
           severity: 'ERROR',
         }),
-      }),
-    ],
-    [
-      'an unreachable database host',
-      withFields('getaddrinfo ENOTFOUND sparky-db.internal', {
-        code: 'ENOTFOUND',
-        errno: -3008,
-        syscall: 'getaddrinfo',
       }),
     ],
     [
@@ -122,7 +156,7 @@ describe('errorHandler', () => {
     });
   });
 
-  it('hides refused connections grouped in an AggregateError', async () => {
+  it('answers refused connections grouped in an AggregateError with 503', async () => {
     const refused = (address: string) =>
       withFields(`connect ECONNREFUSED ${address}:5432`, {
         code: 'ECONNREFUSED',
@@ -136,8 +170,11 @@ describe('errorHandler', () => {
 
     const res = await request(appThrowing(aggregate)).get('/boom');
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Internal Server Error' });
+    expect(res.status).toBe(503);
+    expect(res.headers['retry-after']).toBe('5');
+    expect(res.body).toEqual({
+      error: 'Service temporarily unavailable. Please try again.',
+    });
   });
 
   it('uses statusCode when status is not a number', async () => {
@@ -198,6 +235,20 @@ describe('errorHandler', () => {
     expect(res.body.error).toBe(
       'Conflict: A resource with this unique identifier already exists.'
     );
+  });
+
+  it('maps a reversed lab reference range to 400', async () => {
+    const res = await request(
+      appThrowing(
+        withFields(
+          'new row for relation "lab_results" violates check constraint "lab_results_ref_range_check"',
+          { code: '23514', constraint: 'lab_results_ref_range_check' }
+        )
+      )
+    ).get('/boom');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('ref_range_low must not exceed ref_range_high');
   });
 
   it('still maps a too-large payload to 413', async () => {

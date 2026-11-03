@@ -11,6 +11,7 @@ import BottomSheetPicker, {
 } from '../BottomSheetPicker';
 import { formatLocalizedNumber, getAppLocale } from '../../localization';
 import CalendarSheet, { type CalendarSheetRef } from '../CalendarSheet';
+import ZoneCheckNote from './ZoneCheckNote';
 import type { ProgramScheduleChange } from '../../services/runProgramService';
 import { toLocalDateString } from '../../utils/dateUtils';
 import { formatDayLabel } from '../../utils/dayLabel';
@@ -65,6 +66,14 @@ export function programName(t: TFunction, id: string): string {
     case 'fiveToTenK':
       return t('recordActivity.program.name.fiveToTenK', {
         defaultValue: '5K to 10K',
+      });
+    case 'zone2Base':
+      return t('recordActivity.program.name.zone2Base', {
+        defaultValue: 'Zone 2 base',
+      });
+    case 'zone2Base4':
+      return t('recordActivity.program.name.zone2Base4', {
+        defaultValue: 'Zone 2 base (4 runs a week)',
       });
     case 'faster5k':
       return t('recordActivity.program.name.faster5k', {
@@ -213,6 +222,16 @@ export function programDescription(t: TFunction, id: string): string {
         defaultValue:
           'Advanced marathon: sixteen weeks, five runs a week, with speed or tempo work and long runs building to three hours. For experienced runners.',
       });
+    case 'zone2Base':
+      return t('recordActivity.program.zone2BaseDescription', {
+        defaultValue:
+          'Zone 2 base: ten weeks, three easy runs a week held to your Zone 2 heart rate (or the talk test), building time in zone with a long run of up to 70 minutes. For when you can run 30 minutes.',
+      });
+    case 'zone2Base4':
+      return t('recordActivity.program.zone2Base4Description', {
+        defaultValue:
+          'Zone 2 base: ten weeks, four easy runs a week held to your Zone 2 heart rate (or the talk test), building time in zone with a long run of up to 70 minutes. For when you can run 30 minutes.',
+      });
     case 'halfMarathon4':
       return t('recordActivity.program.halfMarathon4Description', {
         defaultValue:
@@ -310,9 +329,13 @@ interface Props {
   lastAdjustment?: RunProgramAdjustment | null;
   /** Epoch ms "now", from the screen, to judge whether a change is recent. */
   now: number;
+  /** Today in the account timezone, for the race day comparison; defaults to the device day. */
+  accountToday?: string;
   /** The days the workout shows in the Diary, and the first day it does. */
   schedule: RunSchedule;
   onSchedule: (change: ProgramScheduleChange) => void;
+  /** The race day from the person's running goals (YYYY-MM-DD), if one is set. */
+  raceDay?: string | null;
   /** Jump to any workout in the program (0-based index). */
   onPickWorkout: (index: number) => void;
   status: ProgramStatus | null;
@@ -342,9 +365,11 @@ const SectionHeading: React.FC<{ children: React.ReactNode }> = ({
 const InlineLink: React.FC<{
   onPress: () => void;
   children: string;
-}> = ({ onPress, children }) => (
+  testID?: string;
+}> = ({ onPress, children, testID }) => (
   <Pressable
     accessibilityRole="button"
+    testID={testID}
     onPress={onPress}
     hitSlop={8}
     className="mr-5"
@@ -360,8 +385,10 @@ const RunProgramCard: React.FC<Props> = ({
   onChooseProgram,
   lastAdjustment = null,
   now,
+  accountToday,
   schedule,
   onSchedule,
+  raceDay = null,
   onPickWorkout,
   status,
   loaded,
@@ -528,6 +555,8 @@ const RunProgramCard: React.FC<Props> = ({
       })
     : '';
   const today = toLocalDateString(new Date(now));
+  // Goal dates (the race day) are judged in the account timezone.
+  const goalToday = accountToday ?? today;
   const hasStart = !!schedule.startDay;
   const futureStart = hasStart && (schedule.startDay as string) > today;
   const dayLabel = (day: string): string => formatDayLabel(day);
@@ -559,6 +588,7 @@ const RunProgramCard: React.FC<Props> = ({
                 'Workout {{done}} of {{total}} done · {{minutes}} min today',
             })}
       </Text>
+      <ZoneCheckNote program={status.program} workout={status.workout} />
       {recentChange ? (
         <Text className="text-text-secondary text-xs mt-2">
           {recentChange.source === 'assistant'
@@ -709,7 +739,7 @@ const RunProgramCard: React.FC<Props> = ({
                     'Optional, for example a race day. The schedule below says whether the program fits before it.',
                 })}
           </Text>
-          <View className="flex-row mt-2">
+          <View className="flex-row flex-wrap mt-2">
             <InlineLink onPress={() => goalCalendarRef.current?.present()}>
               {schedule.endDay
                 ? t('recordActivity.program.goalChange', {
@@ -719,6 +749,20 @@ const RunProgramCard: React.FC<Props> = ({
                     defaultValue: 'Set a goal date',
                   })}
             </InlineLink>
+            {raceDay &&
+            raceDay > goalToday &&
+            (!schedule.startDay || raceDay >= schedule.startDay) &&
+            schedule.endDay !== raceDay ? (
+              <InlineLink
+                testID="run-program-use-race-day"
+                onPress={() => onSchedule({ endDay: raceDay })}
+              >
+                {t('recordActivity.program.goalUseRaceDay', {
+                  date: dayLabel(raceDay),
+                  defaultValue: 'Use race day ({{date}})',
+                })}
+              </InlineLink>
+            ) : null}
             {schedule.endDay ? (
               <InlineLink onPress={() => onSchedule({ endDay: null })}>
                 {t('recordActivity.program.goalClear', {
@@ -795,9 +839,9 @@ const RunProgramCard: React.FC<Props> = ({
       </View>
       <CalendarSheet
         ref={goalCalendarRef}
-        selectedDate={schedule.endDay ?? addDays(today, 28)}
+        selectedDate={schedule.endDay ?? addDays(goalToday, 28)}
         onSelectDate={(day) =>
-          onSchedule({ endDay: day <= today ? null : day })
+          onSchedule({ endDay: day <= goalToday ? null : day })
         }
       />
       <CalendarSheet
