@@ -5,8 +5,12 @@ import {
   PACE_BAND_FASTEST_SECONDS_PER_KM,
   PACE_BAND_SLOWEST_SECONDS_PER_KM,
   classifyActivitySport,
+  normalizePaceBand,
+  paceZone,
+  paceZones,
   racePaceZones,
   type ExerciseActivityQueryItem,
+  type FitnessTestPaces,
   type HeartRateBand,
   type PaceBand,
   type PaceReferenceRace,
@@ -161,7 +165,7 @@ export function warmPaceFromEasy(easy: PaceBand): PaceBand {
 export interface RacePaceRanges {
   pair: SuggestedPair<PaceBand>;
   /** Ranges for each effort a plan can ask for. Hill repeats get none: pace means nothing uphill. */
-  byEffort: Partial<Record<Exclude<StepEffort, 'hill'>, PaceBand>>;
+  byEffort: Partial<Record<Exclude<StepEffort, 'hill' | 'zone2'>, PaceBand>>;
 }
 
 /**
@@ -187,6 +191,43 @@ export function suggestedPaceRangesFromRace(
       easy: zones.easy,
       warm: warmPaceFromEasy(zones.easy),
     },
+    byEffort,
+  };
+}
+
+/**
+ * Pace ranges from a fitness test's paces, for a run: fast stretches in the
+ * interval zone and easy ones in the easy zone (both around the test's
+ * threshold, re-paced by `shift` like the effort-based zones), and tempo,
+ * marathon-pace and stride efforts from the ranges the test stored for them.
+ * Null for a walk or ride, or paces that cannot be used.
+ */
+export function suggestedPaceRangesFromTest(
+  paces: FitnessTestPaces,
+  activity: RecordingActivity,
+  shift = 0
+): RacePaceRanges | null {
+  if (activity !== 'run') return null;
+  const zones = paceZones(paces.thresholdSecondsPerKm, shift);
+  const interval = zones && paceZone(zones, 'interval');
+  const easy = zones && paceZone(zones, 'easy');
+  if (!interval || !easy) return null;
+  const shifted = (band: PaceBand | undefined): PaceBand | undefined =>
+    band &&
+    (normalizePaceBand({
+      minSecondsPerKm: roundPace(band.minSecondsPerKm * (1 + shift)),
+      maxSecondsPerKm: roundPace(band.maxSecondsPerKm * (1 + shift)),
+    }) ??
+      undefined);
+  const byEffort: RacePaceRanges['byEffort'] = { easy };
+  const tempo = shifted(paces.raceZones.tempo);
+  const marathon = shifted(paces.raceZones.marathon);
+  const stride = shifted(paces.raceZones.stride);
+  if (tempo) byEffort.tempo = tempo;
+  if (marathon) byEffort.marathon = marathon;
+  if (stride) byEffort.stride = stride;
+  return {
+    pair: { work: interval, easy, warm: warmPaceFromEasy(easy) },
     byEffort,
   };
 }

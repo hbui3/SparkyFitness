@@ -38,9 +38,13 @@ upstream review workflow
 - Validates required checkboxes based on change type:
   - **All PRs**: Integrity & License checkbox
   - **New Features**: Alignment checkbox (issue approval)
-  - **Frontend Changes**: Quality checkbox (`pnpm run validate`)
-  - **Backend Changes**: Code Quality checkbox (TypeScript, Zod, Tests)
-  - **UI Changes**: Screenshots checkbox with before/after images
+  - **Mobile Changes**: Tested on device or emulator checkbox
+  - **UI Changes**: If the Validation proof checkbox is ticked, the body must contain an image or video
+  - **AI assistance**: exactly one of four review-depth options. The last two (partly understood / tested only) add the neutral `needs-extra-review` label, which is add-only. Owner and bots are exempt.
+- Enforces the PR title prefix (`feat:`, `fix:`, `docs:`, ...), because labels and the changelog are built from it
+- Fails PRs that touch more than one SQL migration under `SparkyFitnessServer/db/migrations/` (one idempotent migration per PR)
+- Warns when a migration creates a table but `rls_policies.sql` was not updated
+- Typecheck, lint, format, knip and tests are not checkbox items; `ci-tests.yml` enforces them
 - Posts validation results as a comment on the PR
 - Fails the check if required checkboxes are missing
 - Updates the same comment on subsequent edits (no spam)
@@ -61,11 +65,13 @@ hasUIChanges = .tsx/.jsx/.css files in components/screens/pages/
 - ❌ **ERRORS** (fail the check):
   - Missing "Integrity & License" checkbox (ALL)
   - Missing "Alignment" checkbox (NEW FEATURES)
-  - Missing "Quality" checkbox (FRONTEND)
-  - Missing "Code Quality" checkbox (BACKEND)
+  - Missing "Tested on device or emulator" checkbox (MOBILE)
+  - Missing or unknown PR title prefix
+  - More than one SQL migration file in the PR
+  - Zero or more than one "AI assistance" option ticked
+  - "Validation proof" ticked but no image or video in the body
 - ⚠️ **WARNINGS** (informational):
-  - Missing "Screenshots" checkbox (UI)
-  - Missing/incomplete screenshots sections
+  - Migration creates a table without an `rls_policies.sql` change
   - Missing description
   - Missing linked issue
 
@@ -271,13 +277,13 @@ The initial App Store submission stays manual (see `umbrel/README.md`): `submiss
 
 Five Weblate components. The mobile app has four because its surfaces use different formats and placeholder rules (`{{value}}`, `%1$s`, `%@`), so Weblate translates each native file directly and no format conversion sits in between:
 
-| Component | In the translations repo | In this repo |
-| --- | --- | --- |
-| Web | `locales/` | `SparkyFitnessFrontend/public/locales/` |
-| Mobile runtime | `mobile/src/localization/locales/` | `SparkyFitnessMobile/src/localization/locales/` |
-| Mobile Expo metadata | `mobile/locales/` | `SparkyFitnessMobile/locales/` |
+| Component              | In the translations repo             | In this repo                                      |
+| ---------------------- | ------------------------------------ | ------------------------------------------------- |
+| Web                    | `locales/`                           | `SparkyFitnessFrontend/public/locales/`           |
+| Mobile runtime         | `mobile/src/localization/locales/`   | `SparkyFitnessMobile/src/localization/locales/`   |
+| Mobile Expo metadata   | `mobile/locales/`                    | `SparkyFitnessMobile/locales/`                    |
 | Mobile Android widgets | `mobile/targets/android-widget/res/` | `SparkyFitnessMobile/targets/android-widget/res/` |
-| Mobile iOS widgets | `mobile/targets/widget/` | `SparkyFitnessMobile/targets/widget/` |
+| Mobile iOS widgets     | `mobile/targets/widget/`             | `SparkyFitnessMobile/targets/widget/`             |
 
 A mobile surface missing from the translations repo is skipped with a notice, so the workflow is safe to run before all the components exist; the push side seeds each English source on the first run. `pr-validation.yml` rejects a human PR that edits any non-`en` translation file.
 
@@ -328,6 +334,14 @@ Umbrel package PRs (`umbrel/*`) are **not** in the allowlist. Add `'umbrel/'` to
 **Purpose**: When a new release is published, automatically comments on all issues resolved in that release announcing that the release is now live with links to the release notes.
 
 **Triggers**: Release published (`published`)
+
+---
+
+#### `whats-new-drift.yml`
+
+**Purpose**: Keeps one open issue ("What's New screen is out of date") listing the `feat` commits that changed the mobile app since `WHATS_NEW_CONTENT_VERSION` was last bumped. It closes itself once the version is bumped. It only reports; the `whats-new` skill writes the cards. The list is a heads-up, not a complete audit: it matches only `feat` commit subjects and shows at most 40, so other mobile commits need a manual look.
+
+**Triggers**: Pushes to `main` that touch `SparkyFitnessMobile/src/**`, and manual dispatch. Run `.github/scripts/whats-new-drift.sh` locally to see the same list.
 
 ---
 

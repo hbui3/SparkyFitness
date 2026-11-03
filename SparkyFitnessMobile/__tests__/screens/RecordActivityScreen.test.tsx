@@ -111,6 +111,9 @@ jest.mock('../../src/hooks/useIndoorDistanceEstimate', () => ({
 jest.mock('../../src/hooks/usePreferences', () => ({
   usePreferences: () => ({ preferences: { default_distance_unit: 'km' } }),
 }));
+jest.mock('../../src/hooks/useHeartRateZones', () => ({
+  useHeartRateZones: () => ({ zones: undefined }),
+}));
 const mockSuggestedRanges = jest.fn(() => ({ pace: null, heartRate: null }));
 jest.mock('../../src/hooks/useSuggestedRanges', () => ({
   useSuggestedRanges: () => mockSuggestedRanges(),
@@ -944,8 +947,8 @@ describe('RecordActivityScreen', () => {
     const screen = await renderScreen();
 
     expect(screen.getByText('Splits')).toBeTruthy();
-    expect(screen.getByText('1 km')).toBeTruthy();
-    expect(screen.getByText('2 km')).toBeTruthy();
+    expect(screen.getByTestId('split-row-1')).toBeTruthy();
+    expect(screen.getByTestId('split-row-2')).toBeTruthy();
 
     fireEvent.press(screen.getByText('Save activity'));
 

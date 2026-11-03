@@ -25,6 +25,7 @@ import {
   useSyncSpeedianceMutation,
   useSyncIGPSportMutation,
   useSyncLiftosaurMutation,
+  useSyncIntervalsMutation,
 } from '@/hooks/Integrations/useIntegrations';
 import {
   useCreateExternalProviderMutation,
@@ -37,6 +38,7 @@ import {
   validateProvider,
 } from '@/utils/settings';
 import { ProviderSpecificFields } from './ProviderSpecificFields';
+import { ProviderSyncFrequencyFields } from './ProviderSyncFrequencyFields';
 import { useToast } from '@/hooks/use-toast';
 
 import { useTranslation } from 'react-i18next';
@@ -67,6 +69,8 @@ const AddExternalProviderForm = ({
     useSyncIGPSportMutation();
   const { mutateAsync: syncLiftosaurData, isPending: isSyncingLiftosaur } =
     useSyncLiftosaurMutation();
+  const { mutateAsync: syncIntervalsData, isPending: isSyncingIntervals } =
+    useSyncIntervalsMutation();
   const { mutateAsync: loginGarmin, isPending: isLoggingInGarmin } =
     useLoginGarminMutation();
   const { mutateAsync: createExternalProvider, isPending: isCreatingProvider } =
@@ -94,6 +98,7 @@ const AddExternalProviderForm = ({
     isSyncingSpeediance ||
     isSyncingIGPSport ||
     isSyncingLiftosaur ||
+    isSyncingIntervals ||
     isLoggingInGarmin ||
     isCreatingProvider ||
     isCreatingGlobal ||
@@ -271,6 +276,14 @@ const AddExternalProviderForm = ({
         }
       }
 
+      if (newProvider.provider_type === 'intervals' && newProvider.is_active) {
+        try {
+          await syncIntervalsData({ providerId: createdProvider.id });
+        } catch (error: unknown) {
+          if (error instanceof Error) console.error(error);
+        }
+      }
+
       if (!(
         ['speediance', 'igpsport'].includes(newProvider.provider_type ?? '') &&
         newProvider.is_active
@@ -437,6 +450,16 @@ const AddExternalProviderForm = ({
               });
             }}
           />
+          {!isAdminMode && newProvider.provider_type === 'hevy' && (
+            <ProviderSyncFrequencyFields
+              idPrefix="new"
+              providerType={newProvider.provider_type}
+              frequency={newProvider.sync_frequency}
+              onFrequencyChange={(value) =>
+                setNewProvider((prev) => ({ ...prev, sync_frequency: value }))
+              }
+            />
+          )}
           <div className="flex items-center space-x-2">
             <Switch
               id="new_is_active"

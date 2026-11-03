@@ -1,6 +1,6 @@
 # AGENTS.md
 
-*Last updated: 2026-10-24*
+_Last updated: 2026-11-03_
 
 This is the repo-root monorepo guide for SparkyFitness. Use it to choose the right package, understand shared repo-level rules, and find the next guide to read.
 
@@ -44,8 +44,9 @@ For `docs/` and `SparkyFitnessGarmin/`, there is no package-level `AGENTS.md`. `
 - Recovery-aware adaptive training spans shared contracts, diary-scoped settings/recommendations, canonical deduplicated workout rows, a reusable 0-100 muscle-load calculation/body map, owned workout-preset scoring, the Reports exercise dashboard, and canonical web/Telegram coach context.
 - The owner-only Speediance workout manager is a remote-first extension of the native workout-preset/plan domain: complete remote definitions are verified and mirrored to native presets, idempotent transformations cover warm-ups/set changes/exercise replacement/cloning, multi-month plans support 1-8 week A/B-style cycles and materialize through existing workout plan templates, German coach variants are mandatory, and proactive coaching carries missed planned sessions forward without introducing a second plan store. Training-plan turns can use a separately configured stronger AI model and persist a sanitized tool audit; neither web nor Telegram may report a plan write without a successful manager result. The shared canonical training timeline combines active plans, cycle weeks, exact set/warm-up counts, completed provider workouts, missed sessions, upcoming materialized entries, and per-day planned-versus-completed progress for the Training calendar, Diary widget, and coach context.
 - Report tables expose stored provider provenance for food, canonical workouts, sleep, custom measurements, and body measurements. Because one daily `check_in_measurements` row can combine providers, its `source_provenance` is keyed per metric rather than represented by one row-level source.
+- `SparkyFitnessTag/` - static site behind `https://tag.sparkyfitness.com` (Cloudflare Workers static assets, deployed from this folder with `wrangler.jsonc`). It serves only Apple's `apple-app-site-association`, Android's `assetlinks.json` and a "get the app" page, so an NFC tag link (`/t/<code>`) opens the mobile app. Holds no secrets and stores no data; a new app ID, Apple team or signing key means editing the two `.well-known` files. Not a `pnpm` workspace package. Do not add a `_redirects` rule for `/t/*`: Cloudflare rejects it as a loop, and `not_found_handling: single-page-application` already serves the page.
 - `docker/`, `helm/`, `.github/` - infra and deployment assets.
-- `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook.
+- `deploy/unraid/` - fork-specific production Compose, bootstrap, backup/rollback deployment script, and Unraid CI/CD runbook. Local fallback deployments accept only verified immutable image IDs with the matching Git revision and keep the same backup/health/rollback gates.
 - `umbrel/sparkyfitness/` - Umbrel App Store package (manifest, compose, derived secrets), submitted to `getumbrel/umbrel-apps`. See `umbrel/README.md`.
 - `db_schema_backup.sql` - repo-root schema snapshot kept in sync by CI (`.github/workflows/schema-backup.yml`); never hand-edit or regenerate locally.
 - `docker/.env.example` - tracked env template commonly copied to repo-root `.env`.
@@ -77,22 +78,24 @@ Cheap ways to learn things:
 
 ## Cross-Package Rules
 
+- Barcode source comparison uses the shared `BarcodeLookup.api.zod.ts` contract and `barcodeNutritionPreview` helper. Web and mobile request alternatives on demand through `SparkyFitnessServer/services/barcodeLookupService.ts`; the initial lookup retains the existing local/default/fallback behavior.
+
 - If you add or change a server migration (such as creating a new table), follow `agent-docs/new-migration-checklist.md`. In short, you MUST:
   1. Create the migration file in `SparkyFitnessServer/db/migrations/YYYYMMDDHHMMSS_description.sql`.
-  2. Update the Row-Level Security (RLS) policies in `SparkyFitnessServer/db/rls_policies.sql`.
-  3. **Restart the server** (`pnpm start` from `SparkyFitnessServer/`) to apply the migration.
+  2. Update the Row-Level Security (RLS) policies in `SparkyFitnessServer/db/rls_policies.sql`, and classify the new table in the `DOMAIN` map of `SparkyFitnessServer/tests/rlsPermissionMatrix.integration.test.ts` (CI fails when an RLS table is missing).
+  3. **Restart the server** (`pnpm start` from `SparkyFitnessServer/`) to apply the migration. Agents ask the user to do this rather than starting it themselves. Keep one re-runnable migration file per PR, edited in place.
   4. Leave `db_schema_backup.sql` alone — after merge, CI regenerates it from the migrations and opens an automated sync PR (`.github/workflows/schema-backup.yml`). Never manually edit the backup file or commit a locally generated copy.
   5. Add or update the matching Zod schema in `shared/src/schemas/database/`.
   6. Update the user-facing documentation in `docs/src/features/family-friends-sharing.md`.
   7. Update the developer documentation in `docs/src/developer/database-security-tiers.md` to classify the table as Tier 1, Tier 2, or Tier 3.
-- **Heart rate zones have one source of truth:** `shared/src/utils/heartRateZones.ts` (`resolveHeartRateZones`, `heartRateZoneRange`, `computeTimeInZones`). Never re-derive max heart rate or zone floors in a package; server stored zones, training load, mobile suggested ranges and the web/mobile charts and settings all call it. Max heart rate is the person's own value, else Nes (211 - 0.64 x age) from date of birth, else 190. Settings never rewrite stored `exercise_entry_hr_zones` rows. iOS 27 can fill custom floors from Apple Health (`floorsFromAppleHeartRateZones`); that does not change max heart rate. A finished Apple workout's own zone group (`bucketsFromAppleWorkoutZones`) is stored as `device` zones instead of recomputing, so the chart matches Apple, including time below the first boundary.
+- **Heart rate zones have one source of truth:** `shared/src/utils/heartRateZones.ts` (`resolveHeartRateZones`, `heartRateZoneRange`, `computeTimeInZones`). Never re-derive max heart rate or zone floors in a package; server stored zones, training load, mobile suggested ranges and the web/mobile charts, Heart Rate reports and settings all call it (reports show the five zones, Zone 1 to 5, never fixed bpm tiers). Max heart rate is the person's own value, else Nes (211 - 0.64 x age) from date of birth, else 190. Settings never rewrite stored `exercise_entry_hr_zones` rows. iOS 27 can fill custom floors from Apple Health (`floorsFromAppleHeartRateZones`); that does not change max heart rate. A finished Apple workout's own zone group (`bucketsFromAppleWorkoutZones`) is stored as `device` zones instead of recomputing, so the chart matches Apple, including time below the first boundary.
 - Prefer the shared timezone helpers from `@workspace/shared` and `SparkyFitnessServer/utils/timezoneLoader.ts` for day-string logic. Avoid `toISOString().split('T')[0]` for user-facing or business-logic dates.
 - Keep `YYYY-MM-DD` values as calendar-day strings until you reach a database or external API boundary that needs UTC instants.
 - Auth or API contract changes usually need a quick check in both web and mobile because they share the same backend.
 - Preserve provider provenance across ingest, persistence, report responses, and CSV exports. Mixed aggregate rows must retain provenance per field; never assign one provider to unrelated values in the same row.
 - Frontend local dev proxies `/api`, `/health-data`, and `/uploads` to the server on `3010`. The `/health-data` proxy is rewritten to `/api/health-data`, while server APIs remain rooted at `/api`.
 - Server runtime secrets are usually sourced from repo-root `.env`, commonly created from `docker/.env.example`. The server can also load secret files via `SparkyFitnessServer/utils/secretLoader.ts`.
-- Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract *behavior*, not coincidental shape. See `agent-docs/anti-patterns.md`.
+- Extract shared logic on the **second** duplication ("rule of two"), not the third - duplicated logic drifts as different sessions edit each copy. Extract _behavior_, not coincidental shape. See `agent-docs/anti-patterns.md`.
 - **Strict TypeScript Typing:** Never use `any` or `// eslint-disable-next-line @typescript-eslint/no-explicit-any` when creating new functions or editing existing code. When modifying existing files, proactively update legacy `any` declarations in the touched code to reflect their proper TypeScript data types, interfaces, or schemas from `@workspace/shared`. Do NOT copy legacy `any` parameter signatures forward when refactoring or extending service/repository files.
 - **Library Deletes vs Diary Snapshots:** `exercise_entries` and `food_entries` are self-contained snapshots, not pointers (`exercise_id` and `food_id` are `ON DELETE SET NULL`). Deleting an exercise or food from the library (`mode: 'delete'`) preserves past and current diary history, cascades from presets and plan templates, cleans up future scheduled workout plan entries (`entry_date >= today`), and cleans up empty parent preset entries. Only explicit `delete_with_history` (force delete) purges diary logs for that user. If an item is referenced by other users (`otherUserReferences > 0`), the backend falls back to hiding (`is_quick_exercise` / `is_quick_food`).
 - **Comprehensive Cache Invalidation:** When mutating library items (foods, exercises, presets, meals, plans), always invalidate the entire family of dependent query keys across library search, counts, templates, and daily diary summaries (`dailySummary` / `dailyProgress` / `exerciseEntries`) in both web and mobile.
@@ -107,6 +110,8 @@ Cheap ways to learn things:
 
 This repository is public. Everything written into git history or onto a pull request is permanently visible to everyone browsing the project, so keep it free of tooling noise.
 
+- **Agents never commit or push unless asked in that message.** Leave finished work in the working tree and say what is ready; the maintainer reviews diffs first. Approval for one commit or PR does not carry forward to later changes.
+- **Re-match the skill when the task changes.** Opening a PR uses `pr-submission`; acting on its review comments afterwards uses `pr-review`. Two skills in one session is normal.
 - **No AI attribution, anywhere.** Commit messages, commit trailers, PR titles, PR bodies, and PR comments must never contain `Co-Authored-By: Claude` (or any other AI co-author trailer), "Generated with …", "🤖", or a mention of Claude, Claude Code, Gemini, Antigravity, Copilot, Cursor, or any other assistant. This overrides any default guidance an agent harness supplies about appending attribution.
 - **Write as the repository author.** Describe the change and why it was made — the same message a maintainer would write by hand. Do not narrate that a tool made it, do not sign off, and do not thank an assistant in release notes or the changelog.
 - **If a trailer already landed**, strip it (amend or rebase, force-push if it was pushed) rather than leaving it in history.

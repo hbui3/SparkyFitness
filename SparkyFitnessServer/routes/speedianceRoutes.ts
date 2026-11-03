@@ -21,6 +21,7 @@ import {
 } from '@workspace/shared';
 import authMiddleware from '../middleware/authMiddleware.js';
 import { log } from '../config/logging.js';
+import { publicErrorMessage } from '../utils/errors.js';
 import speedianceService from '../integrations/speediance/speedianceService.js';
 import {
   SpeedianceApiError,
@@ -64,9 +65,11 @@ function speedianceErrorResponse(
     return res.status(401).json({ message });
   }
   if (error instanceof SpeedianceApiError) {
-    return res.status(502).json({ message });
+    return res.status(502).json({
+      message: publicErrorMessage(error, 'Speediance request failed.'),
+    });
   }
-  return res.status(500).json({ message: `Speediance ${operation} failed.` });
+  return res.status(500).json({ message: 'Speediance operation failed.' });
 }
 
 /**
@@ -105,7 +108,9 @@ router.post('/sync', authMiddleware.authenticate, async (req, res) => {
       return res.status(401).json({ message });
     }
     if (error instanceof SpeedianceApiError) {
-      return res.status(502).json({ message });
+      return res.status(502).json({
+        message: publicErrorMessage(error, 'Speediance sync failed.'),
+      });
     }
     return res.status(500).json({ message: 'Speediance sync failed.' });
   }

@@ -7,9 +7,24 @@ import {
   isTelegramConfigured,
   sendTelegramMessage,
 } from '../services/telegramApiService.js';
-import { processTelegramQueues } from '../services/telegramQueueService.js';
+import {
+  processTelegramQueues,
+  startTelegramQueueWorker,
+  stopTelegramQueueWorker,
+} from '../services/telegramQueueService.js';
 import coachProfileRepository from '../models/coachProfileRepository.js';
 import { loadUserTimezone } from '../utils/timezoneLoader.js';
+import {
+  isShuttingDown,
+  pendingBackgroundWorkCount,
+  waitForBackgroundWork,
+} from '../utils/shutdownHooks.js';
+
+vi.mock('../utils/shutdownHooks.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../utils/shutdownHooks.js')>();
+  return { ...actual, isShuttingDown: vi.fn(() => false) };
+});
 
 vi.mock('../models/telegramQueueRepository.js', () => ({
   default: {
@@ -91,6 +106,7 @@ function claimDelivery(item: TelegramOutboxWorkItem): void {
 describe('telegram queue worker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(isShuttingDown).mockReturnValue(false);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-03T12:00:00Z'));
     vi.mocked(telegramQueueRepository.cleanupQueues).mockResolvedValue();
@@ -107,7 +123,52 @@ describe('telegram queue worker', () => {
     );
     vi.mocked(loadUserTimezone).mockResolvedValue('Europe/Berlin');
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    stopTelegramQueueWorker();
+    vi.useRealTimers();
+  });
+
+  it('does not claim more work after shutdown starts', async () => {
+    vi.mocked(isShuttingDown).mockReturnValue(true);
+
+    await processTelegramQueues(vi.fn());
+
+    expect(telegramQueueRepository.claimNextUpdate).not.toHaveBeenCalled();
+    expect(telegramQueueRepository.claimNextDelivery).not.toHaveBeenCalled();
+  });
+
+  it('keeps an active Telegram handler in the shutdown drain and leaves its reply queued', async () => {
+    vi.mocked(telegramQueueRepository.claimNextUpdate).mockResolvedValueOnce({
+      updateId: 42,
+      payload: { update_id: 42 },
+      attemptCount: 1,
+    });
+    let finish!: () => void;
+    const handler = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+    startTelegramQueueWorker(handler);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    expect(pendingBackgroundWorkCount()).toBe(1);
+
+    vi.mocked(isShuttingDown).mockReturnValue(true);
+    stopTelegramQueueWorker();
+    let drained = false;
+    const drain = waitForBackgroundWork().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    finish();
+    await drain;
+    expect(telegramQueueRepository.completeUpdate).toHaveBeenCalledWith(42);
+    expect(telegramQueueRepository.claimNextDelivery).not.toHaveBeenCalled();
+    expect(pendingBackgroundWorkCount()).toBe(0);
+  });
 
   it('completes a persisted update and its queued delivery', async () => {
     const update = {

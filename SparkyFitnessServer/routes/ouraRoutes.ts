@@ -11,6 +11,7 @@ import {
   SYNC_ALREADY_RUNNING_RESPONSE,
   startProviderSync,
 } from '../services/providerSyncClaim.js';
+import { publicErrorMessage } from '../utils/errors.js';
 const router = express.Router();
 /**
  * Resolves and validates the canonical Oura redirect URI.
@@ -93,7 +94,7 @@ router.get(
       );
       res.status(500).json({
         message: 'Error initiating Oura authorization',
-        error: (error as Error).message,
+        error: publicErrorMessage(error),
       });
     }
   }
@@ -137,7 +138,7 @@ router.post(
       );
       res.status(500).json({
         message: 'Error handling Oura OAuth callback',
-        error: (error as Error).message,
+        error: publicErrorMessage(error),
       });
     }
   }
@@ -196,7 +197,7 @@ router.post(
       );
       res.status(500).json({
         message: 'Error initiating manual Oura sync',
-        error: (error as Error).message,
+        error: publicErrorMessage(error),
       });
     }
   }
@@ -226,7 +227,7 @@ router.post(
       );
       res.status(500).json({
         message: 'Error disconnecting Oura account',
-        error: (error as Error).message,
+        error: publicErrorMessage(error),
       });
     }
   }
@@ -251,7 +252,7 @@ router.get(
       log('error', `Error getting Oura status: ${(error as Error).message}`);
       res.status(500).json({
         message: 'Error getting Oura status',
-        error: (error as Error).message,
+        error: publicErrorMessage(error),
       });
     }
   }

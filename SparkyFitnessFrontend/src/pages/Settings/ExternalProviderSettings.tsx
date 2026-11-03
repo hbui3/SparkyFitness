@@ -69,6 +69,8 @@ export interface ExternalDataProvider {
   igpsport_region?: 'Global' | 'China' | null;
   liftosaur_last_sync_at?: string | null;
   liftosaur_connect_status?: 'connected' | 'disconnected';
+  intervals_last_sync_at?: string | null;
+  intervals_connect_status?: 'connected' | 'disconnected';
   strava_last_sync_at?: string | null;
   strava_token_expires?: string | null;
   googlehealth_last_sync_at?: string | null;

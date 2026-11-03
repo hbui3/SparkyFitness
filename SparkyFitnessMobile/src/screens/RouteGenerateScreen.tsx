@@ -3,36 +3,43 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import { useCSSVariable } from 'uniwind';
+import { useCSSVariable, useUniwind } from 'uniwind';
 import {
+  DEFAULT_ROUTE_STYLE,
   buildLoopRequest,
   countRouteTurns,
   generateDistanceRange,
+  hasRouteStyleControls,
   nextBearingDeg,
-  type GeneratedRoutePreview,
+  restrictRouteStyle,
+  type GeneratedRouteOption,
   type GenerateRouteBody,
   type RoutePoint,
+  type RouteStyle,
 } from '@workspace/shared';
+import RouteChip from '../components/RouteChip';
+import RouteOptionCards from '../components/RouteOptionCards';
+import MapSurface from '../components/maps/MapSurface';
+import type { MapSurfaceHandle } from '../components/maps/mapSurfaceTypes';
+import RouteStyleControls from '../components/RouteStyleControls';
 import Button from '../components/ui/Button';
 import { usePreferences } from '../hooks/usePreferences';
 import { useScreenHeader } from '../hooks/useScreenHeader';
+import { useNativeIOSHeadersActive } from '../services/nativeTabBarPreference';
 import { addLog } from '../services/LogService';
 import {
-  generateRoutePreview,
+  generateRouteOptions,
   saveGeneratedRoute,
-  useRouteGenerationAvailable,
+  useRouteGenerationCapabilities,
 } from '../services/routeService';
 import { routeGenerateErrorMessage } from '../utils/routeGenerateError';
 import { formatRouteClimb, formatRouteDistance } from '../utils/routeDisplay';
@@ -43,9 +50,8 @@ type Activity = GenerateRouteBody['activity'];
 type Shape = Extract<GenerateRouteBody, { mode: 'loop' }>['shape'];
 type Start = Pick<RoutePoint, 'lat' | 'lon'>;
 
-const FALLBACK_REGION = {
-  latitude: 39.8,
-  longitude: -98.6,
+const FALLBACK_VIEWPORT = {
+  center: { lat: 39.8, lon: -98.6 },
   latitudeDelta: 40,
   longitudeDelta: 40,
 };
@@ -55,45 +61,27 @@ const DEFAULT_DISTANCE: Record<'km' | 'miles', string> = {
   miles: '3',
 };
 
-const Chip: React.FC<{
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}> = ({ label, selected, onPress }) => (
-  <Pressable
-    onPress={onPress}
-    accessibilityRole="button"
-    accessibilityState={{ selected }}
-    className={`px-3 py-2 rounded-full border ${
-      selected
-        ? 'bg-accent-primary border-accent-primary'
-        : 'border-border-subtle'
-    }`}
-  >
-    <Text
-      className={`text-sm font-semibold ${
-        selected ? 'text-white' : 'text-text-primary'
-      }`}
-    >
-      {label}
-    </Text>
-  </Pressable>
-);
-
 /**
  * Generate a loop or out-and-back of a chosen distance from the person's
  * position (or a point they tap on the map) with the server's routing engine.
- * Shows a preview to regenerate (another heading) or save; needs the engine,
- * so without one it only explains that.
+ * Shows up to three distinct options as cards, the chosen one on the map, to
+ * regenerate (other headings) or save; route style choices appear only for
+ * what the engine supports. Needs the engine, so without one it only explains
+ * that.
  */
 const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const usesNativeHeader = useNativeIOSHeadersActive();
   const { preferences } = usePreferences();
   const unit = preferences?.default_distance_unit ?? 'km';
   const lineColor = useCSSVariable('--color-accent-primary') as string;
-  const { available, isLoading: checking } = useRouteGenerationAvailable();
-  const mapRef = useRef<MapView>(null);
+  const { theme } = useUniwind();
+  const isDark = theme === 'dark' || theme === 'amoled';
+  const { capabilities, isLoading: checking } =
+    useRouteGenerationCapabilities();
+  const available = capabilities.available;
+  const mapRef = useRef<MapSurfaceHandle>(null);
   const sequence = useRef(0);
   const pickedStart = useRef(false);
 
@@ -102,7 +90,9 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
   const [distanceText, setDistanceText] = useState(DEFAULT_DISTANCE[unit]);
   const [start, setStart] = useState<Start | null>(null);
   const [bearing, setBearing] = useState<number | null>(null);
-  const [preview, setPreview] = useState<GeneratedRoutePreview | null>(null);
+  const [options, setOptions] = useState<GeneratedRouteOption[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [style, setStyle] = useState<RouteStyle>(DEFAULT_ROUTE_STYLE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [name, setName] = useState<string | null>(null);
@@ -112,6 +102,8 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
     unit === 'miles'
       ? t('workout.mi', { defaultValue: 'mi' })
       : t('workout.km', { defaultValue: 'km' });
+  const preview = options[selected]?.route ?? null;
+  const showStyle = hasRouteStyleControls(capabilities.style);
   const range = generateDistanceRange(unit);
   const distance = Number.parseFloat(distanceText.replace(',', '.'));
   const distanceValid =
@@ -131,15 +123,7 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
         lon: position.coords.longitude,
       };
       setStart(here);
-      mapRef.current?.animateToRegion?.(
-        {
-          latitude: here.lat,
-          longitude: here.lon,
-          latitudeDelta: 0.03,
-          longitudeDelta: 0.03,
-        },
-        0
-      );
+      mapRef.current?.centerOn({ lat: here.lat, lon: here.lon }, 0.03);
     })().catch(() => undefined);
   }, []);
 
@@ -149,12 +133,10 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
 
   useEffect(() => {
     if (!preview || preview.points.length < 2) return;
-    mapRef.current?.fitToCoordinates?.(
-      preview.points.map((p) => ({ latitude: p.lat, longitude: p.lon })),
-      {
-        edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
-        animated: true,
-      }
+    mapRef.current?.fitPoints(
+      preview.points.map((p) => ({ lat: p.lat, lon: p.lon })),
+      { top: 40, right: 40, bottom: 40, left: 40 },
+      true
     );
   }, [preview]);
 
@@ -167,22 +149,25 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
       distance,
       unit,
       bearingDeg: heading,
+      alternatives: capabilities.maxAlternatives,
+      style: restrictRouteStyle(style, capabilities.style),
     });
     if (!request) return;
     const mine = ++sequence.current;
     setBearing(heading);
     setLoading(true);
     setError(null);
-    generateRoutePreview(request)
-      .then((route) => {
+    generateRouteOptions(request)
+      .then((response) => {
         if (mine !== sequence.current) return;
-        setPreview(route);
+        setOptions(response.options);
+        setSelected(0);
         setName(null);
       })
       .catch((failure: unknown) => {
         if (mine !== sequence.current) return;
         addLog(`[Routes] Could not generate a route: ${failure}`, 'WARNING');
-        // The last good preview stays on screen.
+        // The last good options stay on screen.
         setError(failure);
       })
       .finally(() => {
@@ -228,7 +213,10 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
 
   if (checking || !available) {
     return (
-      <>
+      <View
+        className="flex-1 bg-background"
+        style={usesNativeHeader ? undefined : { paddingTop: insets.top }}
+      >
         {header}
         <View className="flex-1 bg-background items-center justify-center px-6">
           {checking ? (
@@ -247,13 +235,13 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
             </>
           )}
         </View>
-      </>
+      </View>
     );
   }
 
-  const coordinates = (preview?.points ?? []).map((p) => ({
-    latitude: p.lat,
-    longitude: p.lon,
+  const previewPoints = (preview?.points ?? []).map((p) => ({
+    lat: p.lat,
+    lon: p.lon,
   }));
   const activityLabel: Record<Activity, string> = {
     run: t('routes.activity.run', { defaultValue: 'Run' }),
@@ -263,38 +251,31 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   return (
-    <>
+    <View
+      className="flex-1 bg-background"
+      style={usesNativeHeader ? undefined : { paddingTop: insets.top }}
+    >
       {header}
       <View className="flex-1 bg-background">
         <View className="flex-1">
-          <MapView
+          <MapSurface
             ref={mapRef}
-            style={StyleSheet.absoluteFill}
-            initialRegion={FALLBACK_REGION}
-            onPress={(event) => {
-              const { latitude, longitude } = event.nativeEvent.coordinate;
+            initialViewport={FALLBACK_VIEWPORT}
+            dark={isDark}
+            onPress={(point) => {
               pickedStart.current = true;
-              setStart({ lat: latitude, lon: longitude });
+              setStart(point);
             }}
-            showsUserLocation
-            toolbarEnabled={false}
-          >
-            {coordinates.length > 1 ? (
-              <Polyline
-                coordinates={coordinates}
-                strokeColor={lineColor}
-                strokeWidth={4}
-                lineCap="round"
-                lineJoin="round"
-              />
-            ) : null}
-            {start ? (
-              <Marker
-                coordinate={{ latitude: start.lat, longitude: start.lon }}
-                pinColor="green"
-              />
-            ) : null}
-          </MapView>
+            showUserLocation
+            lines={
+              previewPoints.length > 1
+                ? [{ points: previewPoints, color: lineColor, width: 4 }]
+                : []
+            }
+            markers={
+              start ? [{ point: start, shape: 'pin', color: 'green' }] : []
+            }
+          />
         </View>
         {/* The distance field sits low on the screen; keep it above the keyboard. */}
         <KeyboardAvoidingView
@@ -302,7 +283,7 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
         >
           <ScrollView
             className="bg-surface"
-            style={{ maxHeight: 340, flexGrow: 0 }}
+            style={{ maxHeight: 420, flexGrow: 0 }}
             contentContainerStyle={{
               paddingHorizontal: 16,
               paddingTop: 12,
@@ -312,7 +293,7 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
           >
             <View className="flex-row flex-wrap gap-2">
               {ACTIVITIES.map((value) => (
-                <Chip
+                <RouteChip
                   key={value}
                   label={activityLabel[value]}
                   selected={activity === value}
@@ -321,12 +302,12 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
               ))}
             </View>
             <View className="flex-row gap-2 mt-3">
-              <Chip
+              <RouteChip
                 label={t('routes.shape.loop', { defaultValue: 'Loop' })}
                 selected={shape === 'loop'}
                 onPress={() => setShape('loop')}
               />
-              <Chip
+              <RouteChip
                 label={t('routes.shape.outAndBack', {
                   defaultValue: 'Out and back',
                 })}
@@ -383,6 +364,29 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
               <Text className="text-text-secondary text-sm mt-3">
                 {routeGenerateErrorMessage(error, t)}
               </Text>
+            ) : null}
+            {showStyle ? (
+              <View className="mt-3">
+                <RouteStyleControls
+                  value={style}
+                  onChange={setStyle}
+                  supported={capabilities.style}
+                  activity={activity}
+                />
+              </View>
+            ) : null}
+            {options.length > 1 ? (
+              <View className="mt-3">
+                <RouteOptionCards
+                  options={options}
+                  selectedIndex={selected}
+                  onSelect={(index) => {
+                    setSelected(index);
+                    setName(null);
+                  }}
+                  unit={unit}
+                />
+              </View>
             ) : null}
             {preview ? (
               <View className="mt-3">
@@ -442,7 +446,7 @@ const RouteGenerateScreen: React.FC<Props> = ({ navigation }) => {
           </ScrollView>
         </KeyboardAvoidingView>
       </View>
-    </>
+    </View>
   );
 };
 

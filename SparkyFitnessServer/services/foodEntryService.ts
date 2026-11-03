@@ -21,17 +21,47 @@ import { buildFoodEntrySnapshot } from '../utils/foodEntrySnapshot.js';
 import Papa from 'papaparse';
 import {
   type CopyReviewedFoodEntriesFromUserBody,
+  type CopyReviewedFoodEntriesToUserBody,
   type CopySelectedFoodEntriesFromUserBody,
-  foodEntryCopyFingerprint,
+  type CopySelectedFoodEntriesToUserBody,
+  copyFingerprintFor,
+  type FoodEntryCopyFingerprintVersion,
   hasExactReviewedFoodEntrySnapshot,
   isDayString,
   foodVolumeToMl,
+  resolveExerciseCalories,
 } from '@workspace/shared';
 import customNutrientService from './customNutrientService.js';
-import workoutDeduplicationService from './workoutDeduplicationService.js';
+import workoutDeduplicationService, {
+  countedExerciseCalories,
+} from './workoutDeduplicationService.js';
 import { removeOrphanedImages } from '../middleware/imageUpload.js';
 import express from 'express';
 // Helper functions (already defined)
+
+/**
+ * The day's exercise calories for the CSV summary row. A device "Active Calories"
+ * entry already includes the logged workouts, so take the larger of the two
+ * instead of adding both, as the diary's exercise card does.
+ */
+export function exportedExerciseCalories(
+  entries: {
+    exercise_name?: string | null;
+    calories_burned: number | string;
+    calories_applied?: number | string | null;
+  }[]
+): number {
+  let active = 0;
+  let logged = 0;
+  for (const ex of entries) {
+    if (ex.exercise_name === 'Active Calories') {
+      active += countedExerciseCalories(ex);
+    } else {
+      logged += countedExerciseCalories(ex);
+    }
+  }
+  return resolveExerciseCalories(logged, active, 0).calories;
+}
 /**
  * A parsed row from a food-diary CSV import.
  *
@@ -1536,29 +1566,33 @@ async function copyFoodEntriesFromUser(
   }
 }
 
-async function copySelectedFoodEntriesFromUser(
+async function requireFamilyCopyPermission(
+  actingUserId: string,
+  familyUserId: string,
+  direction: 'from' | 'to'
+) {
+  const hasAccess = await familyAccessRepository.checkCopyPermissions(
+    actingUserId,
+    familyUserId
+  );
+  if (!hasAccess) {
+    throw copyStatusError(
+      `Forbidden: You do not have permissions to copy ${direction} this family member.`,
+      403
+    );
+  }
+}
+
+async function copySelectedFoodEntries(
   targetUserId: string,
   actingUserId: string,
   sourceUserId: string,
   sourceDate: string,
   targetDate: string,
   targetMealType: string,
-  selections: CopySelectedFoodEntriesFromUserBody['entries']
+  selections: CopySelectedFoodEntriesFromUserBody['entries'],
+  fingerprintVersion?: FoodEntryCopyFingerprintVersion
 ) {
-  // checkCopyPermissions requires both diary management and food-library
-  // access, and must be evaluated for the real actor rather than a switched
-  // active-user context.
-  const hasAccess = await familyAccessRepository.checkCopyPermissions(
-    actingUserId,
-    sourceUserId
-  );
-  if (!hasAccess) {
-    throw copyStatusError(
-      'Forbidden: You do not have permissions to copy from this family member.',
-      403
-    );
-  }
-
   const targetMealTypeId = await resolveMealTypeId(
     targetUserId,
     targetMealType
@@ -1567,9 +1601,9 @@ async function copySelectedFoodEntriesFromUser(
     throw copyStatusError('Invalid target meal type.', 400);
   }
 
-  // Do not trust client-side diary rows. Re-fetch every requested source row
-  // before preparing anything for insertion, so an unavailable or changed row
-  // fails the entire selected-copy operation.
+  const fingerprint = copyFingerprintFor(fingerprintVersion);
+  // Re-fetch every source row using the server-derived owner. The repository
+  // repeats this check under the same transaction as the destination writes.
   const selectedEntries = await Promise.all(
     selections.map(async (selection) => ({
       selection,
@@ -1579,14 +1613,13 @@ async function copySelectedFoodEntriesFromUser(
       ),
     }))
   );
-
   for (const { selection, entry } of selectedEntries) {
     if (
       !entry ||
       entry.id !== selection.entryId ||
       entry.user_id !== sourceUserId ||
       entry.entry_date !== sourceDate ||
-      foodEntryCopyFingerprint(entry) !== selection.sourceFingerprint ||
+      fingerprint(entry) !== selection.sourceFingerprint ||
       !Number.isFinite(Number(entry.serving_size)) ||
       Number(entry.serving_size) <= 0
     ) {
@@ -1596,74 +1629,61 @@ async function copySelectedFoodEntriesFromUser(
       );
     }
   }
-
-  const entriesToCreate: FoodEntryInput[] = [];
-  for (const { selection, entry } of selectedEntries) {
-    // Catalog-linked rows have a stable identity for duplicate detection.
-    // Rows without food_id are not de-duplicated here, but they cannot be
-    // copied today: chk_food_or_meal_id requires meal_id when food_id is null,
-    // and neither this path nor the existing web copy path inserts meal_id.
-    const existingEntry = entry.food_id
-      ? await foodRepository.getFoodEntryByDetails(
-          targetUserId,
-          entry.food_id,
-          targetMealTypeId,
-          targetDate,
-          entry.variant_id,
-          null
-        )
-      : null;
-    if (existingEntry) continue;
-
-    entriesToCreate.push({
-      user_id: targetUserId,
-      created_by_user_id: actingUserId,
-      food_id: entry.food_id,
-      variant_id: entry.variant_id,
-      meal_type_id: targetMealTypeId,
-      food_entry_meal_id: null,
-      meal_plan_template_id: null,
-      entry_date: targetDate,
-      entry_time: entry.entry_time ?? null,
-      quantity: selection.quantity,
-      unit: entry.unit,
-      food_name: entry.food_name,
-      brand_name: entry.brand_name,
-      serving_size: entry.serving_size,
-      serving_unit: entry.serving_unit,
-      calories: entry.calories,
-      protein: entry.protein,
-      carbs: entry.carbs,
-      fat: entry.fat,
-      saturated_fat: entry.saturated_fat,
-      polyunsaturated_fat: entry.polyunsaturated_fat,
-      monounsaturated_fat: entry.monounsaturated_fat,
-      trans_fat: entry.trans_fat,
-      cholesterol: entry.cholesterol,
-      sodium: entry.sodium,
-      potassium: entry.potassium,
-      dietary_fiber: entry.dietary_fiber,
-      sugars: entry.sugars,
-      vitamin_a: entry.vitamin_a,
-      vitamin_c: entry.vitamin_c,
-      calcium: entry.calcium,
-      iron: entry.iron,
-      caffeine_mg: entry.caffeine_mg,
-      water_ml: entry.water_ml,
-      alcohol_g: entry.alcohol_g,
-      glycemic_index: entry.glycemic_index,
-      custom_nutrients: sanitizeCustomNutrients(entry.custom_nutrients),
-      // The note travels with the entry it describes.
-      notes: entry.notes ?? null,
-    });
-  }
-
-  return entriesToCreate.length === 0
-    ? []
-    : foodRepository.bulkCreateFoodEntries(entriesToCreate, targetUserId);
+  return foodRepository.copySelectedFoodEntries({
+    targetUserId,
+    actingUserId,
+    sourceUserId,
+    sourceDate,
+    targetDate,
+    targetMealTypeId,
+    selections,
+    ...(fingerprintVersion ? { fingerprintVersion } : {}),
+  });
 }
 
-async function copyReviewedFoodEntriesFromUser(
+async function copySelectedFoodEntriesFromUser(
+  targetUserId: string,
+  actingUserId: string,
+  sourceUserId: string,
+  sourceDate: string,
+  targetDate: string,
+  targetMealType: string,
+  selections: CopySelectedFoodEntriesFromUserBody['entries']
+) {
+  await requireFamilyCopyPermission(actingUserId, sourceUserId, 'from');
+  return copySelectedFoodEntries(
+    targetUserId,
+    actingUserId,
+    sourceUserId,
+    sourceDate,
+    targetDate,
+    targetMealType,
+    selections
+  );
+}
+
+async function copySelectedFoodEntriesToUser(
+  actingUserId: string,
+  targetUserId: string,
+  sourceDate: string,
+  targetDate: string,
+  targetMealType: string,
+  selections: CopySelectedFoodEntriesToUserBody['entries']
+) {
+  await requireFamilyCopyPermission(actingUserId, targetUserId, 'to');
+  return copySelectedFoodEntries(
+    targetUserId,
+    actingUserId,
+    actingUserId,
+    sourceDate,
+    targetDate,
+    targetMealType,
+    selections,
+    'to-user'
+  );
+}
+
+async function copyReviewedFoodEntries(
   targetUserId: string,
   actingUserId: string,
   sourceUserId: string,
@@ -1671,21 +1691,9 @@ async function copyReviewedFoodEntriesFromUser(
   sourceMealType: string,
   targetDate: string,
   targetMealType: string,
-  reviewedEntries: CopyReviewedFoodEntriesFromUserBody['entries']
+  reviewedEntries: CopyReviewedFoodEntriesFromUserBody['entries'],
+  fingerprintVersion?: FoodEntryCopyFingerprintVersion
 ) {
-  // Keep the reviewed-entry fingerprint contract isolated to this endpoint.
-  // Consolidating the otherwise overlapping copy paths is separate work.
-  const hasAccess = await familyAccessRepository.checkCopyPermissions(
-    actingUserId,
-    sourceUserId
-  );
-  if (!hasAccess) {
-    throw copyStatusError(
-      'Forbidden: You do not have permissions to copy from this family member.',
-      403
-    );
-  }
-
   const sourceMealTypeId = await resolveMealTypeId(
     sourceUserId,
     sourceMealType
@@ -1698,9 +1706,6 @@ async function copyReviewedFoodEntriesFromUser(
     throw copyStatusError('Invalid source or target meal type.', 400);
   }
 
-  // This early check produces the clear 409 without creating a container. The
-  // repository repeats the same comparison inside its serializable write
-  // transaction so a concurrent source mutation cannot slip through.
   const currentSourceEntries =
     await foodRepository.getFoodEntriesByDateAndMealType(
       sourceUserId,
@@ -1708,7 +1713,11 @@ async function copyReviewedFoodEntriesFromUser(
       sourceMealTypeId
     );
   if (
-    !hasExactReviewedFoodEntrySnapshot(currentSourceEntries, reviewedEntries)
+    !hasExactReviewedFoodEntrySnapshot(
+      currentSourceEntries,
+      reviewedEntries,
+      copyFingerprintFor(fingerprintVersion)
+    )
   ) {
     throw copyStatusError(
       'One or more source entries changed. Refresh the family diary.',
@@ -1725,9 +1734,55 @@ async function copyReviewedFoodEntriesFromUser(
     targetDate,
     targetMealTypeId,
     reviewedEntries,
+    ...(fingerprintVersion ? { fingerprintVersion } : {}),
   });
 }
 
+async function copyReviewedFoodEntriesFromUser(
+  targetUserId: string,
+  actingUserId: string,
+  sourceUserId: string,
+  sourceDate: string,
+  sourceMealType: string,
+  targetDate: string,
+  targetMealType: string,
+  reviewedEntries: CopyReviewedFoodEntriesFromUserBody['entries']
+) {
+  await requireFamilyCopyPermission(actingUserId, sourceUserId, 'from');
+  return copyReviewedFoodEntries(
+    targetUserId,
+    actingUserId,
+    sourceUserId,
+    sourceDate,
+    sourceMealType,
+    targetDate,
+    targetMealType,
+    reviewedEntries
+  );
+}
+
+async function copyReviewedFoodEntriesToUser(
+  actingUserId: string,
+  targetUserId: string,
+  sourceDate: string,
+  sourceMealType: string,
+  targetDate: string,
+  targetMealType: string,
+  reviewedEntries: CopyReviewedFoodEntriesToUserBody['entries']
+) {
+  await requireFamilyCopyPermission(actingUserId, targetUserId, 'to');
+  return copyReviewedFoodEntries(
+    targetUserId,
+    actingUserId,
+    actingUserId,
+    sourceDate,
+    sourceMealType,
+    targetDate,
+    targetMealType,
+    reviewedEntries,
+    'to-user'
+  );
+}
 async function copyFoodEntriesToUser(
   authenticatedUserId: string,
   actingUserId: string,
@@ -3448,9 +3503,14 @@ async function exportAllDiaryEntriesToCSVStream(
       ]);
 
       const exerciseCaloriesByDate = new Map(
-        workoutDeduplicationService
-          .calculateExerciseCaloriesByDate(canonicalWorkoutResult.allEntries)
-          .map((entry) => [entry.entry_date, entry.calories_burned])
+        uniqueDates.map((date) => [
+          date,
+          exportedExerciseCalories(
+            canonicalWorkoutResult.allEntries.filter(
+              (entry) => getDayString(entry.entry_date) === date
+            )
+          ),
+        ])
       );
 
       const summariesCache = new Map();
@@ -3801,10 +3861,9 @@ async function exportAllDiaryEntriesToCSVStream(
           null
         );
 
-      const caloriesBurned =
-        workoutDeduplicationService.calculateExerciseCaloriesByDate(
-          canonicalWorkoutResult.allEntries
-        )[0]?.calories_burned ?? 0;
+      const caloriesBurned = exportedExerciseCalories(
+        canonicalWorkoutResult.allEntries
+      );
 
       const lastDateDrinkLogs =
         await measurementRepository.getWaterIntakeLogsByDates(userId, [
@@ -4061,8 +4120,10 @@ export { deleteFoodEntryMeal };
 export { exportAllDiaryEntriesToCSVStream };
 export { copyFoodEntriesFromUser };
 export { copyReviewedFoodEntriesFromUser };
+export { copyReviewedFoodEntriesToUser };
 export { copyFoodEntriesToUser };
 export { copySelectedFoodEntriesFromUser };
+export { copySelectedFoodEntriesToUser };
 export { importFoodDiaryEntriesInBulk };
 export default {
   createFoodEntry,
@@ -4085,7 +4146,9 @@ export default {
   exportAllDiaryEntriesToCSVStream,
   copyFoodEntriesFromUser,
   copyReviewedFoodEntriesFromUser,
+  copyReviewedFoodEntriesToUser,
   copyFoodEntriesToUser,
   copySelectedFoodEntriesFromUser,
+  copySelectedFoodEntriesToUser,
   importFoodDiaryEntriesInBulk,
 };

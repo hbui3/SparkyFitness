@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // @ts-expect-error TS(7016): Could not find a declaration file for module 'supertest'
 import request from 'supertest';
 import express from 'express';
-import garminRoutes from '../routes/garminRoutes.js';
+import garminRoutes, {
+  MFA_ATTEMPT_MAX,
+  mfaAttemptLimiter,
+} from '../routes/garminRoutes.js';
+import garminConnectService from '../integrations/garminconnect/garminConnectService.js';
 import garminService from '../services/garminService.js';
 import externalProviderRepository from '../models/externalProviderRepository.js';
 
@@ -94,6 +98,7 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mfaAttemptLimiter.reset();
   permissionState.allow = true;
   (
     externalProviderRepository.getExternalDataProviderByUserIdAndProviderName as any
@@ -126,6 +131,29 @@ describe('permission gating (switched-context delegate without diary access)', (
     permissionState.allow = false;
     const res = await request(app).post('/integrations/garmin/unlink');
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('POST /integrations/garmin/resume_login', () => {
+  it('stops forwarding codes once the attempt cap is reached', async () => {
+    vi.mocked(garminConnectService.garminResumeLogin).mockResolvedValue({
+      status: 'invalid_mfa_code',
+    });
+    const attempt = () =>
+      request(app)
+        .post('/integrations/garmin/resume_login')
+        .send({ client_state: 'sealed', mfa_code: '123456' });
+
+    for (let i = 0; i < MFA_ATTEMPT_MAX; i++) {
+      expect((await attempt()).statusCode).toBe(200);
+    }
+    const res = await attempt();
+
+    expect(res.statusCode).toBe(429);
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    expect(garminConnectService.garminResumeLogin).toHaveBeenCalledTimes(
+      MFA_ATTEMPT_MAX
+    );
   });
 });
 

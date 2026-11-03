@@ -3,12 +3,28 @@ import '@testing-library/jest-dom';
 import CalculationSettings from '@/pages/Settings/CalculationSettings';
 import DailyProgress from '@/pages/Diary/DailyProgress';
 import { MemoryRouter } from 'react-router-dom';
+import { CALORIE_RULE_DEFAULTS } from '@workspace/shared';
+import type { CalorieInputs } from '@workspace/shared';
 
 const mockSave = jest.fn().mockResolvedValue(undefined);
 const mockConvert = (value: number) => value;
 let mockMode = 'dynamic';
 let mockMethod = 'adaptive';
 let mockSeparate = false;
+let mockExerciseMacros = false;
+let mockIncludeBmr = false;
+const defaultCalorieInputs: CalorieInputs = {
+  rules: CALORIE_RULE_DEFAULTS,
+  age: 36,
+  gender: 'male',
+  weightKg: 80,
+  heightCm: 180,
+  bodyFatPercentage: null,
+  waistCm: null,
+  neckCm: null,
+  hipsCm: null,
+};
+let mockCalorieInputs: CalorieInputs | undefined = defaultCalorieInputs;
 
 jest.mock('@/contexts/PreferencesContext', () => ({
   usePreferences: () => ({
@@ -21,6 +37,8 @@ jest.mock('@/contexts/PreferencesContext', () => ({
     goalMode: 'maintain',
     goalModeCalculationMethod: mockMethod,
     adaptiveActivitySeparate: mockSeparate,
+    adjustMacrosWithExercise: mockExerciseMacros,
+    includeBmrInNetCalories: mockIncludeBmr,
     activityLevel: 'not_much',
     weightUnit: 'kg',
     timezone: 'UTC',
@@ -77,6 +95,7 @@ jest.mock('@/hooks/Diary/useDailyProgress', () => ({
         progress: 43,
         exerciseSource: 'none',
       },
+      calorieInputs: mockCalorieInputs,
     },
     isLoading: false,
     isError: false,
@@ -97,6 +116,42 @@ beforeEach(() => {
   mockMode = 'dynamic';
   mockMethod = 'adaptive';
   mockSeparate = false;
+  mockCalorieInputs = defaultCalorieInputs;
+  mockExerciseMacros = false;
+  mockIncludeBmr = false;
+});
+
+it('keeps exercise macro adjustment off by default and saves the explicit choice', async () => {
+  render(<CalculationSettings />);
+  const toggle = screen.getByRole('switch', {
+    name: 'Adjust percentage macro goals with exercise calories',
+  });
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  expect(toggle).toBeChecked();
+  expect(mockSave).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /Save Preferences/ }));
+  await waitFor(() =>
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ adjustMacrosWithExercise: true })
+    )
+  );
+});
+
+it('loads and allows disabling saved exercise macro adjustment', async () => {
+  mockExerciseMacros = true;
+  render(<CalculationSettings />);
+  const toggle = screen.getByRole('switch', {
+    name: 'Adjust percentage macro goals with exercise calories',
+  });
+  expect(toggle).toBeChecked();
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('button', { name: /Save Preferences/ }));
+  await waitFor(() =>
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ adjustMacrosWithExercise: false })
+    )
+  );
 });
 
 it('saves the opt-in only when Save Preferences is pressed', async () => {
@@ -130,7 +185,14 @@ it('previews the saved separate baseline while retaining full measured TDEE', ()
 });
 
 it('shows the separate baseline in the Diary target calculation', () => {
-  mockSeparate = true;
+  mockCalorieInputs = {
+    ...defaultCalorieInputs,
+    rules: {
+      ...CALORIE_RULE_DEFAULTS,
+      goal_mode_calculation_method: 'adaptive',
+      adaptive_activity_separate: true,
+    },
+  };
   render(
     <MemoryRouter>
       <DailyProgress selectedDate="2026-10-22" />
@@ -147,6 +209,71 @@ it('shows the separate baseline in the Diary target calculation', () => {
     screen.getByText(/Raw full-day TDEE − average activity/)
   ).toHaveTextContent('2800 − 500 = 2300 kcal');
   expect(screen.getByText('Adaptive baseline = 2300 kcal')).toBeInTheDocument();
+});
+
+it('explains a past day with the settings and weight it was calculated from', () => {
+  const dayRules = {
+    ...CALORIE_RULE_DEFAULTS,
+    goal_mode: 'cut' as const,
+    bmr_algorithm: 'Oxford',
+  };
+  mockCalorieInputs = {
+    ...defaultCalorieInputs,
+    rules: dayRules,
+    weightKg: 92,
+  };
+  render(
+    <MemoryRouter>
+      <DailyProgress selectedDate="2026-10-01" />
+    </MemoryRouter>
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: /How today's target is calculated/ })
+  );
+
+  // Today's settings are Maintain with Mifflin-St Jeor at 80 kg.
+  expect(screen.getByText(/14\.2 × 92 \+ 593/)).toBeInTheDocument();
+  expect(screen.getByText(/Cut Deficit \(-15%\)/)).toBeInTheDocument();
+  expect(screen.queryByText('Maintain (0% change)')).not.toBeInTheDocument();
+});
+
+it('explains an unset past setting with its default, not with today', () => {
+  // Today: Percentage Earn-Back, which never separates activity.
+  mockMode = 'percentage';
+  mockSeparate = true;
+  mockCalorieInputs = {
+    ...defaultCalorieInputs,
+    rules: {
+      ...CALORIE_RULE_DEFAULTS,
+      goal_mode_calculation_method: 'adaptive',
+      adaptive_activity_separate: true,
+      // Unset on that day, so the server used Dynamic, which does.
+      calorie_goal_adjustment_mode: null,
+    },
+  };
+  render(
+    <MemoryRouter>
+      <DailyProgress selectedDate="2026-10-01" />
+    </MemoryRouter>
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: /How today's target is calculated/ })
+  );
+
+  expect(
+    screen.getByText('Adaptive baseline (activity excluded):')
+  ).toBeInTheDocument();
+});
+
+it('shows the summary error, not a crash, when an older server sends no calorie inputs', () => {
+  mockCalorieInputs = undefined;
+  render(
+    <MemoryRouter>
+      <DailyProgress selectedDate="2026-10-22" />
+    </MemoryRouter>
+  );
+
+  expect(screen.getByText('Daily summary unavailable')).toBeInTheDocument();
 });
 
 it('uses full-day TDEE for an unsaved move away from Dynamic while preserving the opt-in', async () => {
@@ -186,3 +313,27 @@ it.each([
     })
   ).not.toBeInTheDocument();
 });
+
+it.each([true, false])(
+  'explains BMR using the selected day rule (%s), not the current preference',
+  (includeBmr) => {
+    mockIncludeBmr = !includeBmr;
+    mockCalorieInputs = {
+      ...defaultCalorieInputs,
+      rules: {
+        ...CALORIE_RULE_DEFAULTS,
+        include_bmr_in_net_calories: includeBmr,
+      },
+    };
+    render(
+      <MemoryRouter>
+        <DailyProgress selectedDate="2026-10-01" />
+      </MemoryRouter>
+    );
+    if (includeBmr) {
+      expect(screen.queryByText(/not in burned total/)).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByText(/not in burned total/)).toBeInTheDocument();
+    }
+  }
+);

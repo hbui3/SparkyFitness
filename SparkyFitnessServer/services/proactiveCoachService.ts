@@ -1,3 +1,4 @@
+import { isShuttingDown } from '../utils/shutdownHooks.js';
 import { dayOfWeek, instantHourMinute, instantToDay } from '@workspace/shared';
 import { createHash } from 'node:crypto';
 import coachProfileRepository, {
@@ -611,13 +612,14 @@ let processing = false;
 export async function processDueProactiveCoachMessages(
   now = new Date()
 ): Promise<number> {
-  if (processing) return 0;
+  if (processing || isShuttingDown()) return 0;
   processing = true;
   let delivered = 0;
   try {
     const candidates =
       await coachProfileRepository.listProactiveCoachCandidates();
     for (const candidate of candidates) {
+      if (isShuttingDown()) break;
       try {
         const kinds = getDueMessageKinds(candidate, now);
         const restockCheckDue = isEveningRestockCheckDue(candidate, now);

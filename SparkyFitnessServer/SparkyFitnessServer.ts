@@ -1,6 +1,8 @@
 import path from 'path';
 import { emailLoginGuard } from './middleware/emailLoginGuard.js';
 import { passkeyLoginGuard } from './middleware/passkeyLoginGuard.js';
+import { restoreWriteFence } from './middleware/restoreWriteFence.js';
+import { UPLOAD_STAGING_DIR } from './utils/uploadsPath.js';
 
 import fs from 'fs';
 import type { ServerResponse } from 'http';
@@ -11,15 +13,22 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { bridgeBearerAuthHeader } from './utils/bearerAuthBridge.js';
 import { endPool } from './db/poolManager.js';
+import { installShutdownHandlers } from './utils/gracefulShutdown.js';
+import { watchAuthSchema } from './utils/authSchemaWatch.js';
 import { log } from './config/logging.js';
-import { authenticate } from './middleware/authMiddleware.js';
+import { authenticate, authenticateMcp } from './middleware/authMiddleware.js';
 import { isReadOnlyApiKeyAuthMutation } from './middleware/readOnlyApiKeyGuard.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { applySignOutCookieCleanup } from './middleware/signOutCookieCleanup.js';
 import {
+  createMcpOAuthAuthGate,
+  interceptMcpOAuthAuthRequest,
+} from './middleware/mcpOAuthAuthInterceptor.js';
+import {
   isDemoMode,
   isDemoEmail,
   isDemoPasswordResetToken,
+  isDemoRestrictedAuthPath,
   getDemoEmail,
   demoRestrictionGuard,
 } from './middleware/demoGuardMiddleware.js';
@@ -80,6 +89,7 @@ import hevyRoutes from './routes/hevyRoutes.js';
 import speedianceRoutes from './routes/speedianceRoutes.js';
 import igpsportRoutes from './routes/igpsportRoutes.js';
 import liftosaurRoutes from './routes/liftosaurRoutes.js';
+import intervalsRoutes from './routes/intervalsRoutes.js';
 import moodRoutes from './routes/moodRoutes.js';
 import fastingRoutes from './routes/fastingRoutes.js';
 import adaptiveTdeeRoutes from './routes/adaptiveTdeeRoutes.js';
@@ -103,18 +113,21 @@ import pregnancyRoutesV2 from './routes/v2/pregnancyRoutes.js';
 import reportRoutesV2 from './routes/v2/reportRoutes.js';
 import nutritionKineticsRoutesV2 from './routes/v2/nutritionKineticsRoutes.js';
 import mindfulnessRoutesV2 from './routes/v2/mindfulnessRoutes.js';
+import labResultRoutesV2 from './routes/v2/labResultRoutes.js';
+import labReportRoutesV2 from './routes/v2/labReportRoutes.js';
 import heartRateZoneRoutesV2 from './routes/v2/heartRateZoneRoutes.js';
 import runProgramRoutesV2 from './routes/v2/runProgramRoutes.js';
+import fitnessTestRoutesV2 from './routes/v2/fitnessTestRoutes.js';
+import runGoalRoutesV2 from './routes/v2/runGoalRoutes.js';
 import shoeRoutesV2 from './routes/v2/shoeRoutes.js';
+import plateInventoryRoutesV2 from './routes/v2/plateInventoryRoutes.js';
+import actionTagRoutesV2 from './routes/v2/actionTagRoutes.js';
 import routeRoutesV2 from './routes/v2/routeRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 import reviewRoutes from './routes/reviewRoutes.js';
 import { configureTelegramWebhook } from './services/telegramApiService.js';
-import {
-  startTelegramQueueWorker,
-  stopTelegramQueueWorker,
-} from './services/telegramQueueService.js';
+import { startTelegramQueueWorker } from './services/telegramQueueService.js';
 import telegramCoachService from './services/telegramCoachService.js';
 import { scheduleBackgroundJobs } from './services/backgroundJobScheduler.js';
 // @ts-expect-error TS1192
@@ -144,6 +157,7 @@ import adaptiveTrainingRoutes from './routes/adaptiveTrainingRoutes.js';
 import { upsertEnvOidcProvider } from './utils/oidcEnvConfig.js';
 import userRepository from './models/userRepository.js';
 import genericHealthRoutes from './routes/genericHealthRoutes.js';
+import { revokeOAuthAuthorization } from './models/oauthClientRepository.js';
 
 import { clientIpMiddleware } from './utils/clientIp.js';
 import ipaddr from 'ipaddr.js';
@@ -242,7 +256,7 @@ app.use(
           origin: allowed,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
           allowedHeaders: CORS_ALLOWED_HEADERS,
-          exposedHeaders: ['mcp-session-id'],
+          exposedHeaders: ['mcp-session-id', 'www-authenticate'],
           credentials: true,
           maxAge: 86400,
         });
@@ -251,32 +265,52 @@ app.use(
     );
   })
 );
-// OAuth/OIDC discovery probes must 404, not 401.
-//
-// This server authenticates with API keys and session cookies; it is not an
-// OAuth authorization server. When an MCP client's first request is rejected it
-// follows the spec and probes for OAuth metadata. Falling through to
-// `authenticate` answered those probes with 401, which reads as "OAuth exists,
-// keep negotiating", so the client retried discovery in a loop (and then failed
-// Dynamic Client Registration with a 404 anyway). A 404 says "no OAuth here",
-// and the client falls back to the bearer token it was configured with.
-//
-// Registered before the /mcp mount and the global `authenticate` so it beats
-// both. Deliberately an explicit list rather than all of `/.well-known/*`, so
-// an ACME http-01 challenge served through this app is untouched.
-const OAUTH_DISCOVERY_PATHS = new Set([
-  '/.well-known/openid-configuration',
-  '/.well-known/oauth-authorization-server',
-  '/.well-known/oauth-protected-resource',
-]);
-app.use((req, res, next) => {
-  // Strip an optional /mcp prefix: clients probe both the origin root and the
-  // MCP mount point, and Express has not applied the mount prefix yet here.
-  const path = req.path.startsWith('/mcp/')
-    ? req.path.slice('/mcp'.length)
-    : req.path;
-  if (!OAUTH_DISCOVERY_PATHS.has(path)) return next();
-  res.status(404).json({ error: 'not_found' });
+// Before every route, /mcp and Better Auth included; after CORS so a browser
+// can read the 503.
+app.use(restoreWriteFence);
+// OAuth discovery is top-level even though Better Auth itself is mounted under
+// /api/auth. Hosted MCP clients probe both the origin and resource-specific
+// forms. Keep the explicit allowlist so unrelated /.well-known routes (such as
+// ACME challenges) are untouched. When the admin feature switch is off these
+// probes retain the old 404 behavior, preserving API-key-only deployments.
+app.use(async (req, res, next) => {
+  const metadataKind = classifyMcpOAuthMetadataPath(req.path);
+  if (metadataKind === null) return next();
+  const oauthEnabled =
+    metadataKind === 'unsupported-oidc' ? false : await isMcpOAuthEnabled();
+  if (
+    shouldReturnMcpOAuthMetadataNotFound(
+      req.path,
+      oauthEnabled,
+      getMcpOAuthAvailability().available
+    )
+  ) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+
+  // Delegate to the plugin's canonical metadata endpoints rather than
+  // duplicating its advertised capabilities. MCP clients commonly probe the
+  // public root aliases served above, while Better Auth uses the
+  // issuer/resource-specific RFC forms internally.
+  const { auth } = authModule;
+  const internalMetadataUrl = new URL(
+    metadataKind === 'resource'
+      ? '/.well-known/oauth-protected-resource/mcp'
+      : '/.well-known/oauth-authorization-server/api/auth',
+    getPublicOrigin()
+  );
+  const metadataResponse = await auth.handler(
+    new globalThis.Request(internalMetadataUrl, {
+      method: req.method,
+      headers: fromNodeHeaders(req.headers),
+    })
+  );
+  metadataResponse.headers.forEach((value, name) => {
+    res.setHeader(name, value);
+  });
+  res.status(metadataResponse.status);
+  if (req.method === 'HEAD' || !metadataResponse.body) return res.end();
+  return res.send(Buffer.from(await metadataResponse.arrayBuffer()));
 });
 // External MCP endpoint — a self-contained chain mounted top-level (not /api)
 // to skip the /api/auth interceptor and cache-control middleware. It sits
@@ -290,7 +324,7 @@ app.use(
   requestLogger({ logCompletion: true }),
   express.json({ limit: isDemoMode() ? '1mb' : '50mb' }),
   cookieParser(),
-  authenticate,
+  authenticateMcp,
   // /mcp mounts ahead of the global route table, so it needs the demo guard
   // explicitly — the app-level one below never sees these requests.
   demoRestrictionGuard,
@@ -320,15 +354,25 @@ const mountBetterAuth = () => {
 };
 app.use(emailLoginGuard);
 app.use(passkeyLoginGuard);
+app.use(
+  createMcpOAuthAuthGate({
+    isAuthHandlerMounted: () => betterAuthHandlerInstance !== null,
+    isOAuthEnabled: isMcpOAuthEnabled,
+    isOAuthAvailable: () => getMcpOAuthAvailability().available,
+  })
+);
 // Catch ALL requests starting with /api/auth early.
 app.use(async (req, res, next) => {
   if (req.originalUrl.startsWith('/api/auth') && betterAuthHandlerInstance) {
+    const normalizedAuthPath = req.path.replace(/\/+$/, '');
+
     // 1. Skip interceptor for discovery routes - let them fall through to authRoutes.js
     const isDiscovery =
-      req.path === '/api/auth/settings' ||
-      req.path === '/api/auth/mfa-factors' ||
-      req.path === '/api/auth/demo-login' ||
-      req.path.startsWith('/api/auth/web-login');
+      normalizedAuthPath === '/api/auth/settings' ||
+      normalizedAuthPath === '/api/auth/mfa-factors' ||
+      normalizedAuthPath === '/api/auth/demo-login' ||
+      normalizedAuthPath === '/api/auth/oauth-consent-details' ||
+      normalizedAuthPath.startsWith('/api/auth/web-login');
     if (isDiscovery) {
       return next();
     }
@@ -336,18 +380,7 @@ app.use(async (req, res, next) => {
     if (isDemoMode()) {
       // Prefix matches throughout: exact equality misses trailing-slash and
       // sub-path variants that Better Auth still routes.
-      const restrictedAuthPrefixes = [
-        '/api/auth/two-factor',
-        '/api/auth/passkey',
-        '/api/auth/change-password',
-        '/api/auth/set-password',
-        '/api/auth/change-email',
-        '/api/auth/update-user',
-        '/api/auth/delete-user',
-      ];
-      const isRestrictedAuthPath = restrictedAuthPrefixes.some(
-        (prefix) => req.path === prefix || req.path.startsWith(prefix + '/')
-      );
+      const isRestrictedAuthPath = isDemoRestrictedAuthPath(req.path);
 
       // API keys are read-only for the sandbox rather than invisible: minting
       // one would outlive the daily reset, but listing the account's own keys
@@ -443,6 +476,27 @@ app.use(async (req, res, next) => {
       return res.status(403).json({ error: 'This API key is read-only.' });
     }
 
+    const handledMcpOAuthRequest = await interceptMcpOAuthAuthRequest(
+      req,
+      res,
+      {
+        getSessionUserId: async () => {
+          try {
+            const { auth } = authModule;
+            const session = await auth.api.getSession({
+              headers: fromNodeHeaders(req.headers),
+            });
+            return session?.user?.id ?? null;
+          } catch {
+            return null;
+          }
+        },
+        revokeAuthorization: revokeOAuthAuthorization,
+        getAllowedRedirectUris: getMcpOAuthAllowedRedirectUris,
+      }
+    );
+    if (handledMcpOAuthRequest) return;
+
     // 2. Manual Sign-Out Cleanup: preserve sparky_active_user_id delete
     // cookie across Better Auth's own Set-Cookie writes.
     if (req.method === 'POST' && req.path === '/api/auth/sign-out') {
@@ -530,7 +584,13 @@ app.use(['/uploads', '/api/uploads'], (req, res, next) => {
   // Lowercased because Express routing and macOS/Windows filesystems are all
   // case-insensitive, so /uploads/Pregnancy/... reaches the same bytes.
   const firstSegment = normalized.split('/').filter(Boolean)[0]?.toLowerCase();
-  if (firstSegment && SENSITIVE_UPLOAD_SUBTREES.has(firstSegment)) {
+  // Request and restore staging (including a restore's kept copy of every
+  // subtree above) is never served.
+  if (
+    firstSegment &&
+    (SENSITIVE_UPLOAD_SUBTREES.has(firstSegment) ||
+      firstSegment === UPLOAD_STAGING_DIR)
+  ) {
     res.status(404).end();
     return;
   }
@@ -683,7 +743,17 @@ app.get(
     }
   }
 );
-import { isPublicApiDocsAllowed } from './models/globalSettingsRepository.js';
+import {
+  getMcpOAuthAllowedRedirectUris,
+  isMcpOAuthEnabled,
+  isPublicApiDocsAllowed,
+} from './models/globalSettingsRepository.js';
+import {
+  classifyMcpOAuthMetadataPath,
+  getMcpOAuthAvailability,
+  getPublicOrigin,
+  shouldReturnMcpOAuthMetadataNotFound,
+} from './utils/mcpOAuth.js';
 
 const publicRoutes = [
   '/api/auth/settings',
@@ -794,6 +864,7 @@ app.use('/api/integrations/hevy', hevyRoutes);
 app.use('/api/integrations/speediance', speedianceRoutes);
 app.use('/api/integrations/igpsport', igpsportRoutes);
 app.use('/api/integrations/liftosaur', liftosaurRoutes);
+app.use('/api/integrations/intervals', intervalsRoutes);
 app.use('/api/mood', moodRoutes);
 app.use('/api/fasting', fastingRoutes);
 app.use('/api/admin/telegram-coach', telegramAdminRoutes);
@@ -808,9 +879,15 @@ app.use('/api/v2/pregnancy', pregnancyRoutesV2);
 app.use('/api/v2/reports', reportRoutesV2);
 app.use('/api/v2/nutrition', nutritionKineticsRoutesV2);
 app.use('/api/v2/mindfulness', mindfulnessRoutesV2);
+app.use('/api/v2/lab-results', labResultRoutesV2);
+app.use('/api/v2/lab-reports', labReportRoutesV2);
 app.use('/api/v2/heart-rate-zones', heartRateZoneRoutesV2);
 app.use('/api/v2/run-program', runProgramRoutesV2);
+app.use('/api/v2/fitness-tests', fitnessTestRoutesV2);
+app.use('/api/v2/run-goals', runGoalRoutesV2);
 app.use('/api/v2/shoes', shoeRoutesV2);
+app.use('/api/v2/plate-inventory', plateInventoryRoutesV2);
+app.use('/api/v2/action-tags', actionTagRoutesV2);
 app.use('/api/v2/routes', routeRoutesV2);
 app.use('/api/workout-presets', workoutPresetRoutes);
 app.use('/api/workout-plan-templates', workoutPlanTemplateRoutes);
@@ -907,34 +984,11 @@ app.get('/api/api-docs', (_req, res) => res.redirect('/api/api-docs/swagger'));
   // Fix for reverse proxies using HTTP keepalive (e.g. Traefik, Caddy)
   server.keepAliveTimeout = 181000; // Must be > proxy's idle timeout (nginx=75s, traefik=default 180s)
   server.headersTimeout = 182000; // Must be slightly > keepAliveTimeout
-  // Graceful shutdown
-  let shuttingDown = false;
-  // @ts-expect-error TS7006
-  const shutdown = async (signal) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    stopTelegramQueueWorker();
-    log('info', `${signal} received, shutting down gracefully...`);
-    server.close(async () => {
-      log('info', 'HTTP server closed, draining database pools...');
-      try {
-        await endPool();
-        log('info', 'Database pools closed. Exiting.');
-      } catch (err) {
-        log('error', 'Error closing database pools:', err);
-      }
-      // eslint-disable-next-line n/no-process-exit
-      process.exit(0);
-    });
-    // Force exit if graceful shutdown takes too long
-    setTimeout(() => {
-      log('error', 'Graceful shutdown timed out after 15s, forcing exit.');
-      // eslint-disable-next-line n/no-process-exit
-      process.exit(1);
-    }, 15000).unref();
-  };
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  const shutdown = installShutdownHandlers(server);
+  watchAuthSchema(
+    () => authModule.checkAuthSchema(),
+    () => shutdown('Database schema mismatch')
+  );
 })().catch(async (error) => {
   console.error('Failed to start server:', error);
   // A failed boot must stop the process. Setting process.exitCode alone leaves

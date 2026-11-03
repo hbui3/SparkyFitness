@@ -25,8 +25,10 @@ RUN pnpm install --frozen-lockfile --filter sparkyfitnessfrontend...
 COPY SparkyFitnessFrontend/ ./SparkyFitnessFrontend/
 COPY shared/ ./shared/
 
-# Build the application
-RUN pnpm --filter sparkyfitnessfrontend run build
+# Build the application. Keep a bounded heap large enough for the TypeScript
+# graph even when the builder has a smaller cgroup memory budget.
+ARG NODE_BUILD_MAX_OLD_SPACE_SIZE=2048
+RUN NODE_OPTIONS="--max-old-space-size=${NODE_BUILD_MAX_OLD_SPACE_SIZE}" pnpm --filter sparkyfitnessfrontend run build
 
 # Stage 2: Serve the application with Nginx
 FROM nginx:alpine3.22

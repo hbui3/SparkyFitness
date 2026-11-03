@@ -107,6 +107,8 @@ const SyncRangeDialog = ({
         return 'iGPSPORT';
       case 'liftosaur':
         return 'Liftosaur';
+      case 'intervals':
+        return 'Intervals.icu';
       case 'withings':
         return 'Withings';
       case 'googlehealth':

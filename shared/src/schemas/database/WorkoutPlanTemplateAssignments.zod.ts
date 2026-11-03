@@ -27,6 +27,7 @@ export const workoutPlanTemplateAssignmentsSchema = z.object({
   updated_at: z.date().nullable(),
   sort_order: z.number().nullable(),
   week_index: z.number().int().min(0).max(7),
+  proposals_applied_at: z.date().nullable().optional(),
 });
 
 export const workoutPlanTemplateAssignmentsInitializerSchema = z.object({
@@ -41,6 +42,7 @@ export const workoutPlanTemplateAssignmentsInitializerSchema = z.object({
   updated_at: z.date().optional().nullable(),
   sort_order: z.number().optional().nullable(),
   week_index: z.number().int().min(0).max(7).optional(),
+  proposals_applied_at: z.date().optional().nullable(),
 });
 
 export const workoutPlanTemplateAssignmentsMutatorSchema = z.object({
@@ -55,6 +57,7 @@ export const workoutPlanTemplateAssignmentsMutatorSchema = z.object({
   updated_at: z.date().optional().nullable(),
   sort_order: z.number().optional().nullable(),
   week_index: z.number().int().min(0).max(7).optional(),
+  proposals_applied_at: z.date().optional().nullable(),
 });
 
 export type WorkoutPlanTemplateAssignments = z.infer<

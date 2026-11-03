@@ -22,6 +22,7 @@ import {
 import {
   CheckInMeasurementsResponse,
   CustomMeasurementsResponse,
+  entryCaloriesCounted,
 } from '@workspace/shared';
 import { CustomCategoriesResponse } from '@workspace/shared';
 import type { DailyCalorieBalanceRow } from '@workspace/shared';
@@ -676,7 +677,7 @@ export const exportExerciseEntries = async ({
       prettifySourceList(entry.source ?? entry.exercises.source),
       entry.duration_minutes.toString(),
       Math.round(
-        convertEnergy(entry.calories_burned, 'kcal', energyUnit)
+        convertEnergy(entryCaloriesCounted(entry), 'kcal', energyUnit)
       ).toString(),
       entry.sets.map((set) => set.set_number).join('; ') || '', // Display set numbers
       entry.sets.map((set) => set.reps).join('; ') || '', // Display reps for each set

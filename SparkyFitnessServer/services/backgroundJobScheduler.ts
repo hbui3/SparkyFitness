@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import { scheduleJob } from './scheduledJobs.js';
 import { processDueProactiveCoachMessages } from './proactiveCoachService.js';
 import { scheduleBackupsOnStartup } from './backupScheduler.js';
 import { scheduleOpenFoodFactsAutoSyncOnStartup } from './openFoodFactsAutoSyncScheduler.js';
@@ -8,12 +8,13 @@ import { deleteExpiredTickets } from './passkeyTicketService.js';
 import { scheduleDemoMidnightReset } from './demoSeedService.js';
 import { log } from '../config/logging.js';
 import { scheduledJobsDisabled } from '../utils/scheduledJobs.js';
+import { isShuttingDown, trackBackgroundWork } from '../utils/shutdownHooks.js';
 
 // Backup scheduling is handled by services/backupScheduler.ts
 // Session cleanup scheduling
 const scheduleSessionCleanup = async () => {
   // Run every day at 3 AM
-  cron.schedule('0 3 * * *', async () => {
+  scheduleJob('session-cleanup', '0 3 * * *', async () => {
     try {
       await cleanupSessions();
     } catch (error) {
@@ -46,12 +47,14 @@ export async function scheduleBackgroundJobs(): Promise<void> {
   await scheduleOpenFoodFactsAutoSyncOnStartup();
   scheduleSessionCleanup();
   startProviderSyncSchedulers();
-  const runCoach = () =>
-    processDueProactiveCoachMessages().catch((error: unknown) =>
+  const runCoach = async (): Promise<void> => {
+    if (isShuttingDown()) return;
+    await processDueProactiveCoachMessages().catch((error: unknown) =>
       log('error', '[CRON] Proactive coach task failed:', error)
     );
-  cron.schedule('* * * * *', runCoach, { noOverlap: true });
-  void runCoach();
+  };
+  scheduleJob('proactive-coach', '* * * * *', runCoach, { noOverlap: true });
+  void trackBackgroundWork(runCoach());
 
   scheduleDemoMidnightReset();
 }

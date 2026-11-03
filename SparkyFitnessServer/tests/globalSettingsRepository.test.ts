@@ -98,6 +98,20 @@ describe('globalSettingsRepository', () => {
         );
       }
     );
+    it.each([
+      [true, true],
+      [false, false],
+      [undefined, false],
+    ])(
+      'reports the version check from saved=%s as %s',
+      async (saved, expected) => {
+        mockClient.query.mockResolvedValue({
+          rows: [{ id: 1, enable_version_check: saved }],
+        });
+        const result = await globalSettingsRepository.getGlobalSettings();
+        expect(result.enable_version_check).toBe(expected);
+      }
+    );
     it('should handle database errors', async () => {
       const error = new Error('DB Error');
       mockClient.query.mockRejectedValue(error);
@@ -161,6 +175,33 @@ describe('globalSettingsRepository', () => {
       }
     );
 
+    it('saves the MCP OAuth feature switch', async () => {
+      mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+      await globalSettingsRepository.saveGlobalSettings({
+        enable_email_password_login: true,
+        is_oidc_active: false,
+        is_mfa_mandatory: false,
+        mcp_oauth_enabled: true,
+      });
+      const [sql, params] = mockClient.query.mock.calls[0];
+      expect(sql).toContain('mcp_oauth_enabled = COALESCE($14');
+      expect(params[13]).toBe(true);
+    });
+
+    it('saves the MCP OAuth redirect allowlist', async () => {
+      mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+      const redirects = [
+        'https://claude.ai/api/mcp/auth_callback',
+        'http://localhost:*',
+      ];
+      await globalSettingsRepository.saveGlobalSettings({
+        mcp_oauth_allowed_redirect_uris: redirects,
+      });
+      const [sql, params] = mockClient.query.mock.calls[0];
+      expect(sql).toContain('mcp_oauth_allowed_redirect_uris = COALESCE($16');
+      expect(params[15]).toEqual(redirects);
+    });
+
     it('saves the passkey login setting', async () => {
       mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
       await globalSettingsRepository.saveGlobalSettings({
@@ -174,6 +215,21 @@ describe('globalSettingsRepository', () => {
         'enable_passkey_login = COALESCE($13'
       );
       expect(params[12]).toBe(false);
+    });
+
+    it('saves the version check setting', async () => {
+      mockClient.query.mockResolvedValue({ rows: [{ id: 1 }] });
+      await globalSettingsRepository.saveGlobalSettings({
+        enable_email_password_login: true,
+        is_oidc_active: false,
+        is_mfa_mandatory: false,
+        enable_version_check: false,
+      });
+      const [sql, params] = mockClient.query.mock.calls[0];
+      expect(sql).toContain(
+        'enable_version_check = COALESCE($15, enable_version_check, true)'
+      );
+      expect(params[14]).toBe(false);
     });
     it('should update and return global settings', async () => {
       const inputSettings = {
@@ -203,6 +259,9 @@ describe('globalSettingsRepository', () => {
           false,
           null,
           false,
+          null,
+          null,
+          null,
           null,
           null,
           null,
@@ -316,6 +375,23 @@ describe('globalSettingsRepository', () => {
       const result = await globalSettingsRepository.isUserAiConfigAllowed();
       expect(result).toBe(true);
     });
+  });
+  describe('isVersionCheckEnabled', () => {
+    it.each([true, false])(
+      'returns the stored enable_version_check (%s)',
+      async (stored) => {
+        mockClient.query.mockResolvedValue({
+          rows: [{ enable_version_check: stored }],
+        });
+        await expect(
+          globalSettingsRepository.isVersionCheckEnabled()
+        ).resolves.toBe(stored);
+        expect(mockClient.query).toHaveBeenCalledWith(
+          'SELECT enable_version_check FROM global_settings WHERE id = 1'
+        );
+        expect(mockClient.release).toHaveBeenCalled();
+      }
+    );
   });
   describe('getMfaMandatorySetting', () => {
     it('should return mfa_mandatory value', async () => {

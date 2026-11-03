@@ -193,6 +193,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     cycle_test_entries: 'owner',
     custom_run_programs: 'owner',
     cycles: 'owner',
+    fitness_tests: 'owner',
     health_appointments: 'owner',
     openfoodfacts_sync_queue: 'owner',
     pregnancies: 'owner',
@@ -201,6 +202,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     pregnancy_kick_sessions: 'owner',
     pregnancy_photos: 'owner',
     run_programs: 'owner',
+    run_goals: 'owner',
     routes: 'owner',
     user_cycle_display_preferences: 'owner',
     user_fasting_preferences: 'owner',
@@ -208,6 +210,8 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     food_assistant_preferences: 'owner',
     food_assistant_tasks: 'owner',
     food_assistant_operations: 'owner',
+    plate_inventories: 'owner',
+    action_tags: 'owner',
     // diary
     adaptive_training_recommendations: 'diary',
     adaptive_training_settings: 'diary',
@@ -238,6 +242,9 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     day_classification_cache: 'checkin',
     fasting_logs: 'checkin',
     health_metric_samples: 'checkin',
+    lab_markers: 'checkin',
+    lab_reports: 'checkin',
+    lab_results: 'checkin',
     mindfulness_sessions: 'checkin',
     mood_entries: 'checkin',
     user_custom_moods: 'checkin',
@@ -288,6 +295,7 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     // symptom_entries: symptom helpers plus a cycle-source carve-out, so it has
     // bespoke (pinned) policies rather than the generic generator's.
     symptom_entries: 'custom',
+    user_calorie_rule_history: 'custom',
     user_dashboard_layouts: 'custom',
     user_medication_display_preferences: 'custom',
     user_nutrient_display_preferences: 'custom',
@@ -297,7 +305,16 @@ describe.runIf(RUN)('RLS permission matrix', () => {
     workout_preset_exercise_sets: 'custom',
     workout_preset_exercises: 'custom',
     // system/internal: RLS-enabled with an explicit deny-all policy; only
-    // getSystemClient (which bypasses RLS) touches it.
+    // owner-pool/getSystemClient paths (which bypass RLS) touch them.
+    jwks: 'custom',
+    oauth_access_token: 'custom',
+    oauth_authorization_revocation: 'custom',
+    oauth_client: 'custom',
+    oauth_client_assertion: 'custom',
+    oauth_client_resource: 'custom',
+    oauth_consent: 'custom',
+    oauth_refresh_token: 'custom',
+    oauth_resource: 'custom',
     openfoodfacts_product_read_rate_limit: 'custom',
     passkey_registration_tickets: 'custom',
     // system-only secret: RLS with no policies is intentional default-deny.
@@ -606,6 +623,18 @@ describe.runIf(RUN)('RLS permission matrix', () => {
         policy: 'select_policy',
         col: 'qual',
         mustContain: 'has_profile_read_access',
+      },
+      {
+        table: 'user_calorie_rule_history',
+        policy: 'select_policy',
+        col: 'qual',
+        mustContain: 'has_profile_read_access',
+      },
+      {
+        table: 'user_calorie_rule_history',
+        policy: 'modify_policy',
+        col: 'with_check',
+        mustContain: 'authenticated_user_id() = user_id',
       },
       {
         table: 'user_dashboard_layouts',

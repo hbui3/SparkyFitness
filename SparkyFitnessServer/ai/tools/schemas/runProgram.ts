@@ -7,6 +7,7 @@ import {
 
 export const RUN_PROGRAM_ACTIONS = [
   'get_run_program',
+  'get_fitness_tests',
   'start_run_program',
   'set_run_program_enabled',
   'repeat_run_program_week',
@@ -59,6 +60,7 @@ const daySchema = z
 
 export const manageRunProgramSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('get_run_program') }).strict(),
+  z.object({ action: z.literal('get_fitness_tests') }).strict(),
   z
     .object({
       action: z.literal('start_run_program'),
@@ -68,7 +70,7 @@ export const manageRunProgramSchema = z.discriminatedUnion('action', [
         .max(50)
         .optional()
         .describe(
-          'walkFit, walk10k, returnToRunning, gentle5k, beginner5k, fiveToTenK, faster5k, beginner10k, faster10k, tenKToHalf, halfMarathon, fasterHalf, beginnerMarathon, marathon or advancedMarathon; the half marathon and beginner marathon plans also come as tenKToHalf4, halfMarathon4, fasterHalf4 and beginnerMarathon4 with four runs a week. Default beginner5k.'
+          'walkFit, walk10k, returnToRunning, gentle5k, beginner5k, fiveToTenK, zone2Base, faster5k, beginner10k, faster10k, tenKToHalf, halfMarathon, fasterHalf, beginnerMarathon, marathon or advancedMarathon; the Zone 2 base plan, the half marathon and beginner marathon plans also come as zone2Base4, tenKToHalf4, halfMarathon4, fasterHalf4 and beginnerMarathon4 with four runs a week. Default beginner5k.'
         ),
       confirmed: confirmedSchema,
     })

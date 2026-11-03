@@ -35,14 +35,27 @@ vi.mock('../services/demoSeedService.js', () => ({
 }));
 
 import { scheduleBackgroundJobs } from '../services/backgroundJobScheduler.js';
+import {
+  isShuttingDown,
+  pendingBackgroundWorkCount,
+  waitForBackgroundWork,
+} from '../utils/shutdownHooks.js';
+
+vi.mock('../utils/shutdownHooks.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../utils/shutdownHooks.js')>();
+  return { ...actual, isShuttingDown: vi.fn(() => false) };
+});
 
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.proactiveCoach.mockResolvedValue(undefined);
+  vi.mocked(isShuttingDown).mockReturnValue(false);
   vi.stubEnv('SPARKY_FITNESS_DISABLE_SCHEDULED_JOBS', 'false');
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await waitForBackgroundWork();
   vi.unstubAllEnvs();
 });
 
@@ -57,7 +70,11 @@ describe('scheduleBackgroundJobs', () => {
     expect(mocks.schedule).toHaveBeenCalledWith(
       '* * * * *',
       expect.any(Function),
-      { noOverlap: true }
+      expect.objectContaining({
+        name: 'proactive-coach',
+        noOverlap: true,
+        distributed: true,
+      })
     );
     const runCoach = mocks.schedule.mock.calls.find(
       ([expression]) => expression === '* * * * *'
@@ -66,7 +83,8 @@ describe('scheduleBackgroundJobs', () => {
     expect(mocks.proactiveCoach).toHaveBeenCalledTimes(2);
     expect(mocks.schedule).toHaveBeenCalledWith(
       '0 3 * * *',
-      expect.any(Function)
+      expect.any(Function),
+      expect.objectContaining({ name: 'session-cleanup', distributed: true })
     );
   });
 
@@ -83,6 +101,32 @@ describe('scheduleBackgroundJobs', () => {
     finish();
     await registration;
     expect(mocks.providerSyncs).toHaveBeenCalledOnce();
+  });
+
+  it('tracks the startup coach catch-up until its writes have finished', async () => {
+    let finish!: () => void;
+    mocks.proactiveCoach.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      })
+    );
+
+    await scheduleBackgroundJobs();
+    expect(pendingBackgroundWorkCount()).toBe(1);
+    finish();
+    await waitForBackgroundWork();
+    expect(pendingBackgroundWorkCount()).toBe(0);
+  });
+
+  it('does not start coach catch-up or scheduled coach work during shutdown', async () => {
+    vi.mocked(isShuttingDown).mockReturnValue(true);
+    await scheduleBackgroundJobs();
+    const runCoach = mocks.schedule.mock.calls.find(
+      ([expression]) => expression === '* * * * *'
+    )![1];
+
+    await runCoach();
+    expect(mocks.proactiveCoach).not.toHaveBeenCalled();
   });
 
   it('starts no jobs on an instance with scheduled jobs disabled', async () => {

@@ -9,6 +9,9 @@ import bmrService from '../services/bmrService.js';
 import adaptiveTdeeService from '../services/AdaptiveTdeeService.js';
 import { computeCalorieTarget } from '@workspace/shared';
 
+vi.mock('../models/calorieRuleHistoryRepository.js', () => ({
+  default: { getCalorieRuleHistory: async () => [] },
+}));
 vi.mock('../models/goalRepository.js');
 vi.mock('../models/weeklyGoalPlanRepository.js');
 vi.mock('../models/goalPresetRepository.js');
@@ -68,8 +71,8 @@ describe('goalService adaptive TDEE maturity', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(
-      weeklyGoalPlanRepository.getActiveWeeklyGoalPlan
-    ).mockResolvedValue(null);
+      weeklyGoalPlanRepository.getActiveWeeklyGoalPlansInRange
+    ).mockResolvedValue([]);
     vi.mocked(goalRepository.getGoalsInRange).mockResolvedValue([]);
     vi.mocked(goalRepository.getMostRecentGoalBeforeDate).mockResolvedValue({
       calories: STORED_GOAL,

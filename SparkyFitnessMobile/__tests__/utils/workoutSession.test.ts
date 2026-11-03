@@ -69,6 +69,7 @@ import {
   hasBodyweightExercise,
   isPrSet,
   setLoadKg,
+  upcomingExercises,
 } from '../../src/utils/workoutSession';
 import { wodScoreFormat } from '../../src/utils/wodScore';
 import type {
@@ -95,6 +96,25 @@ type IndividualSession = Extract<
   { type: 'individual' }
 >;
 type PresetSession = Extract<ExerciseSessionResponse, { type: 'preset' }>;
+type PresetExercise = PresetSession['exercises'][number];
+
+const presetExercise = (
+  overrides: Partial<PresetExercise> &
+    Pick<PresetExercise, 'exercise_id' | 'calories_burned'>
+): PresetExercise => ({
+  id: overrides.id ?? overrides.exercise_id ?? 'entry',
+  duration_minutes: 0,
+  entry_date: '2026-03-20',
+  notes: null,
+  distance: null,
+  avg_heart_rate: null,
+  source: null,
+  sets: [],
+  exercise_snapshot: null,
+  activity_details: [],
+  superset_group: null,
+  ...overrides,
+});
 
 /** Format a number the same way the source does (runtime-locale toLocaleString). */
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -179,6 +199,29 @@ describe('workoutSession', () => {
         },
       });
       expect(getWorkoutIcon(session)).toBe('exercise-swimming');
+    });
+
+    it('gives the jump rope icon only to rope skipping, not to jump squats or battle ropes', () => {
+      const named = (name: string) =>
+        makeIndividual({
+          name,
+          exercise_snapshot: {
+            id: 'ex-1',
+            name,
+            category: 'Cardio',
+            calories_per_hour: 500,
+            source: 'system',
+          },
+        });
+      expect(getWorkoutIcon(named('Jump Rope'))).toBe('exercise-jumprope');
+      expect(getWorkoutIcon(named('Skipping rope'))).toBe('exercise-jumprope');
+      expect(getWorkoutIcon(named('Jump Squat'))).not.toBe('exercise-jumprope');
+      expect(getWorkoutIcon(named('Jumping Jacks'))).not.toBe(
+        'exercise-jumprope'
+      );
+      expect(getWorkoutIcon(named('Battle Ropes'))).not.toBe(
+        'exercise-jumprope'
+      );
     });
 
     it('uses category match for non-Cardio categories', () => {
@@ -475,6 +518,30 @@ describe('workoutSession', () => {
   });
 
   describe('getSessionCalories', () => {
+    it('counts calories_applied instead of calories_burned, including 0', () => {
+      expect(
+        getSessionCalories(
+          makeIndividual({ calories_burned: 425, calories_applied: 0 })
+        )
+      ).toBe(0);
+      const preset = makePreset({
+        exercises: [
+          presetExercise({
+            exercise_id: 'ex-1',
+            calories_burned: 475,
+            calories_applied: 100,
+          }),
+          presetExercise({
+            id: 'entry-2',
+            exercise_id: 'ex-2',
+            calories_burned: 50,
+            calories_applied: null,
+          }),
+        ],
+      });
+      expect(getSessionCalories(preset)).toBe(150);
+    });
+
     it('sums exercise calories for preset sessions', () => {
       const session = makePreset({
         exercises: [
@@ -6771,5 +6838,42 @@ describe('summarizeWorkoutEffort', () => {
         { workout_effort: 14 },
       ])
     ).toBe(9);
+  });
+});
+
+describe('upcomingExercises', () => {
+  const entry = (
+    id: string,
+    setIds: number[],
+    group: number | null = null
+  ) => ({
+    id,
+    superset_group: group,
+    sets: setIds.map((setId) => ({ id: setId })),
+  });
+  const session = {
+    exercises: [
+      entry('a', [1, 2], 1),
+      entry('b', [3, 4], 1),
+      entry('c', [5]),
+      entry('d', [6]),
+    ],
+  } as unknown as PresetSessionResponse;
+
+  it('lists the later exercises with a set to do, leaving out superset partners', () => {
+    expect(upcomingExercises(session, '1', {}).map((e) => e.id)).toEqual([
+      'c',
+      'd',
+    ]);
+  });
+
+  it('leaves out exercises that are already done', () => {
+    expect(upcomingExercises(session, '3', { 5: 1 }).map((e) => e.id)).toEqual([
+      'd',
+    ]);
+  });
+
+  it('is empty without an active set', () => {
+    expect(upcomingExercises(session, null, {})).toEqual([]);
   });
 });
