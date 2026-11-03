@@ -138,3 +138,7 @@ The server logs a warning when an Ollama service runs the `full` profile, since 
 ### Reviewing and correcting planned meals
 
 The meal planner keeps unfinished meals from earlier days visible. You can change a meal’s date or portion size, replace its recipe, or skip it; ingredient reservations and shopping quantities are recalculated together. Undoing a prepared meal restores the stock consumed by that meal once. Current food rules are checked again before preparation, and meals that need a safer alternative cannot be marked as prepared. Daily nutrition comparisons remain tied to the selected planning period.
+
+Meal corrections stay open with your chosen portions and date if saving fails. A failed purchase confirmation can be retried without adding the same purchase twice. Background updates from another channel preserve an open shopping edit and changes to pantry targets do not overwrite newly purchased stock.
+
+The curated catalog includes a vegan porridge for breakfast and snacks, so a normal four-meal day can be planned for a vegan profile. It is checked against the same ingredient exclusions and allergens as every other recipe; nutrition values remain estimates. In chat, you can also remove an old expiry date or retailer preference explicitly while unrelated details stay unchanged.

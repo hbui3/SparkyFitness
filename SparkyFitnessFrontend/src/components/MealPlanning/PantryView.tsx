@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { changedFieldsPatch } from '@/utils/changedFieldsPatch';
 import {
   Archive,
   ExternalLink,
@@ -169,6 +170,7 @@ export default function PantryView({ pantry }: PantryViewProps) {
 
   const submitItem = (event: FormEvent) => {
     event.preventDefault();
+    if (createItem.isPending || patchItem.isPending) return;
     const quantity = Number(form.quantity);
     const minimumQuantity = Number(form.minimumQuantity);
     if (
@@ -184,11 +186,22 @@ export default function PantryView({ pantry }: PantryViewProps) {
       const originalProductKey = currentPreferredProductKey(editingItem);
       const productChanged = form.productKey !== originalProductKey;
       const request: PatchCoachPantryItemRequest = {
-        name: form.name.trim(),
-        quantity,
-        minimumQuantity,
-        category: form.category,
-        expiresOn: form.expiresOn || null,
+        ...changedFieldsPatch(
+          {
+            name: editingItem.name,
+            quantity: editingItem.quantity,
+            minimumQuantity: editingItem.minimumQuantity,
+            category: editingItem.category,
+            expiresOn: editingItem.expiresOn,
+          },
+          {
+            name: form.name.trim(),
+            quantity,
+            minimumQuantity,
+            category: form.category,
+            expiresOn: form.expiresOn || null,
+          }
+        ),
         ...(productChanged
           ? {
               preferredProduct: preferredProductForKey(
@@ -198,6 +211,10 @@ export default function PantryView({ pantry }: PantryViewProps) {
             }
           : {}),
       };
+      if (Object.keys(request).length === 0) {
+        setDialogOpen(false);
+        return;
+      }
       patchItem.mutate(
         { itemId: editingItem.id, request },
         { onSuccess: () => setDialogOpen(false) }
@@ -455,7 +472,13 @@ export default function PantryView({ pantry }: PantryViewProps) {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          if (!createItem.isPending && !patchItem.isPending)
+            setDialogOpen(open);
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -474,201 +497,211 @@ export default function PantryView({ pantry }: PantryViewProps) {
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={submitItem}>
-            <div className="space-y-2">
-              <Label htmlFor="pantry-item-name">
-                {t('settings.mealPlanning.fields.name', 'Name')}
-              </Label>
-              <Input
-                id="pantry-item-name"
-                value={form.name}
-                maxLength={200}
-                required
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <fieldset
+              disabled={createItem.isPending || patchItem.isPending}
+              className="min-w-0 space-y-4"
+            >
               <div className="space-y-2">
-                <Label htmlFor="pantry-item-quantity">
-                  {t('settings.mealPlanning.fields.quantity', 'Amount at home')}
+                <Label htmlFor="pantry-item-name">
+                  {t('settings.mealPlanning.fields.name', 'Name')}
                 </Label>
                 <Input
-                  id="pantry-item-quantity"
-                  type="number"
-                  min="0"
-                  step="any"
+                  id="pantry-item-name"
+                  value={form.name}
+                  maxLength={200}
                   required
-                  value={form.quantity}
                   onChange={(event) =>
-                    setForm({ ...form, quantity: event.target.value })
+                    setForm({ ...form, name: event.target.value })
                   }
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="pantry-item-minimum">
-                  {t(
-                    'settings.mealPlanning.fields.minimumQuantity',
-                    'Target stock'
-                  )}
-                </Label>
-                <Input
-                  id="pantry-item-minimum"
-                  type="number"
-                  min="0"
-                  step="any"
-                  required
-                  value={form.minimumQuantity}
-                  onChange={(event) =>
-                    setForm({ ...form, minimumQuantity: event.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pantry-item-unit">
-                  {t('settings.mealPlanning.fields.unit', 'Unit')}
-                </Label>
-                <Select
-                  value={form.unit}
-                  disabled={editingItem !== null}
-                  onValueChange={(unit: CoachMealPlanningUnit) =>
-                    setForm({ ...form, unit })
-                  }
-                >
-                  <SelectTrigger id="pantry-item-unit">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MEAL_PLANNING_UNITS.map((unit) => (
-                      <SelectItem key={unit} value={unit}>
-                        {planningUnitLabel(t, unit)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="pantry-item-category">
-                  {t(
-                    'settings.mealPlanning.fields.category',
-                    'Grocery section'
-                  )}
-                </Label>
-                <Select
-                  value={form.category}
-                  onValueChange={(category: CoachMealPlanningCategory) =>
-                    setForm({ ...form, category })
-                  }
-                >
-                  <SelectTrigger id="pantry-item-category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MEAL_PLANNING_CATEGORIES.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {planningCategoryLabel(t, category)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pantry-item-expiry">
-                  {t('settings.mealPlanning.fields.expiresOn', 'Expiry date')}
-                </Label>
-                <Input
-                  id="pantry-item-expiry"
-                  type="date"
-                  value={form.expiresOn}
-                  onChange={(event) =>
-                    setForm({ ...form, expiresOn: event.target.value })
-                  }
-                />
-              </div>
-            </div>
-            {editingItem &&
-              (editingItem.productOptions.length > 0 ||
-                currentPreferredProductKey(editingItem) !== 'none') && (
+              <div className="grid gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
-                  <Label htmlFor="pantry-item-product">
+                  <Label htmlFor="pantry-item-quantity">
                     {t(
-                      'settings.mealPlanning.fields.productPreference',
-                      'Preferred product'
+                      'settings.mealPlanning.fields.quantity',
+                      'Amount at home'
                     )}
                   </Label>
+                  <Input
+                    id="pantry-item-quantity"
+                    type="number"
+                    min="0"
+                    step="any"
+                    required
+                    value={form.quantity}
+                    onChange={(event) =>
+                      setForm({ ...form, quantity: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pantry-item-minimum">
+                    {t(
+                      'settings.mealPlanning.fields.minimumQuantity',
+                      'Target stock'
+                    )}
+                  </Label>
+                  <Input
+                    id="pantry-item-minimum"
+                    type="number"
+                    min="0"
+                    step="any"
+                    required
+                    value={form.minimumQuantity}
+                    onChange={(event) =>
+                      setForm({ ...form, minimumQuantity: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pantry-item-unit">
+                    {t('settings.mealPlanning.fields.unit', 'Unit')}
+                  </Label>
                   <Select
-                    value={form.productKey}
-                    onValueChange={(value) =>
-                      setForm({ ...form, productKey: value })
+                    value={form.unit}
+                    disabled={editingItem !== null}
+                    onValueChange={(unit: CoachMealPlanningUnit) =>
+                      setForm({ ...form, unit })
                     }
                   >
-                    <SelectTrigger id="pantry-item-product">
+                    <SelectTrigger id="pantry-item-unit">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">
-                        {t(
-                          'settings.mealPlanning.fields.noPreference',
-                          'No preference'
-                        )}
-                      </SelectItem>
-                      {currentPreferredProductKey(editingItem) !== 'none' &&
-                        !editingItem.productOptions.some(
-                          (product) =>
-                            productKey(product) ===
-                            currentPreferredProductKey(editingItem)
-                        ) && (
-                          <SelectItem
-                            value={currentPreferredProductKey(editingItem)}
-                          >
-                            {t(
-                              'settings.mealPlanning.fields.currentPreference',
-                              'Current preference: {{retailer}} · {{productId}}',
-                              {
-                                retailer: editingItem.preferredRetailer
-                                  ? retailerLabel(
-                                      t,
-                                      editingItem.preferredRetailer
-                                    )
-                                  : '',
-                                productId:
-                                  editingItem.preferredRetailerProductId ?? '',
-                              }
-                            )}
-                          </SelectItem>
-                        )}
-                      {editingItem.productOptions.map((product) => (
-                        <SelectItem
-                          key={productKey(product)}
-                          value={productKey(product)}
-                        >
-                          {retailerLabel(t, product.retailer)} · {product.name}
+                      {MEAL_PLANNING_UNITS.map((unit) => (
+                        <SelectItem key={unit} value={unit}>
+                          {planningUnitLabel(t, unit)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {selectedFormProduct?.note && (
-                    <RetailProductNote note={selectedFormProduct.note} />
-                  )}
                 </div>
-              )}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-              >
-                {t('common.cancel', 'Cancel')}
-              </Button>
-              <Button
-                type="submit"
-                disabled={createItem.isPending || patchItem.isPending}
-              >
-                {t('common.save', 'Save')}
-              </Button>
-            </DialogFooter>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="pantry-item-category">
+                    {t(
+                      'settings.mealPlanning.fields.category',
+                      'Grocery section'
+                    )}
+                  </Label>
+                  <Select
+                    value={form.category}
+                    onValueChange={(category: CoachMealPlanningCategory) =>
+                      setForm({ ...form, category })
+                    }
+                  >
+                    <SelectTrigger id="pantry-item-category">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MEAL_PLANNING_CATEGORIES.map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {planningCategoryLabel(t, category)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pantry-item-expiry">
+                    {t('settings.mealPlanning.fields.expiresOn', 'Expiry date')}
+                  </Label>
+                  <Input
+                    id="pantry-item-expiry"
+                    type="date"
+                    value={form.expiresOn}
+                    onChange={(event) =>
+                      setForm({ ...form, expiresOn: event.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              {editingItem &&
+                (editingItem.productOptions.length > 0 ||
+                  currentPreferredProductKey(editingItem) !== 'none') && (
+                  <div className="space-y-2">
+                    <Label htmlFor="pantry-item-product">
+                      {t(
+                        'settings.mealPlanning.fields.productPreference',
+                        'Preferred product'
+                      )}
+                    </Label>
+                    <Select
+                      value={form.productKey}
+                      onValueChange={(value) =>
+                        setForm({ ...form, productKey: value })
+                      }
+                    >
+                      <SelectTrigger id="pantry-item-product">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">
+                          {t(
+                            'settings.mealPlanning.fields.noPreference',
+                            'No preference'
+                          )}
+                        </SelectItem>
+                        {currentPreferredProductKey(editingItem) !== 'none' &&
+                          !editingItem.productOptions.some(
+                            (product) =>
+                              productKey(product) ===
+                              currentPreferredProductKey(editingItem)
+                          ) && (
+                            <SelectItem
+                              value={currentPreferredProductKey(editingItem)}
+                            >
+                              {t(
+                                'settings.mealPlanning.fields.currentPreference',
+                                'Current preference: {{retailer}} · {{productId}}',
+                                {
+                                  retailer: editingItem.preferredRetailer
+                                    ? retailerLabel(
+                                        t,
+                                        editingItem.preferredRetailer
+                                      )
+                                    : '',
+                                  productId:
+                                    editingItem.preferredRetailerProductId ??
+                                    '',
+                                }
+                              )}
+                            </SelectItem>
+                          )}
+                        {editingItem.productOptions.map((product) => (
+                          <SelectItem
+                            key={productKey(product)}
+                            value={productKey(product)}
+                          >
+                            {retailerLabel(t, product.retailer)} ·{' '}
+                            {product.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedFormProduct?.note && (
+                      <RetailProductNote note={selectedFormProduct.note} />
+                    )}
+                  </div>
+                )}
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDialogOpen(false)}
+                >
+                  {t('common.cancel', 'Cancel')}
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={createItem.isPending || patchItem.isPending}
+                >
+                  {t('common.save', 'Save')}
+                </Button>
+              </DialogFooter>
+            </fieldset>
           </form>
         </DialogContent>
       </Dialog>

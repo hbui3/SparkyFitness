@@ -40,6 +40,7 @@ export interface CoachMealSuggestion {
   ingredients: CoachMealIngredient[];
   preparationDe: string;
   preparationEn: string;
+  prepMinutes?: number;
   shoppingServings: number;
 }
 
@@ -117,6 +118,66 @@ const PESCATARIAN_PATTERNS: readonly CoachDietaryPattern[] = [
 ];
 
 const MEAL_TEMPLATES: readonly CoachMealTemplate[] = [
+  {
+    id: 'banana-oat-porridge',
+    nameDe: 'Bananen-Hafer-Porridge mit Kürbiskernen',
+    nameEn: 'Banana oat porridge with pumpkin seeds',
+    // Approximate nutrition for the listed ingredients, as for the other
+    // curated meals. Ingredient and allergen checks still run for every owner.
+    // Oat/seed reference values: https://impuls.migros.ch/de/ernaehrung/nahrungsmittel/haferflocken
+    // and https://impuls.migros.ch/de/ernaehrung/nahrungsmittel/kuerbis
+    calories: 520,
+    proteinG: 18,
+    carbsG: 75,
+    fatG: 14,
+    prepMinutes: 10,
+    mealSlots: ['breakfast', 'snack'],
+    dietaryPatterns: ALL_PATTERNS,
+    ingredients: [
+      {
+        nameDe: 'Haferflocken',
+        nameEn: 'rolled oats',
+        amount: 80,
+        unit: 'g',
+        category: 'pantry',
+        safetyTerms: ['Hafer', 'oats', 'gluten'],
+      },
+      {
+        nameDe: 'Banane',
+        nameEn: 'banana',
+        amount: 120,
+        unit: 'g',
+        category: 'produce',
+      },
+      {
+        nameDe: 'Kürbiskerne',
+        nameEn: 'pumpkin seeds',
+        amount: 15,
+        unit: 'g',
+        category: 'pantry',
+        safetyTerms: ['Kürbiskern', 'pumpkin seed'],
+      },
+      {
+        nameDe: 'Zimt',
+        nameEn: 'cinnamon',
+        amount: 0.5,
+        unit: 'tsp',
+        category: 'pantry',
+      },
+      {
+        nameDe: 'Wasser',
+        nameEn: 'water',
+        amount: 250,
+        unit: 'ml',
+        category: 'pantry',
+        shoppingRequired: false,
+      },
+    ],
+    preparationDe:
+      'Haferflocken mit Wasser aufkochen und quellen lassen. Banane zerdrücken und unterrühren, mit Kürbiskernen und Zimt servieren.',
+    preparationEn:
+      'Simmer the oats in water until soft. Mash and stir in the banana, then serve with pumpkin seeds and cinnamon.',
+  },
   {
     id: 'chicken-rice-bowl',
     nameDe: 'Hähnchen-Reis-Gemüse-Bowl',
@@ -921,6 +982,7 @@ function completeSuggestion(template: CoachMealTemplate): CoachMealSuggestion {
     })),
     preparationDe: template.preparationDe,
     preparationEn: template.preparationEn,
+    prepMinutes: template.prepMinutes ?? 30,
     shoppingServings: 2,
   };
 }

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { useTrainingTimeline } from '@/hooks/Exercises/useWorkoutPlans';
+import TrainingTimelineError from '@/components/TrainingTimelineError';
 
 interface PlannedTrainingCardProps {
   selectedDate: string;
@@ -14,7 +15,7 @@ interface PlannedTrainingCardProps {
 const PlannedTrainingCard = ({ selectedDate }: PlannedTrainingCardProps) => {
   const { user } = useAuth();
   const { t } = useTranslation();
-  const { data, isLoading } = useTrainingTimeline(user?.id, {
+  const { data, isLoading, isError, refetch } = useTrainingTimeline(user?.id, {
     startDate: selectedDate,
     endDate: selectedDate,
   });
@@ -52,10 +53,23 @@ const PlannedTrainingCard = ({ selectedDate }: PlannedTrainingCardProps) => {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {isError && data && (
+          <TrainingTimelineError
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        )}
         {isLoading ? (
           <p className="text-sm text-muted-foreground">
             {t('common.loading', 'Loading...')}
           </p>
+        ) : isError && !data ? (
+          <TrainingTimelineError
+            onRetry={() => {
+              void refetch();
+            }}
+          />
         ) : !day ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">

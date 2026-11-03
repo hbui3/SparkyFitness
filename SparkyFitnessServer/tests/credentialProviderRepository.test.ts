@@ -32,6 +32,25 @@ beforeEach(() => {
 });
 
 describe('credentialProviderRepository', () => {
+  it('normalizes a pasted account while preserving the exact password', async () => {
+    const mockClient = {
+      query: vi.fn().mockResolvedValue({ rows: [providerRow] }),
+      release: vi.fn(),
+    };
+    vi.mocked(getClient).mockResolvedValue(mockClient as never);
+    vi.mocked(decrypt)
+      .mockResolvedValueOnce('  rider@example.com  ')
+      .mockResolvedValueOnce('  exact password  ');
+
+    const credentials = await getCredentialProviderValues({
+      userId: 'user-1',
+      providerType: 'igpsport',
+      providerDisplayName: 'iGPSPORT',
+    });
+    expect(credentials.username).toBe('rider@example.com');
+    expect(credentials.password).toBe('  exact password  ');
+  });
+
   it('loads and decrypts an active owner-scoped provider', async () => {
     const mockClient = {
       query: vi.fn().mockResolvedValue({ rows: [providerRow] }),

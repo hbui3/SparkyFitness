@@ -19,6 +19,7 @@ export interface TelegramOutboxWorkItem {
   content: string;
   buttons: TelegramButton[][];
   attemptCount: number;
+  idempotencyKey: string;
 }
 
 async function enqueueUpdate(update: TelegramUpdate): Promise<boolean> {
@@ -168,7 +169,7 @@ async function claimNextDelivery(): Promise<TelegramOutboxWorkItem | null> {
        FROM candidate c
        WHERE o.id = c.id
        RETURNING o.id, o.user_id, o.telegram_chat_id::text, o.content,
-                 o.buttons, o.attempt_count`
+                 o.buttons, o.attempt_count, o.idempotency_key`
     );
     if (!rows[0]) return null;
     return {
@@ -182,6 +183,7 @@ async function claimNextDelivery(): Promise<TelegramOutboxWorkItem | null> {
         ? (rows[0].buttons as TelegramButton[][])
         : [],
       attemptCount: Number(rows[0].attempt_count),
+      idempotencyKey: String(rows[0].idempotency_key),
     };
   } finally {
     client.release();

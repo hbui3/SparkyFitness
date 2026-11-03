@@ -8,6 +8,7 @@ import {
   calculateExerciseCaloriesByDate,
   deduplicateWorkoutRows,
   getCanonicalTrainingLoadSessions,
+  getCanonicalWorkoutEntries,
 } from '../services/workoutDeduplicationService.js';
 
 function workoutRow(
@@ -47,6 +48,53 @@ function workoutRow(
 }
 
 describe('workoutDeduplicationService', () => {
+  it('does not resurrect a HealthKit mirror when a report filter excludes its direct provider workout', async () => {
+    const direct = workoutRow({
+      id: 'direct',
+      exercise_source: 'Speediance',
+      exercise_name: 'Cable Chest Press',
+      activity_started_at: '2026-08-19T06:45:56Z',
+    });
+    const mirror = workoutRow({
+      id: 'mirror',
+      exercise_source: 'HealthKit',
+      exercise_name: 'Traditional Strength Training',
+      activity_started_at: '2026-08-19T06:45:56Z',
+    });
+    const entries = vi
+      .spyOn(reportRepository, 'getExerciseEntries')
+      .mockResolvedValueOnce([direct, mirror])
+      .mockResolvedValueOnce([mirror]);
+    const timezone = vi
+      .spyOn(timezoneLoader, 'loadUserTimezone')
+      .mockResolvedValue('Europe/Berlin');
+    try {
+      const canonical = await getCanonicalWorkoutEntries(
+        'owner',
+        '2026-08-01',
+        '2026-08-31',
+        null,
+        null,
+        'Traditional Strength Training'
+      );
+      expect(canonical.allEntries).toEqual([]);
+      expect(canonical.workoutEntries).toEqual([]);
+      expect(canonical.duplicateSummary).toEqual({
+        hiddenCount: 1,
+        hiddenBySource: { HealthKit: 1 },
+      });
+      expect(entries).toHaveBeenNthCalledWith(
+        1,
+        'owner',
+        '2026-08-01',
+        '2026-08-31'
+      );
+    } finally {
+      entries.mockRestore();
+      timezone.mockRestore();
+    }
+  });
+
   it('keeps direct iGPSPORT workouts and hides overlapping HealthKit mirrors', () => {
     const rows = [
       workoutRow({

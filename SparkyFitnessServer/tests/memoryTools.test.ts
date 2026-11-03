@@ -90,4 +90,105 @@ describe('sparky_manage_coach_memory', () => {
     );
     expect(result).toContain('Remembered [routine]');
   });
+
+  it('does not bypass disabled automatic capture by changing an existing memory', async () => {
+    const tool = buildMemoryTools('user-1').sparky_manage_coach_memory;
+
+    const result = await tool.execute!(
+      {
+        action: 'update',
+        memory_id: savedMemory.id,
+        content: 'A newly inferred fact.',
+        user_confirmed: false,
+      },
+      toolOptions
+    );
+
+    expect(result).toContain('Automatic memory is disabled');
+    expect(coachMemoryService.updateMemory).not.toHaveBeenCalled();
+  });
+
+  it('updates a fact after the owner explicitly confirms the change', async () => {
+    vi.mocked(coachMemoryService.updateMemory).mockResolvedValue({
+      ...savedMemory,
+      content: 'The owner requested this correction.',
+    });
+    const tool = buildMemoryTools('user-1').sparky_manage_coach_memory;
+
+    const result = await tool.execute!(
+      {
+        action: 'update',
+        memory_id: savedMemory.id,
+        content: 'The owner requested this correction.',
+        user_confirmed: true,
+      },
+      toolOptions
+    );
+
+    expect(coachMemoryService.updateMemory).toHaveBeenCalledWith(
+      'user-1',
+      savedMemory.id,
+      {
+        content: 'The owner requested this correction.',
+      }
+    );
+    expect(result).toContain('Updated coach memory');
+  });
+
+  it('keeps administrative toggles available without a new capture confirmation', async () => {
+    vi.mocked(coachMemoryService.updateMemory).mockResolvedValue({
+      ...savedMemory,
+      active: false,
+      pinned: true,
+    });
+    const tool = buildMemoryTools('user-1').sparky_manage_coach_memory;
+
+    await tool.execute!(
+      {
+        action: 'update',
+        memory_id: savedMemory.id,
+        active: false,
+        pinned: true,
+        user_confirmed: false,
+      },
+      toolOptions
+    );
+
+    expect(coachMemoryService.updateMemory).toHaveBeenCalledWith(
+      'user-1',
+      savedMemory.id,
+      {
+        active: false,
+        pinned: true,
+      }
+    );
+  });
+
+  it('allows updating facts automatically only when automatic capture is enabled', async () => {
+    const currentProfile = await coachProfileService.getCoachProfile('user-1');
+    vi.mocked(coachProfileService.getCoachProfile).mockResolvedValue({
+      ...currentProfile,
+      autoMemoryEnabled: true,
+    });
+    vi.mocked(coachMemoryService.updateMemory).mockResolvedValue(savedMemory);
+    const tool = buildMemoryTools('user-1').sparky_manage_coach_memory;
+
+    await tool.execute!(
+      {
+        action: 'update',
+        memory_id: savedMemory.id,
+        content: savedMemory.content,
+        user_confirmed: false,
+      },
+      toolOptions
+    );
+
+    expect(coachMemoryService.updateMemory).toHaveBeenCalledWith(
+      'user-1',
+      savedMemory.id,
+      {
+        content: savedMemory.content,
+      }
+    );
+  });
 });

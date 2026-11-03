@@ -183,6 +183,69 @@ describe('telegramCoachService', () => {
     expect(storedHash).not.toBe(plaintextToken);
   });
 
+  it.each([
+    'Gestern 300 ml Wasser getrunken',
+    'Morgen 300 ml Wasser trinken',
+    'Am 02.11.2026 habe ich 300 ml Wasser getrunken',
+    'I drank 300 ml water yesterday',
+    'I will drink 300 ml water tomorrow',
+    'Heute insgesamt 1 l Wasser',
+    'Today total 1 l water',
+    '300 ml Wasser und eine Banane',
+    '300 ml Wasser, Banane',
+    '300 ml water and an apple',
+    '300 ml Wasser mit Honig',
+    'Ich möchte mein Tagesziel auf 3000 ml Wasser setzen',
+  ])(
+    'leaves dated, planned, cumulative or mixed messages to the full chat path: %s',
+    (text) => {
+      expect(parseDirectWaterLogCommand(text)).toBeNull();
+    }
+  );
+
+  it.each([
+    'Ich habe heute 300 ml Wasser getrunken',
+    'Bitte 300 ml Wasser eintragen',
+    'I just drank 300 ml water',
+    'Please log 300 ml water',
+  ])(
+    'retains the direct shortcut for a clear current water entry: %s',
+    (text) => {
+      expect(parseDirectWaterLogCommand(text)?.amountMl).toBe(300);
+    }
+  );
+
+  it('routes a mixed water and food statement through the full chat without silently logging just water', async () => {
+    vi.mocked(chatService.getSparkyChatHistory).mockResolvedValue([] as never);
+    vi.mocked(chatService.getActiveAiServiceSetting).mockResolvedValue({
+      id: 'ai-1',
+      service_type: 'openai',
+      chat_tool_profile: 'full',
+    } as never);
+    vi.mocked(chatService.processChatMessage).mockResolvedValue({
+      content: 'Processed the complete meal.',
+    } as never);
+
+    await telegramCoachService.handleTelegramUpdate({
+      update_id: 46,
+      message: {
+        chat: { id: 12345, type: 'private' },
+        text: '300 ml Wasser und eine Banane',
+      },
+    });
+
+    expect(chatService.processChatMessage).toHaveBeenCalledWith(
+      [{ role: 'user', content: '300 ml Wasser und eine Banane' }],
+      'ai-1',
+      'user-1',
+      'user-1',
+      false,
+      expect.any(Array),
+      { allowAskUser: true }
+    );
+    expect(measurementService.logWaterIntakeAmount).not.toHaveBeenCalled();
+  });
+
   it('pairs a private Telegram chat through the one-time start token', async () => {
     vi.mocked(coachTelegramRepository.claimLinkToken).mockResolvedValue(
       'user-1'

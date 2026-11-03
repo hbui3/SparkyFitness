@@ -17,6 +17,11 @@ Unraid über eine kurzlebige Tailscale-Verbindung. Unraid benötigt keinen
 6. Bei einem Fehler werden die vorherigen App-Images wieder gestartet. Ein
    Datenbank-Rollback erfolgt absichtlich nie automatisch.
 
+Vor jedem automatischen Serverzugriff wird der getestete Commit erneut mit
+dem aktuellen `main` verglichen. Ein verspäteter CI-Lauf darf eine neuere
+Version nicht wieder durch einen älteren Stand ersetzen. Bewusst gestartete
+manuelle Deployments bleiben für einen gezielten App-Rollback verfügbar.
+
 ## 1. Unraid und Tailscale vorbereiten
 
 Die Automatisierung setzt Unraid 7 oder neuer, Docker Compose und das offizielle

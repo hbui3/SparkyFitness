@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import PlannedTrainingCard from '@/pages/Diary/PlannedTrainingCard';
 import { useTrainingTimeline } from '@/hooks/Exercises/useWorkoutPlans';
@@ -64,5 +65,27 @@ describe('PlannedTrainingCard', () => {
     expect(screen.getByText('2 / 7')).toBeTruthy();
     expect(screen.getByText('5 / 18')).toBeTruthy();
     expect(screen.getByText('28%')).toBeTruthy();
+  });
+  it('does not claim that the day is empty when its request failed', () => {
+    const refetch = jest.fn();
+    jest.mocked(useTrainingTimeline).mockReturnValue({
+      isLoading: false,
+      isError: true,
+      data: undefined,
+      refetch,
+    } as unknown as ReturnType<typeof useTrainingTimeline>);
+    render(
+      <MemoryRouter>
+        <PlannedTrainingCard selectedDate="2026-08-21" />
+      </MemoryRouter>
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Failed to load the training timeline.'
+    );
+    expect(
+      screen.queryByText('No workout is planned for this day.')
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

@@ -15,6 +15,7 @@ import type {
 } from '@workspace/shared';
 import MealPlanningSettings from '@/pages/Settings/MealPlanningSettings';
 import { usePreferences } from '@/contexts/PreferencesContext';
+import { generateClientId } from '@/utils/generateClientId';
 import {
   useApplyCoachMealPlanAction,
   useArchiveCoachPantryItem,
@@ -50,7 +51,7 @@ jest.mock('@/hooks/Settings/useMealPlanning', () => ({
   useDeleteCoachMealPlanEntry: jest.fn(),
 }));
 jest.mock('@/utils/generateClientId', () => ({
-  generateClientId: () => '33333333-3333-4333-8333-333333333333',
+  generateClientId: jest.fn(),
 }));
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -360,6 +361,10 @@ describe('MealPlanningSettings', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .mocked(generateClientId)
+      .mockReset()
+      .mockReturnValue('33333333-3333-4333-8333-333333333333');
     jest.mocked(usePreferences).mockReturnValue({
       timezone: 'Europe/Zurich',
     } as unknown as ReturnType<typeof usePreferences>);
@@ -861,10 +866,6 @@ describe('MealPlanningSettings', () => {
       {
         itemId: SHOPPING_ID,
         request: {
-          name: 'Red lentils',
-          requiredQuantity: 1000,
-          category: 'pantry',
-          quantityLocked: false,
           notes: 'Updated note',
         },
       },
@@ -906,10 +907,8 @@ describe('MealPlanningSettings', () => {
       {
         itemId: PANTRY_ID,
         request: {
-          name: 'Basmati rice',
           quantity: 900,
           minimumQuantity: 600,
-          category: 'pantry',
           expiresOn: '2027-02-01',
         },
       },
@@ -987,11 +986,7 @@ describe('MealPlanningSettings', () => {
       {
         itemId: PANTRY_ID,
         request: {
-          name: 'Basmati rice',
           quantity: 850,
-          minimumQuantity: 500,
-          category: 'pantry',
-          expiresOn: '2027-01-10',
         },
       },
       expect.objectContaining({ onSuccess: expect.any(Function) })
@@ -1062,7 +1057,248 @@ describe('MealPlanningSettings', () => {
       expect.objectContaining({
         entryId: ENTRY_ID,
         request: expect.objectContaining({ servings: 1.5, date: '2026-09-03' }),
+      }),
+      expect.objectContaining({ onSuccess: expect.any(Function) })
+    );
+  });
+
+  it('keeps a meal correction open for a safe retry until it succeeds', () => {
+    jest
+      .mocked(generateClientId)
+      .mockReturnValueOnce('77777777-7777-4777-8777-777777777777')
+      .mockReturnValueOnce('88888888-8888-4888-8888-888888888888');
+    render(<MealPlanningSettings />);
+    fireEvent.click(
+      screen.getByRole('button', { name: /Replace Red lentil bowl on / })
+    );
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Portion size'), {
+      target: { value: '1.5' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Meal date'), {
+      target: { value: '2026-09-03' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace' }));
+
+    // No success callback: a failed response must leave the correction intact.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Portion size')).toHaveValue(1.5);
+    expect(within(dialog).getByLabelText('Meal date')).toHaveValue(
+      '2026-09-03'
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Replace' }));
+    expect(replaceMutate.mock.calls[1]?.[0]).toEqual(
+      replaceMutate.mock.calls[0]?.[0]
+    );
+    expect(generateClientId).toHaveBeenCalledTimes(1);
+
+    const completion = replaceMutate.mock.calls[1]?.[1] as {
+      onSuccess: () => void;
+    };
+    act(() => completion.onSuccess());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('retries a lost partial-purchase response with the same operation and starts a new one after success', () => {
+    jest
+      .mocked(generateClientId)
+      .mockReturnValueOnce('77777777-7777-4777-8777-777777777777')
+      .mockReturnValueOnce('88888888-8888-4888-8888-888888888888');
+    const { rerender } = render(<MealPlanningSettings />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Shopping' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select Red lentils for purchase' })
+    );
+    fireEvent.change(screen.getByLabelText('Bought now for Red lentils'), {
+      target: { value: '400' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm purchase (1)' })
+    );
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Confirm purchase',
       })
     );
+
+    // The server committed the stock change and refreshed it over SSE, but the
+    // original response was lost. Repeating the confirmation must be idempotent.
+    mockDashboard(
+      dashboardWithShoppingItem({
+        purchasedQuantity: 400,
+        remainingQuantity: 300,
+      })
+    );
+    rerender(<MealPlanningSettings />);
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Confirm purchase',
+      })
+    );
+    expect(purchaseMutate.mock.calls[1]?.[0]).toEqual(
+      purchaseMutate.mock.calls[0]?.[0]
+    );
+    expect(generateClientId).toHaveBeenCalledTimes(1);
+
+    const completion = purchaseMutate.mock.calls[1]?.[1] as {
+      onSuccess: () => void;
+    };
+    act(() => completion.onSuccess());
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select Red lentils for purchase' })
+    );
+    fireEvent.change(screen.getByLabelText('Bought now for Red lentils'), {
+      target: { value: '400' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm purchase (1)' })
+    );
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Confirm purchase',
+      })
+    );
+    expect(purchaseMutate.mock.calls[2]?.[0]).toEqual({
+      operationId: '88888888-8888-4888-8888-888888888888',
+      purchases: [{ itemId: SHOPPING_ID, quantity: 400 }],
+    });
+  });
+
+  it('keeps a lost purchase retry safe after another purchase succeeds', () => {
+    jest
+      .mocked(generateClientId)
+      .mockReturnValueOnce('77777777-7777-4777-8777-777777777777')
+      .mockReturnValueOnce('88888888-8888-4888-8888-888888888888');
+    render(<MealPlanningSettings />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Shopping' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const selectLentils = () =>
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: 'Select Red lentils for purchase',
+        })
+      );
+    const confirmQuantity = (quantity: number) => {
+      fireEvent.change(screen.getByLabelText('Bought now for Red lentils'), {
+        target: { value: String(quantity) },
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Confirm purchase (1)' })
+      );
+      fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', {
+          name: 'Confirm purchase',
+        })
+      );
+    };
+
+    selectLentils();
+    confirmQuantity(400);
+    // A may already be committed. After its response is lost, the user can
+    // close the confirmation and record a different purchase B.
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Cancel',
+      })
+    );
+    confirmQuantity(200);
+    expect(purchaseMutate.mock.calls[1]?.[0]).toEqual({
+      operationId: '88888888-8888-4888-8888-888888888888',
+      purchases: [{ itemId: SHOPPING_ID, quantity: 200 }],
+    });
+    const completion = purchaseMutate.mock.calls[1]?.[1] as {
+      onSuccess: () => void;
+    };
+    act(() => completion.onSuccess());
+
+    selectLentils();
+    confirmQuantity(400);
+    expect(purchaseMutate.mock.calls[2]?.[0]).toEqual(
+      purchaseMutate.mock.calls[0]?.[0]
+    );
+    expect(generateClientId).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains a shopping editor draft across background changes without overwriting changed quantities', () => {
+    const { rerender } = render(<MealPlanningSettings />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Shopping' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Red lentils' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Notes'), {
+      target: { value: 'Buy after work' },
+    });
+    mockDashboard(
+      dashboardWithShoppingItem({
+        requiredQuantity: 1400,
+        remainingQuantity: 1200,
+        quantityLocked: true,
+      })
+    );
+    rerender(<MealPlanningSettings />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Notes')).toHaveValue(
+      'Buy after work'
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(patchShoppingMutate).toHaveBeenCalledWith(
+      { itemId: SHOPPING_ID, request: { notes: 'Buy after work' } },
+      expect.objectContaining({ onSuccess: expect.any(Function) })
+    );
+  });
+
+  it('does not overwrite a background pantry purchase when only the target stock was edited', () => {
+    const { rerender } = render(<MealPlanningSettings />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Pantry' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Basmati rice' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Target stock'), {
+      target: { value: '600' },
+    });
+    mockDashboard(
+      dashboardWithPantryItem({ quantity: 1400, availableQuantity: 1200 })
+    );
+    rerender(<MealPlanningSettings />);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(patchPantryMutate).toHaveBeenCalledWith(
+      { itemId: PANTRY_ID, request: { minimumQuantity: 600 } },
+      expect.objectContaining({ onSuccess: expect.any(Function) })
+    );
+  });
+
+  it('prevents editing or closing the pantry form while its submitted correction is pending', () => {
+    const { rerender } = render(<MealPlanningSettings />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Pantry' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Basmati rice' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Target stock'), {
+      target: { value: '600' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    jest.mocked(usePatchCoachPantryItem).mockReturnValue({
+      mutate: patchPantryMutate,
+      isPending: true,
+    } as unknown as ReturnType<typeof usePatchCoachPantryItem>);
+    rerender(<MealPlanningSettings />);
+    expect(within(dialog).getByLabelText('Target stock')).toBeDisabled();
+    expect(
+      within(dialog).getByRole('button', { name: 'Cancel' })
+    ).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 });

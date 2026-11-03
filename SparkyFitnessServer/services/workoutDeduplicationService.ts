@@ -99,18 +99,42 @@ export async function getCanonicalWorkoutEntries(
   muscle?: string | null,
   exercise?: string | null
 ): Promise<CanonicalWorkoutResult> {
-  const [rows, timezone] = await Promise.all([
-    reportRepository.getExerciseEntries(
-      userId,
-      startDate,
-      endDate,
-      equipment,
-      muscle,
-      exercise
-    ),
+  const hasFilters = Boolean(equipment || muscle || exercise);
+  const [rows, filteredRows, timezone] = await Promise.all([
+    reportRepository.getExerciseEntries(userId, startDate, endDate),
+    hasFilters
+      ? reportRepository.getExerciseEntries(
+          userId,
+          startDate,
+          endDate,
+          equipment,
+          muscle,
+          exercise
+        )
+      : null,
     loadUserTimezone(userId),
   ]);
-  return deduplicateWorkoutRows(rows, timezone);
+  const canonical = deduplicateWorkoutRows(rows, timezone);
+  if (!filteredRows) return canonical;
+  // A report filter must not resurrect a lower-fidelity mirror merely because
+  // its authoritative workout uses a different exercise or equipment name.
+  const filteredIds = new Set(filteredRows.map((row) => row.id));
+  const canonicalIds = new Set(canonical.allEntries.map((row) => row.id));
+  const hiddenBySource: Record<string, number> = {};
+  let hiddenCount = 0;
+  for (const row of filteredRows) {
+    if (canonicalIds.has(row.id)) continue;
+    const source = row.exercise_source || 'Unknown';
+    hiddenBySource[source] = (hiddenBySource[source] ?? 0) + 1;
+    hiddenCount++;
+  }
+  return {
+    allEntries: canonical.allEntries.filter((row) => filteredIds.has(row.id)),
+    workoutEntries: canonical.workoutEntries.filter((row) =>
+      filteredIds.has(row.id)
+    ),
+    duplicateSummary: { hiddenCount, hiddenBySource },
+  };
 }
 
 export function calculateExerciseCaloriesByDate(

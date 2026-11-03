@@ -10,8 +10,31 @@ describe('muscleLoadService', () => {
       'chest',
       'triceps',
     ]);
-    expect(parseMuscleNames('Back, Biceps')).toEqual(['back', 'biceps']);
+    expect(parseMuscleNames('Back, Biceps')).toEqual(['middle back', 'biceps']);
     expect(parseMuscleNames(null)).toEqual([]);
+  });
+
+  it('combines provider aliases without counting a primary muscle again as secondary', () => {
+    const workout = {
+      entryDate: '2026-08-19',
+      primaryMuscles: ['Chest', 'pectoralis major'],
+      secondaryMuscles: ['pecs', 'Triceps'],
+      volumeKg: 1000,
+      durationMinutes: 30,
+      setCount: 3,
+      source: 'Speediance',
+    };
+    const result = calculateMuscleLoad([workout], '2026-08-19', 72);
+    expect(result.filter((item) => item.muscle === 'chest')).toHaveLength(1);
+    expect(result.find((item) => item.muscle === 'chest')?.recentVolumeKg).toBe(
+      1000
+    );
+    expect(
+      result.find((item) => item.muscle === 'triceps')?.recentVolumeKg
+    ).toBe(500);
+    expect(parseMuscleNames(['My custom muscle', 'My custom muscle'])).toEqual([
+      'my custom muscle',
+    ]);
   });
 
   it('weights primary muscles above secondary muscles and decays over 72 hours', () => {

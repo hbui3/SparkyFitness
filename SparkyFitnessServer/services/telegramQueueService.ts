@@ -1,14 +1,18 @@
 import { randomUUID } from 'node:crypto';
+import { dayOfWeek, instantHourMinute, todayInZone } from '@workspace/shared';
 import telegramQueueRepository, {
   type TelegramButton,
+  type TelegramOutboxWorkItem,
 } from '../models/telegramQueueRepository.js';
 import coachTelegramRepository from '../models/coachTelegramRepository.js';
+import coachProfileRepository from '../models/coachProfileRepository.js';
 import {
   isTelegramConfigured,
   sendTelegramMessage,
 } from './telegramApiService.js';
 import { log } from '../config/logging.js';
 import type { TelegramUpdate } from './telegramCoachService.js';
+import { loadUserTimezone } from '../utils/timezoneLoader.js';
 
 type TelegramUpdateHandler = (update: TelegramUpdate) => Promise<void>;
 
@@ -58,6 +62,51 @@ async function processOneUpdate(
   return true;
 }
 
+async function proactiveDeliveryAllowed(
+  item: TelegramOutboxWorkItem
+): Promise<boolean> {
+  const prefix = `proactive:${item.userId}:`;
+  if (!item.idempotencyKey.startsWith(prefix)) return true;
+  const [kind, deliveryDate] = item.idempotencyKey
+    .slice(prefix.length)
+    .split(':');
+  const profile = await coachProfileRepository.getCoachProfile(item.userId);
+  if (!profile?.enabled) return false;
+  const scheduleEnabled =
+    kind === 'adaptive'
+      ? profile.adaptive_check_ins_enabled
+      : kind === 'daily'
+        ? profile.daily_check_in_enabled
+        : kind === 'weekly'
+          ? profile.weekly_review_enabled
+          : kind === 'restock'
+            ? profile.proactive_categories.includes('nutrition') &&
+              (profile.adaptive_check_ins_enabled ||
+                profile.daily_check_in_enabled)
+            : false;
+  if (!scheduleEnabled) return false;
+  const timezone = await loadUserTimezone(item.userId);
+  const today = todayInZone(timezone);
+  if (deliveryDate?.slice(0, 10) !== today) return false;
+  const local = instantHourMinute(new Date(), timezone);
+  const localTime = `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
+  if (kind === 'adaptive') {
+    return (
+      localTime >= profile.adaptive_start_time.slice(0, 5) &&
+      localTime <= profile.adaptive_end_time.slice(0, 5)
+    );
+  }
+  if (kind === 'daily')
+    return localTime >= profile.daily_check_in_time.slice(0, 5);
+  if (kind === 'weekly') {
+    return (
+      dayOfWeek(today) === profile.weekly_review_day &&
+      localTime >= profile.weekly_review_time.slice(0, 5)
+    );
+  }
+  return localTime >= '17:00';
+}
+
 async function processOneDelivery(): Promise<boolean> {
   const item = await telegramQueueRepository.claimNextDelivery();
   if (!item) return false;
@@ -70,10 +119,20 @@ async function processOneDelivery(): Promise<boolean> {
       );
       return true;
     }
-    const telegramChatId =
-      item.telegramChatId ??
-      (await coachTelegramRepository.getConnectedChatId(item.userId));
-    if (!telegramChatId) {
+    if (!(await proactiveDeliveryAllowed(item))) {
+      await telegramQueueRepository.skipDelivery(
+        item.id,
+        'proactive_delivery_no_longer_due'
+      );
+      return true;
+    }
+    const telegramChatId = await coachTelegramRepository.getConnectedChatId(
+      item.userId
+    );
+    if (
+      !telegramChatId ||
+      (item.telegramChatId && item.telegramChatId !== telegramChatId)
+    ) {
       await telegramQueueRepository.skipDelivery(
         item.id,
         'telegram_connection_unavailable'
@@ -111,10 +170,9 @@ export async function processTelegramQueues(
         );
     }
     for (let count = 0; count < 20; count += 1) {
-      const [hadUpdate, hadDelivery] = await Promise.all([
-        processOneUpdate(handler),
-        processOneDelivery(),
-      ]);
+      // Apply connection changes such as /stop before sending a queued reply.
+      const hadUpdate = await processOneUpdate(handler);
+      const hadDelivery = await processOneDelivery();
       if (!hadUpdate && !hadDelivery) break;
     }
   } finally {

@@ -1,5 +1,7 @@
 import {
   addDays,
+  cycleWeekIndex,
+  dayOfWeek,
   type ActiveTrainingPlan,
   type TrainingDaySummary,
   type TrainingTimelineItem,
@@ -49,8 +51,12 @@ interface ActivePlanRow {
   start_date: string;
   end_date: string | null;
   cycle_length_weeks: number;
-  day_of_week: number;
+  schedule_type: 'weekly' | 'sequential' | null;
+  assignment_id: number | null;
+  day_of_week: number | null;
   week_index: number;
+  session_index: number | null;
+  session_name: string | null;
   workout_preset_id: number | null;
   workout_name: string;
   exercise_count: number | string;
@@ -109,7 +115,23 @@ async function loadRows(
        WHERE epe.user_id = $1
          AND epe.entry_date BETWEEN $2 AND $3
        GROUP BY epe.id, epe.name, epe.entry_date, epe.workout_preset_id, epe.source
-       ORDER BY epe.entry_date, epe.created_at`,
+       UNION ALL
+       SELECT
+         ee.id, ee.exercise_name AS name, ee.entry_date::text AS entry_date,
+         NULL AS workout_preset_id, ee.workout_plan_assignment_id, ee.source,
+         (COUNT(ees.id) > 0 AND BOOL_AND(ees.completed_at IS NOT NULL)) AS completed,
+         1 AS exercise_count, COUNT(ees.id) AS total_set_count,
+         COUNT(ees.id) FILTER (WHERE LOWER(COALESCE(ees.set_type, '')) LIKE '%warm%') AS warmup_set_count,
+         CASE WHEN COUNT(ees.id) FILTER (WHERE ees.completed_at IS NOT NULL) > 0 THEN 1 ELSE 0 END AS completed_exercise_count,
+         COUNT(ees.id) FILTER (WHERE ees.completed_at IS NOT NULL) AS completed_set_count,
+         COUNT(ees.id) FILTER (WHERE ees.completed_at IS NOT NULL AND LOWER(COALESCE(ees.set_type, '')) LIKE '%warm%') AS completed_warmup_set_count
+       FROM exercise_entries ee
+       LEFT JOIN exercise_entry_sets ees ON ees.exercise_entry_id = ee.id
+       WHERE ee.user_id = $1 AND ee.entry_date BETWEEN $2 AND $3
+         AND ee.exercise_preset_entry_id IS NULL
+         AND ee.workout_plan_assignment_id IS NOT NULL
+       GROUP BY ee.id
+       ORDER BY entry_date, id`,
       [userId, startDate, endDate]
     );
     return result.rows as PlannedWorkoutRow[];
@@ -144,16 +166,6 @@ function timelineItem(
   };
 }
 
-function workoutMatchKey(item: {
-  date: string;
-  workoutPresetId: number | null;
-  name: string;
-}): string {
-  return item.workoutPresetId === null
-    ? `${item.date}:name:${item.name.toLowerCase()}`
-    : `${item.date}:preset:${item.workoutPresetId}`;
-}
-
 async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
   const client = await getClient(userId);
   try {
@@ -165,8 +177,12 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
          wpt.start_date::text AS start_date,
          wpt.end_date::text AS end_date,
          wpt.cycle_length_weeks,
+         wpt.schedule_type,
+         wpta.id AS assignment_id,
          wpta.day_of_week,
          wpta.week_index,
+         wpta.session_index,
+         wpta.session_name,
          wpta.workout_preset_id,
          COALESCE(wp.name, e.name, 'Workout') AS workout_name,
          COUNT(DISTINCT wpe.id) + COUNT(DISTINCT wpta.exercise_id) AS exercise_count,
@@ -186,9 +202,10 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
        WHERE wpt.user_id = $1 AND wpt.is_active = TRUE
        GROUP BY
          wpt.id, wpt.plan_name, wpt.description, wpt.start_date, wpt.end_date,
-         wpt.cycle_length_weeks, wpta.id, wpta.day_of_week, wpta.week_index,
+         wpt.cycle_length_weeks, wpt.schedule_type,
+         wpta.id, wpta.day_of_week, wpta.week_index, wpta.session_index, wpta.session_name,
          wpta.workout_preset_id, wp.name, e.name
-       ORDER BY wpt.start_date, wpt.id, wpta.week_index, wpta.day_of_week, wpta.sort_order, wpta.id`,
+       ORDER BY wpt.start_date, wpt.id, wpta.session_index, wpta.week_index, wpta.day_of_week, wpta.sort_order, wpta.id`,
       [userId]
     );
     const plans = new Map<number, ActiveTrainingPlan>();
@@ -201,6 +218,8 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
           description: row.description,
           startDate: row.start_date,
           endDate: row.end_date,
+          scheduleType:
+            row.schedule_type === 'sequential' ? 'sequential' : 'weekly',
           cycleLengthWeeks: Math.max(1, Number(row.cycle_length_weeks) || 1),
           assignments: [],
         };
@@ -209,8 +228,11 @@ async function loadActivePlans(userId: string): Promise<ActiveTrainingPlan[]> {
       const totalSetCount = count(row.total_set_count);
       const warmupSetCount = count(row.warmup_set_count);
       plan.assignments.push({
+        assignmentId: row.assignment_id ?? null,
         dayOfWeek: row.day_of_week,
         weekIndex: Math.max(0, Number(row.week_index) || 0),
+        sessionIndex: row.session_index ?? null,
+        sessionName: row.session_name ?? null,
         presetId: row.workout_preset_id,
         workoutName: row.workout_name,
         exerciseCount: count(row.exercise_count),
@@ -234,42 +256,149 @@ function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+function scheduledRowKey(row: PlannedWorkoutRow): string {
+  if (row.workout_plan_assignment_id !== null) {
+    return `${row.entry_date}:assignment:${row.workout_plan_assignment_id}`;
+  }
+  return `${row.entry_date}:entry:${row.id}`;
+}
+
+function scheduledRowsByKey(
+  rows: PlannedWorkoutRow[]
+): Map<string, PlannedWorkoutRow> {
+  const result = new Map<string, PlannedWorkoutRow>();
+  for (const row of rows.filter(
+    (candidate) => candidate.source === 'Workout Plan'
+  )) {
+    const key = scheduledRowKey(row);
+    const existing = result.get(key);
+    if (
+      !existing ||
+      count(row.total_set_count) > count(existing.total_set_count)
+    ) {
+      result.set(key, row);
+    }
+  }
+  return result;
+}
+
+/** Reading a prompt-mode plan must show its dates without writing diary entries. */
+function projectWeeklyRows(
+  rows: PlannedWorkoutRow[],
+  plans: ActiveTrainingPlan[],
+  rangeStart: string,
+  rangeEnd: string
+): PlannedWorkoutRow[] {
+  const result = [...rows];
+  const materialized = scheduledRowsByKey(rows);
+  for (const plan of plans) {
+    if (plan.scheduleType === 'sequential') continue;
+    const first = rangeStart < plan.startDate ? plan.startDate : rangeStart;
+    const last =
+      plan.endDate !== null && plan.endDate < rangeEnd
+        ? plan.endDate
+        : rangeEnd;
+    for (let date = first; date <= last; date = addDays(date, 1)) {
+      const weekday = dayOfWeek(date);
+      const cycleWeek = cycleWeekIndex(
+        plan.startDate,
+        date,
+        plan.cycleLengthWeeks
+      );
+      for (const assignment of plan.assignments) {
+        if (
+          assignment.assignmentId === null ||
+          assignment.assignmentId === undefined ||
+          assignment.dayOfWeek !== weekday ||
+          assignment.weekIndex !== cycleWeek
+        )
+          continue;
+        const row: PlannedWorkoutRow = {
+          id: `plan:${plan.id}:${assignment.assignmentId}:${date}`,
+          name: assignment.workoutName,
+          entry_date: date,
+          workout_preset_id: assignment.presetId,
+          workout_plan_assignment_id: assignment.assignmentId,
+          source: 'Workout Plan',
+          completed: false,
+          exercise_count: assignment.exerciseCount,
+          total_set_count: assignment.totalSetCount,
+          warmup_set_count: assignment.warmupSetCount,
+          completed_exercise_count: 0,
+          completed_set_count: 0,
+          completed_warmup_set_count: 0,
+        };
+        if (materialized.has(scheduledRowKey(row))) continue;
+        result.push(row);
+        materialized.set(scheduledRowKey(row), row);
+      }
+    }
+  }
+  return result;
+}
+
+function matchesCompleted(
+  row: PlannedWorkoutRow,
+  completed: TrainingTimelineItem
+): boolean {
+  if (row.entry_date !== completed.date) return false;
+  if (row.id === completed.id) return true;
+  if (
+    row.workout_plan_assignment_id !== null &&
+    completed.workoutPlanAssignmentId !== null
+  ) {
+    return row.workout_plan_assignment_id === completed.workoutPlanAssignmentId;
+  }
+  if (row.workout_preset_id !== null && completed.workoutPresetId !== null) {
+    return row.workout_preset_id === completed.workoutPresetId;
+  }
+  return (
+    row.name.trim().toLocaleLowerCase() ===
+    completed.name.trim().toLocaleLowerCase()
+  );
+}
+
+/** One completed workout satisfies at most one scheduled slot. */
+function matchCompletedRows(
+  scheduled: Map<string, PlannedWorkoutRow>,
+  completedItems: TrainingTimelineItem[]
+): Map<string, TrainingTimelineItem> {
+  const matches = new Map<string, TrainingTimelineItem>();
+  const remaining = [...completedItems];
+  for (const [key, row] of scheduled) {
+    const candidates = remaining.filter((item) => matchesCompleted(row, item));
+    const match =
+      candidates.find((item) => item.id === row.id) ??
+      candidates.find(
+        (item) =>
+          row.workout_plan_assignment_id !== null &&
+          item.workoutPlanAssignmentId === row.workout_plan_assignment_id
+      ) ??
+      candidates[0];
+    if (!match) continue;
+    matches.set(key, match);
+    remaining.splice(remaining.indexOf(match), 1);
+  }
+  return matches;
+}
+
 function buildDaySummaries(
   today: string,
   rows: PlannedWorkoutRow[],
   items: TrainingTimelineItem[]
 ): TrainingDaySummary[] {
-  const scheduledRows = rows.filter(
-    (row) => row.source === 'Workout Plan' && row.workout_preset_id !== null
-  );
+  const scheduled = scheduledRowsByKey(rows);
   const completedItems = items.filter((item) => item.status === 'completed');
+  const completedMatches = matchCompletedRows(scheduled, completedItems);
   const dates = new Set([
-    ...scheduledRows.map((row) => row.entry_date),
+    ...[...scheduled.values()].map((row) => row.entry_date),
     ...completedItems.map((item) => item.date),
   ]);
-
   return [...dates].sort().map((date): TrainingDaySummary => {
-    const scheduledByKey = new Map<string, PlannedWorkoutRow>();
-    for (const row of scheduledRows.filter(
-      (candidate) => candidate.entry_date === date
-    )) {
-      const key = workoutMatchKey({
-        date,
-        workoutPresetId: row.workout_preset_id,
-        name: row.name,
-      });
-      const current = scheduledByKey.get(key);
-      if (
-        !current ||
-        count(row.total_set_count) > count(current.total_set_count)
-      ) {
-        scheduledByKey.set(key, row);
-      }
-    }
-    const completedForDay = completedItems.filter((item) => item.date === date);
-    const completedByKey = new Map(
-      completedForDay.map((item) => [workoutMatchKey(item), item])
+    const scheduledForDay = [...scheduled].filter(
+      ([, row]) => row.entry_date === date
     );
+    const completedForDay = completedItems.filter((item) => item.date === date);
     let completedScheduledWorkoutCount = 0;
     let scheduledExerciseCount = 0;
     let completedScheduledExerciseCount = 0;
@@ -277,17 +406,25 @@ function buildDaySummaries(
     let completedScheduledSetCount = 0;
     let scheduledWarmupSetCount = 0;
     let completedScheduledWarmupSetCount = 0;
-
-    for (const [key, row] of scheduledByKey) {
-      const completedItem = completedByKey.get(key);
+    for (const [key, row] of scheduledForDay) {
+      const completed = completedMatches.get(key);
       scheduledExerciseCount += count(row.exercise_count);
       scheduledSetCount += count(row.total_set_count);
       scheduledWarmupSetCount += count(row.warmup_set_count);
-      if (completedItem) {
-        completedScheduledWorkoutCount += 1;
-        completedScheduledExerciseCount += completedItem.exerciseCount;
-        completedScheduledSetCount += completedItem.totalSetCount;
-        completedScheduledWarmupSetCount += completedItem.warmupSetCount;
+      if (completed) {
+        completedScheduledWorkoutCount++;
+        completedScheduledExerciseCount += Math.min(
+          count(row.exercise_count),
+          completed.exerciseCount
+        );
+        completedScheduledSetCount += Math.min(
+          count(row.total_set_count),
+          completed.totalSetCount
+        );
+        completedScheduledWarmupSetCount += Math.min(
+          count(row.warmup_set_count),
+          completed.warmupSetCount
+        );
       } else {
         completedScheduledExerciseCount += count(row.completed_exercise_count);
         completedScheduledSetCount += count(row.completed_set_count);
@@ -296,23 +433,20 @@ function buildDaySummaries(
         );
       }
     }
-
-    const scheduledWorkoutCount = scheduledByKey.size;
+    const scheduledWorkoutCount = scheduledForDay.length;
     const hasPartialProgress =
       completedScheduledWorkoutCount > 0 ||
       completedScheduledExerciseCount > 0 ||
       completedScheduledSetCount > 0;
     const status: TrainingDaySummary['status'] =
-      scheduledWorkoutCount === 0
+      scheduledWorkoutCount === 0 ||
+      completedScheduledWorkoutCount >= scheduledWorkoutCount
         ? 'completed'
-        : completedScheduledWorkoutCount >= scheduledWorkoutCount
-          ? 'completed'
-          : hasPartialProgress
-            ? 'in_progress'
-            : date < today
-              ? 'missed'
-              : 'planned';
-
+        : hasPartialProgress
+          ? 'in_progress'
+          : date < today
+            ? 'missed'
+            : 'planned';
     return {
       date,
       status,
@@ -334,12 +468,10 @@ function buildDaySummaries(
         scheduledWarmupSetCount,
         completedScheduledWarmupSetCount
       ),
-      scheduledNames: unique(
-        [...scheduledByKey.values()].map((row) => row.name)
-      ),
+      scheduledNames: unique(scheduledForDay.map(([, row]) => row.name)),
       completedNames: unique(completedForDay.map((item) => item.name)),
       sources: unique([
-        ...[...scheduledByKey.values()].map((row) => row.source),
+        ...scheduledForDay.map(([, row]) => row.source),
         ...completedForDay.map((item) => item.source),
       ]),
     };
@@ -368,10 +500,11 @@ export async function getTrainingTimelineForRange(
   rangeStart: string,
   rangeEnd: string
 ): Promise<TrainingTimelineResponse> {
-  const [rows, activePlans] = await Promise.all([
+  const [storedRows, activePlans] = await Promise.all([
     loadRows(userId, rangeStart, rangeEnd),
     loadActivePlans(userId),
   ]);
+  const rows = projectWeeklyRows(storedRows, activePlans, rangeStart, rangeEnd);
   const canonical =
     rangeStart <= today
       ? await workoutDeduplicationService.getCanonicalWorkoutEntries(
@@ -386,38 +519,26 @@ export async function getTrainingTimelineForRange(
       .filter((id): id is string => typeof id === 'string')
   );
 
+  const canonicalEntryIds = new Set(
+    canonical.workoutEntries.map((entry) => entry.id)
+  );
   const completed = rows
     .filter(
       (row) =>
         row.entry_date <= today &&
         (canonicalParentIds.has(row.id) ||
+          canonicalEntryIds.has(row.id) ||
           (row.source === 'Workout Plan' && row.completed)) &&
         (row.source !== 'Workout Plan' || row.completed)
     )
     .map((row) => timelineItem(row, 'completed'));
-  const completedKeys = new Set(completed.map(workoutMatchKey));
-  const planned = rows
-    .filter((row) => row.source === 'Workout Plan' && !row.completed)
-    .filter(
-      (row) =>
-        !completedKeys.has(
-          workoutMatchKey({
-            date: row.entry_date,
-            workoutPresetId: row.workout_preset_id,
-            name: row.name,
-          })
-        )
-    )
-    .map((row) =>
-      timelineItem(row, row.entry_date < today ? 'missed' : 'planned')
-    );
-
   const parentIds = new Set(rows.map((row) => row.id));
   const standalone = canonical.workoutEntries
     .filter(
       (row) =>
-        !row.exercise_preset_entry_id ||
-        !parentIds.has(row.exercise_preset_entry_id)
+        !parentIds.has(row.id) &&
+        (!row.exercise_preset_entry_id ||
+          !parentIds.has(row.exercise_preset_entry_id))
     )
     .map((row) => {
       const sets = Array.isArray(row.sets) ? row.sets : [];
@@ -431,7 +552,10 @@ export async function getTrainingTimelineForRange(
         source: row.exercise_source || 'Unknown',
         status: 'completed' as const,
         workoutPresetId: null,
-        workoutPlanAssignmentId: null,
+        workoutPlanAssignmentId:
+          typeof row.workout_plan_assignment_id === 'number'
+            ? row.workout_plan_assignment_id
+            : null,
         exerciseCount: 1,
         totalSetCount: sets.length,
         warmupSetCount,
@@ -439,6 +563,16 @@ export async function getTrainingTimelineForRange(
       };
     });
 
+  const scheduled = scheduledRowsByKey(rows);
+  const completedMatches = matchCompletedRows(scheduled, [
+    ...completed,
+    ...standalone,
+  ]);
+  const planned = [...scheduled]
+    .filter(([key, row]) => !row.completed && !completedMatches.has(key))
+    .map(([, row]) =>
+      timelineItem(row, row.entry_date < today ? 'missed' : 'planned')
+    );
   const items = [...completed, ...planned, ...standalone].sort(
     (first, second) =>
       first.date.localeCompare(second.date) ||
@@ -502,10 +636,12 @@ export async function carryForwardMissedWorkouts(
   if (status.missedYesterday.length === 0) return [];
   const carried: PlannedWorkoutStatusItem[] = [];
   for (const missed of status.missedYesterday) {
-    const alreadyDue = status.dueToday.some(
-      (item) => item.workoutPresetId === missed.workoutPresetId
-    );
-    if (alreadyDue) continue;
+    const alreadyHandled = [
+      ...status.dueToday,
+      ...status.completedToday,
+      ...carried,
+    ].some((item) => item.workoutPresetId === missed.workoutPresetId);
+    if (alreadyHandled) continue;
     await exerciseService.logWorkoutPresetGrouped(
       userId,
       userId,

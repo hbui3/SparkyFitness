@@ -236,6 +236,18 @@ describe('resolveProviderCredentialPayload', () => {
     expect(app_key).toBe('new-secret');
   });
 
+  it.each(['speediance', 'igpsport'])(
+    'preserves every password character when editing a %s login',
+    (providerType) => {
+      const result = resolveSameType(providerType, {
+        app_id: '  athlete@example.com  ',
+        app_key: '  exact password  ',
+      });
+      expect(result.app_id).toBe('athlete@example.com');
+      expect(result.app_key).toBe('  exact password  ');
+    }
+  );
+
   it('preserves a blank secret for OAuth token providers (unchanged behavior)', () => {
     const { app_id, app_key } = resolveSameType('fitbit');
     expect(app_id).toBe('stored-client-id');

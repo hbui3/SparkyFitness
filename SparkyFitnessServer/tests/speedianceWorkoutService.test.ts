@@ -588,6 +588,13 @@ describe('createAndScheduleSpeedianceWorkout', () => {
   it('reuses a workout after Speediance normalizes managed action fields', async () => {
     const expected = workoutRequest();
     expected.exercises = [expected.exercises[0]];
+    mocks.getNativePreset.mockResolvedValue({
+      id: 44,
+      user_id: 'user-1',
+      name: expected.name,
+      description:
+        'Managed by the Sparky Speediance workout manager. Remote code: sparky-code',
+    });
     const action = {
       groupId: 116,
       actionLibraryId: 9001,
@@ -628,6 +635,8 @@ describe('createAndScheduleSpeedianceWorkout', () => {
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
+    expect(mocks.createNativePreset).not.toHaveBeenCalled();
+    expect(mocks.updateNativePreset).toHaveBeenCalledTimes(1);
   });
 
   it('updates an existing workout when only its coach video variants differ', async () => {
@@ -779,6 +788,75 @@ describe('createAndScheduleSpeedianceWorkout', () => {
     ).rejects.toThrow('exists with different exercises or sets');
     expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
     expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.setReservation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['manual mention', 'user-1', 'My Speediance training notes'],
+    [
+      'family-shared import',
+      'another-user',
+      'Workout imported from Speediance: Sparky Full Body A',
+    ],
+    [
+      'another remote identity',
+      'user-1',
+      'Managed by the Sparky Speediance workout manager. Remote code: another-code',
+    ],
+  ])(
+    'blocks a native %s collision before any remote write',
+    async (_kind, ownerId, description) => {
+      mocks.getNativePreset.mockResolvedValue({
+        id: 44,
+        user_id: ownerId,
+        name: 'Sparky Full Body A',
+        description,
+      });
+
+      await expect(
+        createAndScheduleSpeedianceWorkout('user-1', workoutRequest())
+      ).rejects.toThrow('is not managed by this Speediance workout');
+
+      expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+      expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
+      expect(mocks.createNativeExercise).not.toHaveBeenCalled();
+      expect(mocks.updateNativePreset).not.toHaveBeenCalled();
+      expect(mocks.setReservation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects a same-named native plan before changing its workouts or calendar', async () => {
+    mocks.getNativePlans.mockResolvedValue([
+      {
+        id: 81,
+        plan_name: 'My personal plan',
+        description: 'A manually maintained plan for Speediance',
+      },
+    ]);
+    const request = workoutRequest();
+
+    await expect(
+      createSpeediancePlan('user-1', {
+        planName: 'My personal plan',
+        description: '',
+        startDate: '2099-08-20',
+        endDate: '2099-08-20',
+        sessions: [
+          {
+            dayOfWeek: 4,
+            workout: {
+              name: request.name,
+              exercises: request.exercises,
+              acknowledgedPreferenceIds: [],
+            },
+          },
+        ],
+      })
+    ).rejects.toThrow('is not managed by Speediance');
+
+    expect(mocks.createCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.updateCustomWorkout).not.toHaveBeenCalled();
+    expect(mocks.updateNativePlan).not.toHaveBeenCalled();
     expect(mocks.setReservation).not.toHaveBeenCalled();
   });
 
@@ -1032,7 +1110,7 @@ describe('createAndScheduleSpeedianceWorkout', () => {
       return true;
     });
 
-    const result = await createSpeediancePlan('user-1', {
+    const request = {
       planName: 'Sparky 3 Month Plan',
       description: 'Hypertrophy plan',
       startDate: '2099-08-20',
@@ -1047,12 +1125,15 @@ describe('createAndScheduleSpeedianceWorkout', () => {
           },
         },
       ],
-    });
+    };
+    const result = await createSpeediancePlan('user-1', request);
 
     expect(mocks.createNativePlan).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
         plan_name: 'Sparky 3 Month Plan',
+        description:
+          'Hypertrophy plan\n\nManaged by the Sparky Speediance workout manager.',
         start_date: '2099-08-20',
         end_date: '2099-08-20',
         is_active: true,
@@ -1076,5 +1157,16 @@ describe('createAndScheduleSpeedianceWorkout', () => {
       scheduledDates: 1,
       failedDates: [],
     });
+    mocks.getNativePlans.mockResolvedValue([
+      {
+        id: 81,
+        plan_name: request.planName,
+        description:
+          'Hypertrophy plan\n\nManaged by the Sparky Speediance workout manager.',
+      },
+    ]);
+    await createSpeediancePlan('user-1', request);
+    expect(mocks.createNativePlan).toHaveBeenCalledTimes(1);
+    expect(mocks.updateNativePlan).toHaveBeenCalledTimes(1);
   });
 });

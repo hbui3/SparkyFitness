@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   CoachDietaryPattern,
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { TimeInput } from '@/components/ui/TimeInput';
 import {
   useCoachProfile,
   useCoachMemories,
@@ -85,9 +86,44 @@ function primaryGoalLabel(value: string | null): string {
     .join(' ');
 }
 
+function mergeProfileDraft(
+  draft: CoachProfileResponse,
+  previous: CoachProfileResponse,
+  latest: CoachProfileResponse
+): CoachProfileResponse {
+  const edits = Object.entries(draft).filter(
+    ([key, value]) =>
+      JSON.stringify(value) !==
+      JSON.stringify(previous[key as keyof CoachProfileResponse])
+  );
+  return { ...latest, ...Object.fromEntries(edits) };
+}
+
+function CoachSettingsLoadError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div role="alert" className="space-y-3">
+      <p className="text-sm text-muted-foreground">{message}</p>
+      <Button type="button" variant="outline" onClick={onRetry}>
+        {t('common.retry', 'Try again')}
+      </Button>
+    </div>
+  );
+}
+
 export default function CoachProfileSettings() {
   const { t } = useTranslation();
-  const { data, isLoading } = useCoachProfile();
+  const { data, isLoading, isError, refetch } = useCoachProfile();
+  const initialProfile = useMemo<CoachProfileResponse>(
+    () => ({ ...EMPTY_PROFILE, ...data }),
+    [data]
+  );
 
   if (isLoading) {
     return (
@@ -97,15 +133,21 @@ export default function CoachProfileSettings() {
     );
   }
 
+  if (isError && !data) {
+    return (
+      <CoachSettingsLoadError
+        message={t(
+          'settings.coachProfile.loadBeforeEditing',
+          'Your saved coach settings could not be loaded. Try again before editing them.'
+        )}
+        onRetry={() => void refetch()}
+      />
+    );
+  }
+
   // Keep the settings usable during rolling updates if an older server or a
   // cached response does not yet contain newly added optional controls.
-  const initialProfile: CoachProfileResponse = { ...EMPTY_PROFILE, ...data };
-  return (
-    <CoachProfileForm
-      key={initialProfile.updatedAt ?? 'unsaved'}
-      initialProfile={initialProfile}
-    />
-  );
+  return <CoachProfileForm initialProfile={initialProfile} />;
 }
 
 function CoachProfileForm({
@@ -116,6 +158,11 @@ function CoachProfileForm({
   const { t } = useTranslation();
   const updateProfile = useUpdateCoachProfile();
   const [form, setForm] = useState<CoachProfileResponse>(initialProfile);
+  const [savedProfile, setSavedProfile] = useState(initialProfile);
+  if (savedProfile !== initialProfile) {
+    setSavedProfile(initialProfile);
+    setForm(mergeProfileDraft(form, savedProfile, initialProfile));
+  }
   const toggleCategory = (
     category: ProactiveCoachCategory,
     enabled: boolean
@@ -149,7 +196,13 @@ function CoachProfileForm({
       weeklyReviewDay: form.weeklyReviewDay,
       weeklyReviewTime: form.weeklyReviewTime,
     };
-    updateProfile.mutate(payload);
+    const submittedForm = form;
+    updateProfile.mutate(payload, {
+      onSuccess: (saved) => {
+        setSavedProfile(saved);
+        setForm((current) => mergeProfileDraft(current, submittedForm, saved));
+      },
+    });
   };
 
   return (
@@ -396,30 +449,32 @@ function CoachProfileForm({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label htmlFor="adaptive-start-time">
+                <Label id="adaptive-start-time-label">
                   {t('settings.coachProfile.adaptiveStart', 'Start')}
                 </Label>
-                <Input
+                <TimeInput
                   id="adaptive-start-time"
-                  type="time"
+                  aria-labelledby="adaptive-start-time-label"
+                  required
                   value={form.adaptiveStartTime}
                   disabled={!form.adaptiveCheckInsEnabled}
-                  onChange={(event) =>
-                    setForm({ ...form, adaptiveStartTime: event.target.value })
+                  onChange={(adaptiveStartTime) =>
+                    setForm({ ...form, adaptiveStartTime })
                   }
                 />
               </div>
               <div className="space-y-1">
-                <Label htmlFor="adaptive-end-time">
+                <Label id="adaptive-end-time-label">
                   {t('settings.coachProfile.adaptiveEnd', 'End')}
                 </Label>
-                <Input
+                <TimeInput
                   id="adaptive-end-time"
-                  type="time"
+                  aria-labelledby="adaptive-end-time-label"
+                  required
                   value={form.adaptiveEndTime}
                   disabled={!form.adaptiveCheckInsEnabled}
-                  onChange={(event) =>
-                    setForm({ ...form, adaptiveEndTime: event.target.value })
+                  onChange={(adaptiveEndTime) =>
+                    setForm({ ...form, adaptiveEndTime })
                   }
                 />
               </div>
@@ -496,16 +551,17 @@ function CoachProfileForm({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="daily-check-in-time">
+              <Label id="daily-check-in-time-label">
                 {t('settings.coachProfile.deliveryTime', 'Delivery time')}
               </Label>
-              <Input
+              <TimeInput
                 id="daily-check-in-time"
-                type="time"
+                aria-labelledby="daily-check-in-time-label"
+                required
                 value={form.dailyCheckInTime}
                 disabled={!form.dailyCheckInEnabled}
-                onChange={(event) =>
-                  setForm({ ...form, dailyCheckInTime: event.target.value })
+                onChange={(dailyCheckInTime) =>
+                  setForm({ ...form, dailyCheckInTime })
                 }
               />
             </div>
@@ -568,16 +624,17 @@ function CoachProfileForm({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="weekly-review-time">
+                <Label id="weekly-review-time-label">
                   {t('settings.coachProfile.deliveryTime', 'Delivery time')}
                 </Label>
-                <Input
+                <TimeInput
                   id="weekly-review-time"
-                  type="time"
+                  aria-labelledby="weekly-review-time-label"
+                  required
                   value={form.weeklyReviewTime}
                   disabled={!form.weeklyReviewEnabled}
-                  onChange={(event) =>
-                    setForm({ ...form, weeklyReviewTime: event.target.value })
+                  onChange={(weeklyReviewTime) =>
+                    setForm({ ...form, weeklyReviewTime })
                   }
                 />
               </div>
@@ -681,7 +738,8 @@ function CoachLongTermMemorySection({
 
 function CoachMemorySettings({ enabled }: { enabled: boolean }) {
   const { t } = useTranslation();
-  const { data: memories = [], isLoading } = useCoachMemories();
+  const { data, isLoading, isError, refetch } = useCoachMemories();
+  const memories = data ?? [];
   const createMemory = useCreateCoachMemory();
   const updateMemory = useUpdateCoachMemory();
   const deleteMemory = useDeleteCoachMemory();
@@ -703,6 +761,17 @@ function CoachMemorySettings({ enabled }: { enabled: boolean }) {
       <p className="text-sm text-muted-foreground">
         {t('settings.coachProfile.memoryLoading', 'Loading memories…')}
       </p>
+    );
+  }
+  if (isError && !data) {
+    return (
+      <CoachSettingsLoadError
+        message={t(
+          'settings.coachProfile.memoryLoadBeforeEditing',
+          'Saved memories could not be loaded. Try again to view and manage them.'
+        )}
+        onRetry={() => void refetch()}
+      />
     );
   }
   return (
@@ -839,7 +908,7 @@ function CoachMemorySettings({ enabled }: { enabled: boolean }) {
 
 function CoachTelegramSettings() {
   const { t } = useTranslation();
-  const { data: telegram, isLoading } = useCoachTelegram();
+  const { data: telegram, isLoading, isError, refetch } = useCoachTelegram();
   const createLink = useCreateCoachTelegramLink();
   const disconnect = useDisconnectCoachTelegram();
 
@@ -869,6 +938,14 @@ function CoachTelegramSettings() {
             'Loading Telegram connection…'
           )}
         </p>
+      ) : isError && !telegram ? (
+        <CoachSettingsLoadError
+          message={t(
+            'settings.coachProfile.telegramStatusUnavailable',
+            'The Telegram connection status could not be loaded. Try again before changing the connection.'
+          )}
+          onRetry={() => void refetch()}
+        />
       ) : !telegram?.available ? (
         <p className="text-sm text-muted-foreground">
           {t(
@@ -951,6 +1028,16 @@ function ListField({
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(() => listToText(value));
+  const [previousValue, setPreviousValue] = useState(() =>
+    JSON.stringify(value)
+  );
+  const nextValue = JSON.stringify(value);
+  if (previousValue !== nextValue) {
+    setPreviousValue(nextValue);
+    if (JSON.stringify(textToList(draft)) !== nextValue) {
+      setDraft(listToText(value));
+    }
+  }
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>

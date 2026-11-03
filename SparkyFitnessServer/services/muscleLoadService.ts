@@ -1,5 +1,6 @@
 import {
   daysBetween,
+  normalizeMuscle,
   type AdaptiveTrainingMuscleLoad,
 } from '@workspace/shared';
 
@@ -24,19 +25,20 @@ interface MutableMuscleLoad {
 
 export function parseMuscleNames(value: unknown): string[] {
   if (Array.isArray(value)) {
-    return value
-      .filter((item): item is string => typeof item === 'string')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
+    return [
+      ...new Set(
+        value
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => normalizeMuscle(item) ?? item.trim().toLowerCase())
+          .filter(Boolean)
+      ),
+    ];
   }
   if (typeof value !== 'string' || !value.trim()) return [];
   try {
     return parseMuscleNames(JSON.parse(value) as unknown);
   } catch {
-    return value
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
+    return parseMuscleNames(value.split(','));
   }
 }
 
@@ -73,13 +75,12 @@ export function calculateMuscleLoad(
     if (ageHours >= recoveryWindowHours) continue;
     const decay = Math.max(0, 1 - ageHours / recoveryWindowHours);
     const stimulus = exerciseStimulus(row) * decay;
+    const primaryMuscles = parseMuscleNames(row.primaryMuscles);
     const weightedMuscles = [
-      ...parseMuscleNames(row.primaryMuscles).map(
-        (muscle) => [muscle, 1] as const
-      ),
-      ...parseMuscleNames(row.secondaryMuscles).map(
-        (muscle) => [muscle, 0.5] as const
-      ),
+      ...primaryMuscles.map((muscle) => [muscle, 1] as const),
+      ...parseMuscleNames(row.secondaryMuscles)
+        .filter((muscle) => !primaryMuscles.includes(muscle))
+        .map((muscle) => [muscle, 0.5] as const),
     ];
     for (const [muscle, weight] of weightedMuscles) {
       const current = muscleMap.get(muscle) ?? {

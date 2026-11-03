@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { useTrainingTimeline } from '@/hooks/Exercises/useWorkoutPlans';
+import TrainingTimelineError from '@/components/TrainingTimelineError';
 
 function statusVariant(status: TrainingTimelineItem['status']) {
   if (status === 'completed') return 'default' as const;
@@ -20,7 +21,7 @@ function statusVariant(status: TrainingTimelineItem['status']) {
 const TrainingTimeline = () => {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
-  const { data, isLoading } = useTrainingTimeline(user?.id);
+  const { data, isLoading, isError, refetch } = useTrainingTimeline(user?.id);
   const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const formatDate = (date: string) =>
     new Intl.DateTimeFormat(locale, {
@@ -43,7 +44,18 @@ const TrainingTimeline = () => {
       </Card>
     );
   }
-  if (!data) return null;
+  if (!data)
+    return isError ? (
+      <Card>
+        <CardContent className="py-6">
+          <TrainingTimelineError
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        </CardContent>
+      </Card>
+    ) : null;
 
   return (
     <Card>
@@ -60,6 +72,13 @@ const TrainingTimeline = () => {
         </p>
       </CardHeader>
       <CardContent className="space-y-6">
+        {isError && (
+          <TrainingTimelineError
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        )}
         {data.activePlans.map((plan) => (
           <section key={plan.id} className="rounded-lg border p-4 space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -78,15 +97,16 @@ const TrainingTimeline = () => {
               {plan.endDate
                 ? formatDate(plan.endDate)
                 : t('workoutPlansManager.ongoingStatus', 'Ongoing')}
-              {plan.cycleLengthWeeks > 1 && (
-                <>
-                  {' · '}
-                  {t('trainingTimeline.weekCycle', {
-                    count: plan.cycleLengthWeeks,
-                    defaultValue: '{{count}}-week cycle',
-                  })}
-                </>
-              )}
+              {plan.scheduleType !== 'sequential' &&
+                plan.cycleLengthWeeks > 1 && (
+                  <>
+                    {' · '}
+                    {t('trainingTimeline.weekCycle', {
+                      count: plan.cycleLengthWeeks,
+                      defaultValue: '{{count}}-week cycle',
+                    })}
+                  </>
+                )}
             </p>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {plan.assignments.map((assignment, index) => (
@@ -95,16 +115,31 @@ const TrainingTimeline = () => {
                   className="rounded-md bg-muted/50 p-3 text-sm"
                 >
                   <div className="font-medium">
-                    {plan.cycleLengthWeeks > 1 && (
+                    {plan.scheduleType !== 'sequential' &&
+                      assignment.dayOfWeek !== null &&
+                      plan.cycleLengthWeeks > 1 && (
+                        <>
+                          {t('trainingTimeline.cycleWeek', {
+                            week: assignment.weekIndex + 1,
+                            defaultValue: 'Week {{week}}',
+                          })}
+                          {' · '}
+                        </>
+                      )}
+                    {plan.scheduleType === 'sequential' ||
+                    assignment.dayOfWeek === null ? (
                       <>
-                        {t('trainingTimeline.cycleWeek', {
-                          week: assignment.weekIndex + 1,
-                          defaultValue: 'Week {{week}}',
+                        {t('trainingTimeline.session', {
+                          session: assignment.sessionIndex ?? index + 1,
+                          defaultValue: 'Session {{session}}',
                         })}
-                        {' · '}
+                        {assignment.sessionName &&
+                          ` · ${assignment.sessionName}`}
                       </>
-                    )}
-                    {weekday(assignment.dayOfWeek)} · {assignment.workoutName}
+                    ) : (
+                      weekday(assignment.dayOfWeek)
+                    )}{' '}
+                    · {assignment.workoutName}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {t('trainingTimeline.exactCounts', {

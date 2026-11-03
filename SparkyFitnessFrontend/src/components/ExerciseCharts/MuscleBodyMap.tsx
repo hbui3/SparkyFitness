@@ -23,15 +23,7 @@ const SVG_MUSCLE_ALIASES: Record<string, string[]> = {
   quads: ['quadriceps', 'quads'],
   chest: ['chest', 'pecs'],
   shoulders: ['shoulders', 'front delts', 'side delts', 'rear delts'],
-  traps: [
-    'traps',
-    'trapezius',
-    'upper back',
-    'middle back',
-    'lats',
-    'latissimus dorsi',
-    'back',
-  ],
+  traps: ['traps', 'trapezius', 'upper back', 'middle back', 'back'],
 };
 
 const STATUS_PRIORITY: Record<AdaptiveTrainingMuscleLoad['status'], number> = {

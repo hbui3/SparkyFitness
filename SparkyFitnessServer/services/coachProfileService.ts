@@ -465,7 +465,7 @@ async function getPersistentChatContext(
       }
       memoryInstruction = profile.autoMemoryEnabled
         ? 'Automatic long-term memory is enabled. During this turn, call sparky_manage_coach_memory when the user states stable, future-relevant context that is not already listed and does not belong to a structured domain. Training exercise/equipment/style/schedule preferences belong in sparky_manage_training_feedback instead. Do not ask for confirmation. Never store transient daily values, credentials, secrets, diagnoses, or speculation.'
-        : 'Automatic long-term memory is disabled. Store a new generic memory only when the user explicitly asks you to remember it or explicitly confirms your request to save it. Training exercise/equipment/style/schedule preferences belong in sparky_manage_training_feedback instead. Set user_confirmed=true only after that explicit request or confirmation.';
+        : 'Automatic long-term memory is disabled. Store a new generic memory or change a stored fact only when the user explicitly requests that action or confirms it. Training exercise/equipment/style/schedule preferences belong in sparky_manage_training_feedback instead. Set user_confirmed=true only after that explicit request or confirmation.';
     }
   }
   if (allergens.length)

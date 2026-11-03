@@ -176,7 +176,26 @@ jobs:
             exit 1
           }
 
+      - name: Check automatic deployment revision
+        id: revision
+        env:
+          SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          current_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          [[ "${current_main}" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "Could not verify the current main revision." >&2
+            exit 1
+          }
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" && "${SOURCE_SHA}" != "${current_main}" ]]; then
+            echo "proceed=false" >> "${GITHUB_OUTPUT}"
+            echo "Skipped superseded automatic deployment ${SOURCE_SHA}; main is now ${current_main}." >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "proceed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Connect ephemeral runner to the Tailnet
+        if: steps.revision.outputs.proceed == 'true'
         uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -185,6 +204,7 @@ jobs:
           ping: ${{ vars.UNRAID_TAILSCALE_HOST }}
 
       - name: Synchronize deployment files
+        if: steps.revision.outputs.proceed == 'true'
         run: |
           tailscale ssh "root@${UNRAID_HOST}" "mkdir -p '${UNRAID_DEPLOY_PATH}'"
           tar -czf - -C deploy/unraid compose.yml .env.example bootstrap.sh deploy.sh \
@@ -192,6 +212,7 @@ jobs:
                 "tar -xzf - -C '${UNRAID_DEPLOY_PATH}' && chmod 700 '${UNRAID_DEPLOY_PATH}/bootstrap.sh' '${UNRAID_DEPLOY_PATH}/deploy.sh'"
 
       - name: Deploy immutable images
+        if: steps.revision.outputs.proceed == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}
@@ -203,6 +224,7 @@ jobs:
                 "set -Eeuo pipefail; export DOCKER_CONFIG='/tmp/sparkyfitness-ghcr-${SOURCE_SHA}'; mkdir -p \"\${DOCKER_CONFIG}\"; trap 'rm -rf \"\${DOCKER_CONFIG}\"' EXIT; docker login ghcr.io --username '${GITHUB_ACTOR}' --password-stdin; cd '${UNRAID_DEPLOY_PATH}'; ./deploy.sh '${FRONTEND_IMAGE}' '${SERVER_IMAGE}' '${SOURCE_SHA}'"
 
       - name: Deployment summary
+        if: steps.revision.outputs.proceed == 'true'
         env:
           SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
           FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}

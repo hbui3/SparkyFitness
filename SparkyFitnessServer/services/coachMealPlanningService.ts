@@ -432,7 +432,7 @@ function recipeCatalogItem(meal: CoachMealSuggestion): CoachRecipeCatalogItem {
       recipeKey: meal.id,
       name: meal.nameDe,
       description: null,
-      prepMinutes: 30,
+      prepMinutes: meal.prepMinutes ?? 30,
       instructions: [meal.preparationDe],
     },
     slots: meal.mealSlots,
@@ -599,12 +599,11 @@ export async function updatePantryItem(
   const existing = pantry.find((item) => item.id === itemId);
   if (!existing)
     throw new CoachMealPlanningNotFoundError('Pantry item not found.');
-  const preferred = Object.prototype.hasOwnProperty.call(
-    input,
-    'preferredProduct'
-  )
-    ? resolvePreferredProduct(existing.ingredient_key, input.preferredProduct)
-    : undefined;
+  const preferred =
+    Object.prototype.hasOwnProperty.call(input, 'preferredProduct') &&
+    input.preferredProduct !== undefined
+      ? resolvePreferredProduct(existing.ingredient_key, input.preferredProduct)
+      : undefined;
   const updated = await coachMealPlanningRepository.updatePantryItem(
     userId,
     itemId,
@@ -829,7 +828,7 @@ function planEntryInput(
     estimatedProteinG: roundPlanningNumber(meal.proteinG * scale),
     estimatedCarbsG: roundPlanningNumber(meal.carbsG * scale),
     estimatedFatG: roundPlanningNumber(meal.fatG * scale),
-    prepMinutes: 30,
+    prepMinutes: meal.prepMinutes ?? 30,
     preparation: meal.preparationDe,
     safetyStatus: 'validated',
     ingredients: meal.ingredients.map((ingredient) => ({

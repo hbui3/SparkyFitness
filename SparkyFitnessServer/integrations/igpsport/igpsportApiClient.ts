@@ -207,14 +207,22 @@ export class IGPSportApiClient {
         }
       );
       const data = this.unwrap(response.data, 'activity history');
-      if (!isRecord(data)) {
-        return { activities: [], page, totalPages: page, totalRows: 0 };
+      if (!isRecord(data) || !Array.isArray(data.rows)) {
+        throw new IGPSportApiError(
+          'iGPSPORT returned an invalid activity history page. Please retry the sync.'
+        );
       }
-      const rows = Array.isArray(data.rows) ? data.rows : [];
+      const rows = data.rows;
+      const activities = rows.map(parseActivity);
+      if (activities.some((activity) => activity === null)) {
+        throw new IGPSportApiError(
+          'iGPSPORT returned an activity without an identifier. Please retry the sync.'
+        );
+      }
       return {
-        activities: rows
-          .map(parseActivity)
-          .filter((item): item is IGPSportActivity => item !== null),
+        activities: activities.filter(
+          (item): item is IGPSportActivity => item !== null
+        ),
         page: finiteInteger(data.pageNo, page),
         totalPages: Math.max(1, finiteInteger(data.totalPage, 1)),
         totalRows: finiteInteger(data.totalRows, rows.length),

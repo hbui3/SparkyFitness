@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   addDays,
   todayInZone,
+  patchCoachPantryItemRequestSchema,
   replaceCoachMealPlanEntryRequestSchema,
 } from '@workspace/shared';
 import { log } from '../../config/logging.js';
@@ -93,12 +94,15 @@ const ManagePantrySchema = z
     category: z
       .enum(['chilled', 'produce', 'pantry', 'frozen', 'other'])
       .optional(),
-    preferred_retailer: z.enum(['coop', 'migros']).optional(),
-    preferred_retailer_product_id: z.string().trim().min(1).max(200).optional(),
-    expires_on: z
+    preferred_retailer: z.enum(['coop', 'migros']).nullable().optional(),
+    preferred_retailer_product_id: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .trim()
+      .min(1)
+      .max(200)
+      .nullable()
       .optional(),
+    expires_on: patchCoachPantryItemRequestSchema.shape.expiresOn,
   })
   .superRefine((value, ctx) => {
     if (value.action === 'add') {
@@ -120,13 +124,32 @@ const ManagePantrySchema = z
     }
     if (
       (value.preferred_retailer === undefined) !==
-      (value.preferred_retailer_product_id === undefined)
+        (value.preferred_retailer_product_id === undefined) ||
+      (value.preferred_retailer === null) !==
+        (value.preferred_retailer_product_id === null)
     ) {
       ctx.addIssue({
         code: 'custom',
         message:
           'preferred_retailer and preferred_retailer_product_id must be supplied together',
         path: ['preferred_retailer_product_id'],
+      });
+    }
+    if (
+      value.action === 'update' &&
+      ![
+        value.name,
+        value.quantity,
+        value.minimum_quantity,
+        value.category,
+        value.preferred_retailer,
+        value.expires_on,
+      ].some((field) => field !== undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'No pantry changes supplied',
+        path: ['action'],
       });
     }
   });
@@ -433,7 +456,7 @@ export function buildMealPlanningTools(userId: string, tz: string) {
     }),
     sparky_manage_meal_pantry: tool({
       description:
-        'Add, correct, or remove an item in the authenticated owner’s persistent meal pantry. Quantities are absolute current stock, never deltas. Remove is allowed only when the item is empty and unreserved. Use verified retailer product ids returned by the dashboard when setting a preference.',
+        'Add, correct, or remove an item in the authenticated owner’s persistent meal pantry. Quantities are absolute current stock, never deltas. Remove is allowed only when the item is empty and unreserved. Use verified retailer product ids returned by the dashboard when setting a preference. To clear an expiry date, set expires_on=null. To clear the product preference, set both preferred_retailer and preferred_retailer_product_id to null. Omitted fields stay unchanged.',
       inputSchema: ManagePantrySchema,
       execute: async (rawArgs) => {
         const parsed = ManagePantrySchema.safeParse(rawArgs ?? {});
@@ -495,13 +518,16 @@ export function buildMealPlanningTools(userId: string, tz: string) {
                 minimumQuantity: input.minimum_quantity,
                 category: input.category,
                 preferredProduct:
-                  input.preferred_retailer &&
-                  input.preferred_retailer_product_id
-                    ? {
-                        retailer: input.preferred_retailer,
-                        retailerProductId: input.preferred_retailer_product_id,
-                      }
-                    : undefined,
+                  input.preferred_retailer === null
+                    ? null
+                    : input.preferred_retailer &&
+                        input.preferred_retailer_product_id
+                      ? {
+                          retailer: input.preferred_retailer,
+                          retailerProductId:
+                            input.preferred_retailer_product_id,
+                        }
+                      : undefined,
                 expiresOn: input.expires_on,
               }
             );

@@ -43,6 +43,8 @@ const GYM_MONSTER_DEVICE_TYPE = 1;
 const DEFAULT_WORKOUT_COACH_LANGUAGE = 'de';
 const CREATE_VISIBILITY_RETRY_MS = 300;
 const CREATE_VISIBILITY_ATTEMPTS = 3;
+const MANAGED_WORKOUT_DESCRIPTION =
+  'Managed by the Sparky Speediance workout manager.';
 
 interface SpeedianceTemplateIdentity {
   id: string;
@@ -63,12 +65,15 @@ interface NativeExerciseRow {
 
 interface NativeWorkoutPresetRow {
   id: number;
+  user_id?: string | null;
+  name?: string;
   description?: string | null;
 }
 
 interface NativeWorkoutPlanRow {
   id: string | number;
   plan_name: string;
+  description?: string | null;
 }
 
 interface CanonicalRemoteAction {
@@ -986,10 +991,79 @@ async function findOrCreateNativeExercise(
   return row;
 }
 
+function managedPresetRemoteCode(
+  preset: NativeWorkoutPresetRow
+): string | null {
+  const prefix = `${MANAGED_WORKOUT_DESCRIPTION} Remote code: `;
+  if (!preset.description?.startsWith(prefix)) return null;
+  const code = preset.description.slice(prefix.length);
+  return code && !/[\r\n]/.test(code) ? code : null;
+}
+
+function isManagedNativePreset(
+  preset: NativeWorkoutPresetRow,
+  userId: string,
+  name: string,
+  remoteCode?: string
+): boolean {
+  if (preset.user_id !== userId) return false;
+  return (
+    preset.description === MANAGED_WORKOUT_DESCRIPTION ||
+    preset.description ===
+      `Workout imported from Speediance: ${preset.name ?? name}` ||
+    (remoteCode
+      ? managedPresetRemoteCode(preset) === remoteCode
+      : managedPresetRemoteCode(preset) !== null)
+  );
+}
+
+async function resolveManagedNativePreset(
+  userId: string,
+  request: SpeedianceWorkoutDefinition
+): Promise<NativeWorkoutPresetRow | null> {
+  let preset = request.remoteCode
+    ? ((await workoutPresetRepository.getWorkoutPresetBySpeedianceCode(
+        userId,
+        request.remoteCode
+      )) as NativeWorkoutPresetRow | null)
+    : null;
+  preset ??= (await workoutPresetRepository.getWorkoutPresetByName(
+    userId,
+    request.name
+  )) as NativeWorkoutPresetRow | null;
+  if (
+    preset &&
+    !isManagedNativePreset(preset, userId, request.name, request.remoteCode)
+  ) {
+    throw new SpeedianceWorkoutConflictError(
+      `A native Sparky workout named "${request.name}" already exists and is not managed by this Speediance workout. Rename one of the workouts before syncing.`
+    );
+  }
+  return preset;
+}
+
+async function validateNativeWorkoutIdentity(
+  userId: string,
+  api: SpeedianceApiClient,
+  request: SpeedianceWorkoutDefinition
+): Promise<void> {
+  const preset = await resolveManagedNativePreset(userId, request);
+  const storedCode = preset ? managedPresetRemoteCode(preset) : null;
+  if (!request.remoteCode && storedCode) {
+    const matches = await exactTemplates(api, request.name);
+    if (matches.length !== 1 || matches[0]?.code !== storedCode) {
+      throw new SpeedianceWorkoutConflictError(
+        `A native Sparky workout named "${request.name}" already exists and is not managed by this Speediance workout. Reload it or choose another name before syncing.`
+      );
+    }
+  }
+}
+
 async function syncNativeWorkoutPreset(
   userId: string,
   request: SpeedianceWorkoutDefinition
 ): Promise<number> {
+  let preset = await resolveManagedNativePreset(userId, request);
   const exercises = [];
   for (
     let exerciseIndex = 0;
@@ -1023,17 +1097,7 @@ async function syncNativeWorkoutPreset(
     });
   }
 
-  let preset = request.remoteCode
-    ? ((await workoutPresetRepository.getWorkoutPresetBySpeedianceCode(
-        userId,
-        request.remoteCode
-      )) as NativeWorkoutPresetRow | null)
-    : null;
-  preset ??= (await workoutPresetRepository.getWorkoutPresetByName(
-    userId,
-    request.name
-  )) as NativeWorkoutPresetRow | null;
-  const description = `Managed by the Sparky Speediance workout manager. Remote code: ${request.remoteCode ?? 'pending'}`;
+  const description = `${MANAGED_WORKOUT_DESCRIPTION} Remote code: ${request.remoteCode ?? 'pending'}`;
   if (!preset) {
     preset = (await workoutPresetRepository.createWorkoutPreset({
       user_id: userId,
@@ -1043,12 +1107,6 @@ async function syncNativeWorkoutPreset(
       exercises,
     })) as NativeWorkoutPresetRow | null;
   } else {
-    const managerOwned = preset.description?.includes('Speediance') ?? false;
-    if (!managerOwned) {
-      throw new SpeedianceWorkoutConflictError(
-        `A native Sparky workout named "${request.name}" already exists and is not managed by Speediance. Rename one of the workouts before syncing.`
-      );
-    }
     preset = (await workoutPresetRepository.updateWorkoutPreset(
       preset.id,
       userId,
@@ -1092,7 +1150,9 @@ async function nativePresetId(
       userId,
       name
     )) as NativeWorkoutPresetRow | null);
-  return preset?.id ?? null;
+  return preset && isManagedNativePreset(preset, userId, name, remoteCode)
+    ? preset.id
+    : null;
 }
 
 export async function listSpeedianceWorkouts(
@@ -1272,6 +1332,8 @@ async function upsertWithClient(
   api: SpeedianceApiClient,
   request: SpeedianceWorkoutDefinition
 ): Promise<SpeedianceWorkoutUpsertResponse> {
+  // Resolve collisions before creating or updating the remote workout.
+  await validateNativeWorkoutIdentity(userId, api, request);
   const resolved = await buildWorkoutPayload(api, request);
   const template = await upsertTemplate(api, resolved.payload, request);
   const nativeWorkoutPresetId = await syncNativeWorkoutPreset(userId, {
@@ -1566,6 +1628,23 @@ export async function createSpeediancePlan(
     request.providerId
   );
   await validateScheduleDay(userId, request.startDate, timezone);
+  const plans =
+    (await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(
+      userId
+    )) as NativeWorkoutPlanRow[];
+  const existing = plans.find((plan) => plan.plan_name === request.planName);
+  if (
+    existing &&
+    !existing.description?.split(/\r?\n/).includes(MANAGED_WORKOUT_DESCRIPTION)
+  ) {
+    throw new SpeedianceWorkoutConflictError(
+      `A native Sparky plan named "${request.planName}" already exists and is not managed by Speediance. Choose another plan name before syncing.`
+    );
+  }
+  // Validate every native identity before the first remote workout is changed.
+  for (const session of request.sessions) {
+    await validateNativeWorkoutIdentity(userId, api, session.workout);
+  }
   const resolvedSessions: Array<{
     dayOfWeek: number;
     weekIndex: number;
@@ -1594,16 +1673,11 @@ export async function createSpeediancePlan(
     });
   }
 
-  const plans =
-    (await workoutPlanTemplateService.getWorkoutPlanTemplatesByUserId(
-      userId
-    )) as NativeWorkoutPlanRow[];
-  const existing = plans.find((plan) => plan.plan_name === request.planName);
   const planInput = {
     plan_name: request.planName,
-    description:
-      request.description ||
-      'Managed by the Sparky Speediance workout manager.',
+    description: request.description
+      ? `${request.description}\n\n${MANAGED_WORKOUT_DESCRIPTION}`
+      : MANAGED_WORKOUT_DESCRIPTION,
     start_date: request.startDate,
     end_date: request.endDate,
     is_active: true,
