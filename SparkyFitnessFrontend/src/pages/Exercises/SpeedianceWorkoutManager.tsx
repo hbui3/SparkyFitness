@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   SpeedianceCompletionUnit,
@@ -159,6 +159,7 @@ export default function SpeedianceWorkoutManager() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const [editorOpen, setEditorOpen] = useState(false);
+  const editorRequestId = useRef(0);
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [draft, setDraft] = useState<SpeedianceWorkoutDefinition>(emptyWorkout);
   const [searchTerm, setSearchTerm] = useState('');
@@ -184,6 +185,7 @@ export default function SpeedianceWorkoutManager() {
   );
 
   const openNew = () => {
+    editorRequestId.current++;
     setEditingCode(null);
     setDraft(emptyWorkout());
     setSearchTerm('');
@@ -192,6 +194,7 @@ export default function SpeedianceWorkoutManager() {
   };
 
   const openEdit = (code: string) => {
+    const requestId = ++editorRequestId.current;
     setEditingCode(code);
     setDraft(emptyWorkout());
     setSearchTerm('');
@@ -201,6 +204,7 @@ export default function SpeedianceWorkoutManager() {
       { code },
       {
         onSuccess: (detail) => {
+          if (editorRequestId.current !== requestId) return;
           setDraft({
             remoteId: detail.id,
             remoteCode: detail.code,
@@ -209,9 +213,16 @@ export default function SpeedianceWorkoutManager() {
             acknowledgedPreferenceIds: [],
           });
         },
-        onError: () => setEditorOpen(false),
+        onError: () => {
+          if (editorRequestId.current === requestId) setEditorOpen(false);
+        },
       }
     );
+  };
+
+  const changeEditorOpen = (open: boolean) => {
+    if (!open) editorRequestId.current++;
+    setEditorOpen(open);
   };
 
   const updateExercise = (
@@ -413,7 +424,7 @@ export default function SpeedianceWorkoutManager() {
         )}
       </CardContent>
 
-      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+      <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
         <DialogContent
           requireConfirmation
           className="max-h-[92vh] max-w-6xl overflow-y-auto"
@@ -935,7 +946,7 @@ export default function SpeedianceWorkoutManager() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditorOpen(false)}>
+            <Button variant="outline" onClick={() => changeEditorOpen(false)}>
               {t('common.cancel', 'Cancel')}
             </Button>
             <Button

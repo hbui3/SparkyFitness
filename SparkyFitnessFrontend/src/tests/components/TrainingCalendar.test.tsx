@@ -1,6 +1,12 @@
-import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { usePreferences } from '@/contexts/PreferencesContext';
 import TrainingCalendar from '@/pages/Exercises/TrainingCalendar';
 import { useTrainingTimeline } from '@/hooks/Exercises/useWorkoutPlans';
+
+jest.mock('@/contexts/PreferencesContext', () => ({
+  usePreferences: jest.fn(() => ({ timezone: 'UTC' })),
+}));
 
 jest.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { id: 'user-1' } }),
@@ -25,6 +31,11 @@ jest.mock('react-i18next', () => ({
 
 describe('TrainingCalendar', () => {
   beforeEach(() => {
+    jest
+      .mocked(usePreferences)
+      .mockReturnValue({ timezone: 'UTC' } as ReturnType<
+        typeof usePreferences
+      >);
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-08-21T10:00:00.000Z'));
     jest.mocked(useTrainingTimeline).mockReturnValue({
@@ -86,5 +97,36 @@ describe('TrainingCalendar', () => {
         endDate: '2026-09-06',
       })
     );
+  });
+  it('selects the profile timezone day instead of the device day near midnight', () => {
+    jest.setSystemTime(new Date('2026-08-21T00:30:00Z'));
+    jest
+      .mocked(usePreferences)
+      .mockReturnValue({ timezone: 'America/Los_Angeles' } as ReturnType<
+        typeof usePreferences
+      >);
+    render(<TrainingCalendar />);
+    expect(
+      screen.getByRole('heading', { name: 'Thursday, August 20, 2026' })
+    ).toBeInTheDocument();
+  });
+
+  it('offers retry on a failed request instead of claiming that no training exists', () => {
+    const refetch = jest.fn();
+    jest.mocked(useTrainingTimeline).mockReturnValue({
+      isLoading: false,
+      isError: true,
+      data: undefined,
+      refetch,
+    } as unknown as ReturnType<typeof useTrainingTimeline>);
+    render(<TrainingCalendar />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Failed to load the training timeline.'
+    );
+    expect(
+      screen.queryByText('No planned or completed workout on this day.')
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

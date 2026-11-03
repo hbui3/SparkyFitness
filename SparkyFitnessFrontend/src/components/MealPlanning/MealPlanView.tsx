@@ -73,7 +73,8 @@ interface MealPlanViewProps {
     entryId: string,
     recipeKey: string,
     servings: number,
-    date: string
+    date: string,
+    onSuccess: () => void
   ) => void;
   onDelete?: (entryId: string) => void;
   isGenerating: boolean;
@@ -794,7 +795,9 @@ export default function MealPlanView({
 
       <Dialog
         open={replacementEntry !== null}
-        onOpenChange={(open) => !open && setReplacementEntry(null)}
+        onOpenChange={(open) =>
+          !open && !isUpdating && setReplacementEntry(null)
+        }
       >
         <DialogContent>
           <DialogHeader>
@@ -831,6 +834,7 @@ export default function MealPlanView({
                     min={0.1}
                     max={6}
                     step={0.01}
+                    disabled={isUpdating}
                     value={replacementServings}
                     onChange={(event) =>
                       setReplacementServings(event.target.value)
@@ -844,6 +848,7 @@ export default function MealPlanView({
                   <Input
                     id="replacement-date"
                     type="date"
+                    disabled={isUpdating}
                     value={replacementDate}
                     onChange={(event) => setReplacementDate(event.target.value)}
                   />
@@ -852,6 +857,7 @@ export default function MealPlanView({
               <Select
                 value={replacementRecipeKey}
                 onValueChange={setReplacementRecipeKey}
+                disabled={isUpdating}
               >
                 <SelectTrigger
                   aria-label={t(
@@ -894,7 +900,11 @@ export default function MealPlanView({
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReplacementEntry(null)}>
+            <Button
+              variant="outline"
+              disabled={isUpdating}
+              onClick={() => setReplacementEntry(null)}
+            >
               {t('common.cancel', 'Cancel')}
             </Button>
             <Button
@@ -913,9 +923,12 @@ export default function MealPlanView({
                   replacementEntry.id,
                   replacementRecipeKey,
                   Number(replacementServings),
-                  replacementDate
+                  replacementDate,
+                  () =>
+                    setReplacementEntry((current) =>
+                      current?.id === replacementEntry.id ? null : current
+                    )
                 );
-                setReplacementEntry(null);
               }}
             >
               {t('settings.mealPlanning.plan.replace', 'Replace')}

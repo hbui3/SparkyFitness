@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { TrainingDaySummary } from '@workspace/shared';
+import { todayInZone, type TrainingDaySummary } from '@workspace/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { useTrainingTimeline } from '@/hooks/Exercises/useWorkoutPlans';
 import { cn } from '@/lib/utils';
+import { usePreferences } from '@/contexts/PreferencesContext';
+import TrainingTimelineError from '@/components/TrainingTimelineError';
 
 function toDayString(date: Date): string {
   const year = date.getFullYear();
@@ -41,13 +43,12 @@ function statusClass(status: TrainingDaySummary['status'] | undefined) {
 const TrainingCalendar = () => {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
-  const initialToday = useMemo(() => new Date(), []);
-  const [visibleMonth, setVisibleMonth] = useState(
-    () => new Date(initialToday.getFullYear(), initialToday.getMonth(), 1, 12)
-  );
-  const [selectedDate, setSelectedDate] = useState(() =>
-    toDayString(initialToday)
-  );
+  const { timezone } = usePreferences();
+  const [selectedMonth, setVisibleMonth] = useState<Date | null>(null);
+  const [explicitDate, setSelectedDate] = useState<string | null>(null);
+  const today = todayInZone(timezone);
+  const visibleMonth = selectedMonth ?? fromDayString(today);
+  const selectedDate = explicitDate ?? today;
   const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const monthStart = new Date(
     visibleMonth.getFullYear(),
@@ -64,7 +65,10 @@ const TrainingCalendar = () => {
     startDate: toDayString(calendarDays[0]!),
     endDate: toDayString(calendarDays[41]!),
   };
-  const { data, isLoading } = useTrainingTimeline(user?.id, range);
+  const { data, isLoading, isError, refetch } = useTrainingTimeline(
+    user?.id,
+    range
+  );
   const summaries = new Map(data?.days.map((day) => [day.date, day]) ?? []);
   const selectedSummary = summaries.get(selectedDate);
   const selectedItems =
@@ -96,7 +100,7 @@ const TrainingCalendar = () => {
     setSelectedDate(toDayString(next));
   };
   const selectToday = () => {
-    const today = fromDayString(data?.today ?? toDayString(new Date()));
+    const today = fromDayString(data?.today ?? todayInZone(timezone));
     setVisibleMonth(new Date(today.getFullYear(), today.getMonth(), 1, 12));
     setSelectedDate(toDayString(today));
   };
@@ -144,6 +148,13 @@ const TrainingCalendar = () => {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+        {isError && data && (
+          <TrainingTimelineError
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        )}
         <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
           {weekdayLabels.map((label) => (
             <div key={label} className="py-1">
@@ -217,6 +228,12 @@ const TrainingCalendar = () => {
           <p className="text-sm text-muted-foreground">
             {t('common.loading', 'Loading...')}
           </p>
+        ) : isError && !data ? (
+          <TrainingTimelineError
+            onRetry={() => {
+              void refetch();
+            }}
+          />
         ) : (
           <section className="rounded-lg border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">

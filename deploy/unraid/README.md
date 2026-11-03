@@ -17,6 +17,11 @@ Unraid über eine kurzlebige Tailscale-Verbindung. Unraid benötigt keinen
 6. Bei einem Fehler werden die vorherigen App-Images wieder gestartet. Ein
    Datenbank-Rollback erfolgt absichtlich nie automatisch.
 
+Vor jedem automatischen Serverzugriff wird der getestete Commit erneut mit
+dem aktuellen `main` verglichen. Ein verspäteter CI-Lauf darf eine neuere
+Version nicht wieder durch einen älteren Stand ersetzen. Bewusst gestartete
+manuelle Deployments bleiben für einen gezielten App-Rollback verfügbar.
+
 ## 1. Unraid und Tailscale vorbereiten
 
 Die Automatisierung setzt Unraid 7 oder neuer, Docker Compose und das offizielle
@@ -182,6 +187,40 @@ Für einen manuellen App-Rollback liegt die vorige Konfiguration in
 Deployment-Fehler geprüft hast. Datenbank-Backups werden bewusst separat
 behandelt, da ihre Wiederherstellung vorhandene Daten überschreibt.
 
+### Lokaler Fallback ohne Registry
+
+Wenn GitHub Actions oder die Veröffentlichung in GHCR nicht verfügbar ist,
+können die Images aus einem vollständig getesteten Checkout direkt auf Unraid
+gebaut oder mit `docker load` übertragen werden. Beide Images müssen beim Build
+das Label `org.opencontainers.image.revision` mit dem vollständigen
+40-stelligen Commit-SHA dieses Checkouts erhalten, beispielsweise über
+`docker build --label "org.opencontainers.image.revision=${SOURCE_SHA}" ...`.
+
+Ermittle mit `docker image inspect --format '{{.Id}}' <gebautes-image>` die
+vollständigen lokalen Image-IDs. Übergib ausschließlich diese IDs, keine Tags:
+
+```bash
+cd /mnt/user/appdata/sparkyfitness/deployment
+./deploy.sh --local sha256:<64-hex-frontend-id> sha256:<64-hex-server-id> <40-hex-commit-sha>
+```
+
+Der explizite lokale Modus prüft beide vorhandenen Images und ihre
+Commit-Labels, bevor er ein Backup erstellt oder `.env` und Container verändert.
+Danach gelten dieselbe Deployment-Sperre, Sicherung, Healthcheck-Wartezeit und
+App-Rollback-Logik. Registry-Pulls sind auch beim Rollback mit `--pull never`
+ausgeschlossen; PostgreSQL und die vorherigen App-Images müssen deshalb ebenfalls
+bereits lokal vorhanden sein. Ein fehlendes Image wird nicht nachgeladen.
+`.env.previous` und `.last-successful-deploy` werden wie im regulären Ablauf
+geführt. Der bisherige Aufruf mit drei GHCR-Digests/Commit-Argumenten bleibt
+unverändert verfügbar.
+
+Die isolierten Skripttests verwenden Docker-Stubs und verändern keine echte
+Docker- oder Unraid-Installation. Aus dem Repository-Root ausführen:
+
+```bash
+node --test deploy/unraid/deploy.test.mjs
+```
+
 ## Sicherheitsgrenzen
 
 - App-Secrets und Gesundheitsdaten bleiben auf Unraid; GitHub erhält sie nicht.
@@ -194,3 +233,5 @@ behandelt, da ihre Wiederherstellung vorhandene Daten überschreibt.
 Weiterführend: [Unraid Tailscale](https://docs.unraid.net/unraid-os/system-administration/secure-your-server/tailscale/),
 [Tailscale GitHub Action](https://github.com/tailscale/github-action),
 [GitHub Container Registry](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
+
+Build containers need at least 3 GiB of memory for frontend validation and bundling. The frontend Dockerfile gives the build process a bounded 2 GiB Node heap; `NODE_BUILD_MAX_OLD_SPACE_SIZE` can be overridden as a build argument. This setting is confined to the builder stage.

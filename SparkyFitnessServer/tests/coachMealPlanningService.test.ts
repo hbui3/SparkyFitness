@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { veganMealProfile } from './helpers/coachMealProfile.js';
 import {
   addDays,
   coachMealPlanningDashboardResponseSchema,
@@ -1516,5 +1517,107 @@ describe('coach meal-planning service', () => {
         estimatedCalories: mainMeal.calories * 1.5,
       })
     );
+  });
+
+  it('preserves a stored retailer preference when a chat stock correction passes undefined', async () => {
+    repositoryMocks.listPantryItems.mockResolvedValue([pantryRow()]);
+    repositoryMocks.updatePantryItem.mockResolvedValue(true);
+    await coachMealPlanningService.updatePantryItem(USER_ID, ITEM_ID, {
+      quantity: 500,
+      preferredProduct: undefined,
+    });
+    expect(repositoryMocks.updatePantryItem).toHaveBeenCalledWith(
+      USER_ID,
+      ITEM_ID,
+      expect.objectContaining({
+        quantity: 500,
+        preferredRetailer: undefined,
+        preferredProductId: undefined,
+      }),
+      expect.any(String)
+    );
+  });
+
+  it('still clears the retailer preference when the user explicitly supplies null', async () => {
+    repositoryMocks.listPantryItems.mockResolvedValue([pantryRow()]);
+    repositoryMocks.updatePantryItem.mockResolvedValue(true);
+    await coachMealPlanningService.updatePantryItem(USER_ID, ITEM_ID, {
+      preferredProduct: null,
+    });
+    expect(repositoryMocks.updatePantryItem).toHaveBeenCalledWith(
+      USER_ID,
+      ITEM_ID,
+      expect.objectContaining({
+        preferredRetailer: null,
+        preferredProductId: null,
+      }),
+      expect.any(String)
+    );
+  });
+
+  it('creates breakfast and snack with the real vegan catalog and a normal four-meal split', async () => {
+    const profileService = (await import('../services/coachProfileService.js'))
+      .default;
+    const profileSpy = vi
+      .spyOn(profileService, 'getCoachProfile')
+      .mockResolvedValue(veganMealProfile);
+    const safetySpy = vi
+      .spyOn(profileService, 'validateMealSuggestion')
+      .mockResolvedValue({ allowed: true, violations: [] });
+    try {
+      const actualSuggestions = await vi.importActual<
+        typeof import('../services/coachMealSuggestionService.js')
+      >('../services/coachMealSuggestionService.js');
+      const catalog = await actualSuggestions.getCoachMealCatalog(USER_ID);
+      mealCatalogMocks.getCoachMealCatalog.mockResolvedValue(catalog);
+      mealCatalogMocks.getCoachMealSuggestions.mockResolvedValue(catalog);
+      goalServiceMocks.getUserGoalsForRange.mockResolvedValue(
+        testGoalRange('2026-09-01', 1, {
+          '2026-09-01': {
+            calories: 2000,
+            protein: 120,
+            breakfast_percentage: 25,
+            lunch_percentage: 25,
+            dinner_percentage: 25,
+            snacks_percentage: 25,
+          },
+        })
+      );
+      await coachMealPlanningService.generateMealPlan(USER_ID, {
+        operationId: OPERATION_ID,
+        startDate: '2026-09-01',
+        days: 1,
+        replaceExisting: false,
+      });
+      const entries = capturedGeneration().entries;
+      expect(entries.map((entry) => entry.mealSlot)).toEqual([
+        'breakfast',
+        'lunch',
+        'dinner',
+        'snack',
+      ]);
+      expect(
+        entries.filter((entry) =>
+          ['breakfast', 'snack'].includes(entry.mealSlot)
+        )
+      ).toEqual([
+        expect.objectContaining({
+          recipeKey: 'banana-oat-porridge',
+          estimatedCalories: 500,
+          prepMinutes: 10,
+        }),
+        expect.objectContaining({
+          recipeKey: 'banana-oat-porridge',
+          estimatedCalories: 500,
+          prepMinutes: 10,
+        }),
+      ]);
+      expect(
+        entries.reduce((total, entry) => total + entry.estimatedCalories, 0)
+      ).toBe(2000);
+    } finally {
+      profileSpy.mockRestore();
+      safetySpy.mockRestore();
+    }
   });
 });

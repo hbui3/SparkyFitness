@@ -20,6 +20,7 @@ import {
   useReplaceCoachMealPlanEntry,
 } from '@/hooks/Settings/useMealPlanning';
 import { generateClientId } from '@/utils/generateClientId';
+import { useRetryableOperationId } from '@/hooks/useRetryableOperationId';
 
 const MealPlanningSettings = () => {
   const { t } = useTranslation();
@@ -34,6 +35,8 @@ const MealPlanningSettings = () => {
   const applyAction = useApplyCoachMealPlanAction();
   const replaceEntry = useReplaceCoachMealPlanEntry();
   const deleteEntry = useDeleteCoachMealPlanEntry();
+  const generationOperation = useRetryableOperationId();
+  const replacementOperation = useRetryableOperationId();
 
   if (dashboard.isLoading) {
     return (
@@ -79,20 +82,6 @@ const MealPlanningSettings = () => {
   }
 
   const data = dashboard.data;
-  const shoppingSelectionKey = [
-    data.shoppingList?.id ?? 'no-list',
-    ...(data.shoppingList?.items ?? [])
-      .filter((item) => item.status === 'needed' && item.remainingQuantity > 0)
-      .map((item) => {
-        const effectiveProduct =
-          item.selectedProduct ?? item.productOptions[0] ?? null;
-        const selectedProductKey = effectiveProduct
-          ? `${effectiveProduct.retailer}:${effectiveProduct.retailerProductId}:${effectiveProduct.packageQuantity}:${effectiveProduct.packageUnit}`
-          : 'none';
-        return `${item.id}:${item.remainingQuantity}:${selectedProductKey}`;
-      })
-      .sort(),
-  ].join(':');
 
   return (
     <div className="space-y-5">
@@ -161,31 +150,51 @@ const MealPlanningSettings = () => {
             startDate={startDate}
             days={days}
             onDaysChange={setDays}
-            onGenerate={(replaceExisting) =>
-              generatePlan.mutate({
-                operationId: generateClientId(),
-                startDate,
-                days,
-                replaceExisting,
-              })
-            }
+            onGenerate={(replaceExisting) => {
+              const operationId = generationOperation.getOperationId(
+                JSON.stringify({ startDate, days, replaceExisting })
+              );
+              generatePlan.mutate(
+                {
+                  operationId,
+                  startDate,
+                  days,
+                  replaceExisting,
+                },
+                {
+                  onSuccess: () =>
+                    generationOperation.completeOperation(operationId),
+                }
+              );
+            }}
             onAction={(entryId, action) =>
               applyAction.mutate({
                 entryId,
                 request: { operationId: generateClientId(), action },
               })
             }
-            onReplace={(entryId, recipeKey, servings, date) =>
-              replaceEntry.mutate({
-                entryId,
-                request: {
-                  operationId: generateClientId(),
-                  recipeKey,
-                  servings,
-                  date,
+            onReplace={(entryId, recipeKey, servings, date, onSuccess) => {
+              const operationId = replacementOperation.getOperationId(
+                JSON.stringify({ entryId, recipeKey, servings, date })
+              );
+              replaceEntry.mutate(
+                {
+                  entryId,
+                  request: {
+                    operationId,
+                    recipeKey,
+                    servings,
+                    date,
+                  },
                 },
-              })
-            }
+                {
+                  onSuccess: () => {
+                    replacementOperation.completeOperation(operationId);
+                    onSuccess();
+                  },
+                }
+              );
+            }}
             onDelete={(entryId) => deleteEntry.mutate(entryId)}
             isGenerating={generatePlan.isPending}
             isUpdating={
@@ -198,7 +207,7 @@ const MealPlanningSettings = () => {
 
         <TabsContent value="shopping" className="mt-5">
           <ShoppingListView
-            key={shoppingSelectionKey}
+            key={data.shoppingList?.id ?? 'no-list'}
             shoppingList={data.shoppingList}
           />
         </TabsContent>

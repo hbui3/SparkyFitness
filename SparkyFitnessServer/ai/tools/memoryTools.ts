@@ -41,6 +41,7 @@ const memoryActionSchema = z.discriminatedUnion('action', [
       content: z.string().trim().min(1).max(500).optional(),
       active: z.boolean().optional(),
       pinned: z.boolean().optional(),
+      user_confirmed: z.boolean().default(false),
     })
     .strict(),
   z
@@ -55,7 +56,7 @@ export function buildMemoryTools(userId: string) {
   return {
     [COACH_MEMORY_TOOL_NAME]: tool({
       description:
-        'List, remember, edit, or forget owner-controlled long-term coach memories. Only remember a fact when the user explicitly asks, unless automatic memory is enabled in the coach profile.',
+        'List, remember, edit, or forget owner-controlled long-term coach memories. Only remember or change a stored fact when the user explicitly asks, unless automatic memory is enabled in the coach profile. Set user_confirmed=true after an explicit request or confirmation.',
       inputSchema: memoryActionSchema,
       execute: async (rawArgs) => {
         const parsed = memoryActionSchema.safeParse(rawArgs);
@@ -97,6 +98,15 @@ export function buildMemoryTools(userId: string) {
             );
           }
           if (args.action === 'update') {
+            if (
+              (args.content !== undefined || args.category !== undefined) &&
+              !args.user_confirmed &&
+              !profile.autoMemoryEnabled
+            ) {
+              return ERRORS.FORBIDDEN(
+                'Automatic memory is disabled. Ask the user for confirmation before changing a stored fact.'
+              );
+            }
             const memory = await coachMemoryService.updateMemory(
               userId,
               args.memory_id,

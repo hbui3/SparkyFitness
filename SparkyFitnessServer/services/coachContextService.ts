@@ -607,10 +607,13 @@ export function formatCoachContext(snapshot: CoachContextSnapshot): string[] {
           .map(
             (plan) =>
               `${plan.name} (${plan.startDate} to ${plan.endDate ?? 'open-ended'}, ${plan.cycleLengthWeeks}-week cycle): ${plan.assignments
-                .map(
-                  (assignment) =>
-                    `cycle week ${assignment.weekIndex + 1}, weekday ${assignment.dayOfWeek} ${assignment.workoutName} — ${assignment.exerciseCount} exercises, ${assignment.totalSetCount} total sets, ${assignment.warmupSetCount} warm-up sets, ${assignment.workingSetCount} other/working sets`
-                )
+                .map((assignment, index) => {
+                  const schedulePosition =
+                    plan.scheduleType === 'sequential'
+                      ? `session ${assignment.sessionIndex ?? index + 1}${assignment.sessionName ? ` (${assignment.sessionName})` : ''}`
+                      : `cycle week ${assignment.weekIndex + 1}, weekday ${assignment.dayOfWeek}`;
+                  return `${schedulePosition} ${assignment.workoutName} — ${assignment.exerciseCount} exercises, ${assignment.totalSetCount} total sets, ${assignment.warmupSetCount} warm-up sets, ${assignment.workingSetCount} other/working sets`;
+                })
                 .join('; ')}`
           )
           .join(' | ')}`
@@ -646,15 +649,15 @@ function nextTodayAction(
   const { today, recovery } = snapshot;
   const de = language.toLowerCase().startsWith('de');
   const dueWorkout = snapshot.trainingSchedule?.dueToday[0];
-  if (dueWorkout) {
-    return de
-      ? `Das geplante Training „${dueWorkout.name}“ steht heute noch an.`
-      : `The scheduled workout “${dueWorkout.name}” is still due today.`;
-  }
   if ((recovery.trainingReadinessScore ?? 100) < 40) {
     return de
       ? 'Heute Erholung priorisieren und Training bewusst leicht halten.'
       : 'Prioritize recovery and keep training deliberately easy today.';
+  }
+  if (dueWorkout) {
+    return de
+      ? `Das geplante Training „${dueWorkout.name}“ steht heute noch an.`
+      : `The scheduled workout “${dueWorkout.name}” is still due today.`;
   }
   if ((today.waterRemainingMl ?? 0) > 750) {
     return de
@@ -670,6 +673,20 @@ function nextTodayAction(
     return de
       ? 'Das Kalorienziel ist erreicht; die nächste Entscheidung an Hunger und Erholung ausrichten.'
       : 'The calorie target is reached; base the next choice on hunger and recovery.';
+  }
+  if (
+    today.calorieTarget === null &&
+    today.proteinTargetG === null &&
+    today.waterTargetMl === null
+  ) {
+    return de
+      ? 'Hinterlege zuerst deine täglichen Ziele unter „Ziele“, damit der Coach deinen Fortschritt einordnen kann.'
+      : 'Set your daily targets in Goals first so the coach can assess your progress.';
+  }
+  if ((today.caloriesRemaining ?? 0) > 0) {
+    return de
+      ? `Für das heutige Kalorienziel sind noch ${today.caloriesRemaining} kcal offen. Richte die nächste Mahlzeit an deinem Hunger und diesem verbleibenden Spielraum aus.`
+      : `${today.caloriesRemaining} kcal remain toward today’s calorie target. Plan the next meal around your hunger and that remaining allowance.`;
   }
   return de
     ? 'Die aktuellen Ziele sind gut abgedeckt; normal weiterloggen und den Verlauf beobachten.'

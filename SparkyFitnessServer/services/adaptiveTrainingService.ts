@@ -1,6 +1,7 @@
 import {
   addDays,
   instantToDay,
+  normalizeMuscle,
   todayInZone,
   type AdaptiveTrainingDashboardResponse,
   type AdaptiveTrainingMuscleLoad,
@@ -100,6 +101,7 @@ function clamp(value: number, minimum = 0, maximum = 100): number {
 function matchesMusclePreference(muscle: string, preference: string): boolean {
   return (
     muscle === preference ||
+    normalizeMuscle(preference) === muscle ||
     MUSCLE_PREFERENCE_GROUPS[preference]?.has(muscle) === true
   );
 }
@@ -390,7 +392,7 @@ export async function getAdaptiveTrainingDashboard(
   };
   const selectedIds = new Set(settings.candidateWorkoutPresetIds);
   const eligiblePresets =
-    selectedIds.size === 0
+    storedSettings.candidateWorkoutPresetIds.length === 0
       ? allPresets
       : allPresets.filter((preset) => selectedIds.has(preset.id));
   const readiness = buildReadiness(readinessRow);

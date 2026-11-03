@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReportExerciseEntryRow } from '../models/reportRepository.js';
 import adaptiveTrainingService from '../services/adaptiveTrainingService.js';
 import adaptiveTrainingRepository from '../models/adaptiveTrainingRepository.js';
 import { getCanonicalWorkoutEntries } from '../services/workoutDeduplicationService.js';
@@ -91,7 +92,7 @@ describe('adaptiveTrainingService', () => {
       sessions_per_week: 3,
       max_duration_minutes: 45,
       recovery_window_hours: 72,
-      preferred_muscles: ['back'],
+      preferred_muscles: ['middle back'],
       candidate_workout_preset_ids: [],
       avoid_consecutive_training_days: true,
     });
@@ -108,7 +109,7 @@ describe('adaptiveTrainingService', () => {
     expect(dashboard.recommendation.rationale).toContainEqual(
       expect.objectContaining({
         code: 'preferred_muscles',
-        muscles: ['back'],
+        muscles: ['middle back'],
       })
     );
     expect(dashboard.hiddenDuplicateWorkouts).toBe(2);
@@ -254,5 +255,57 @@ describe('adaptiveTrainingService', () => {
         '2026-08-19'
       )
     ).rejects.toThrow('Workout preset 999 is not available');
+  });
+  it('does not recommend a heavily trained muscle just because another provider uses an alias', async () => {
+    vi.mocked(getCanonicalWorkoutEntries).mockResolvedValue({
+      allEntries: [],
+      duplicateSummary: { hiddenCount: 0, hiddenBySource: {} },
+      workoutEntries: [
+        {
+          id: 'completed-chest',
+          entry_date: '2026-08-19',
+          exercise_name: 'Chest Press',
+          exercise_primary_muscles: '["pectoralis major"]',
+          exercise_secondary_muscles: '[]',
+          exercise_source: 'Speediance',
+          exercise_preset_entry_id: 'completed-session',
+          sets: [{ weight: 100, reps: 10 }],
+          duration_minutes: 30,
+        } as unknown as ReportExerciseEntryRow,
+      ],
+    });
+    const result = await adaptiveTrainingService.getAdaptiveTrainingDashboard(
+      '00000000-0000-4000-8000-000000000100',
+      '00000000-0000-4000-8000-000000000100',
+      '2026-08-19'
+    );
+    expect(
+      result.muscleLoad.find((item) => item.muscle === 'chest')?.loadScore
+    ).toBeGreaterThan(55);
+    expect(result.recommendation.presetName).toBe('Back Day');
+  });
+
+  it('does not silently expand an unavailable explicit selection to all other presets', async () => {
+    vi.mocked(adaptiveTrainingRepository.getSettings).mockResolvedValue({
+      user_id: '00000000-0000-4000-8000-000000000100',
+      enabled: true,
+      sessions_per_week: 3,
+      max_duration_minutes: 45,
+      recovery_window_hours: 72,
+      preferred_muscles: [],
+      candidate_workout_preset_ids: [999],
+      avoid_consecutive_training_days: true,
+    });
+    const result = await adaptiveTrainingService.getAdaptiveTrainingDashboard(
+      '00000000-0000-4000-8000-000000000100',
+      '00000000-0000-4000-8000-000000000100',
+      '2026-08-19'
+    );
+    expect(result.availablePresets).toHaveLength(2);
+    expect(result.recommendation.kind).toBe('recovery');
+    expect(result.recommendation.presetId).toBeNull();
+    expect(result.recommendation.rationale).toContainEqual(
+      expect.objectContaining({ code: 'no_eligible_presets' })
+    );
   });
 });

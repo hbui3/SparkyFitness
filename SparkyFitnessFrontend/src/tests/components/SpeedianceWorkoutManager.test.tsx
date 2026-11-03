@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import '@testing-library/jest-dom';
 import SpeedianceWorkoutManager from '@/pages/Exercises/SpeedianceWorkoutManager';
 
@@ -32,6 +38,7 @@ const mockWorkoutDetail = {
     },
   ],
 };
+const mockLoadWorkout = jest.fn();
 
 jest.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { id: 'user-1' } }),
@@ -57,10 +64,7 @@ jest.mock('@/hooks/Exercises/useSpeedianceWorkoutManager', () => ({
   }),
   useLoadSpeedianceWorkout: () => ({
     isPending: false,
-    mutate: (
-      _input: { code: string },
-      options: { onSuccess: (detail: typeof mockWorkoutDetail) => void }
-    ) => options.onSuccess(mockWorkoutDetail),
+    mutate: mockLoadWorkout,
   }),
   useSearchSpeedianceExercises: () => ({
     data: undefined,
@@ -83,7 +87,37 @@ jest.mock('@/hooks/Exercises/useSpeedianceWorkoutManager', () => ({
 }));
 
 describe('SpeedianceWorkoutManager', () => {
-  beforeEach(() => mockSaveWorkout.mockClear());
+  beforeEach(() => {
+    mockSaveWorkout.mockClear();
+    mockLoadWorkout
+      .mockReset()
+      .mockImplementation(
+        (
+          _input: { code: string },
+          options: { onSuccess: (detail: typeof mockWorkoutDetail) => void }
+        ) => options.onSuccess(mockWorkoutDetail)
+      );
+  });
+
+  it('ignores a late detail response after the user cancels and starts a new workout', () => {
+    mockLoadWorkout.mockImplementation(() => undefined);
+    render(<SpeedianceWorkoutManager />);
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    const callbacks = mockLoadWorkout.mock.calls[0]?.[1] as {
+      onSuccess: (detail: typeof mockWorkoutDetail) => void;
+    };
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    fireEvent.click(screen.getByRole('button', { name: /new workout/i }));
+    const name = screen.getByRole('textbox', { name: /workout name/i });
+    fireEvent.change(name, { target: { value: 'My new workout' } });
+
+    act(() => callbacks.onSuccess(mockWorkoutDetail));
+
+    expect(name).toHaveValue('My new workout');
+    expect(
+      screen.queryByRole('button', { name: /add warm-up/i })
+    ).not.toBeInTheDocument();
+  });
 
   it('shows remote workouts and their native Sparky linkage', () => {
     render(<SpeedianceWorkoutManager />);

@@ -120,7 +120,7 @@ export async function getCredentialProviderValues({
 
   return {
     providerId: row.id,
-    username,
+    username: username.trim(),
     password,
     baseUrl: row.base_url,
     lastSyncAt: toDate(row.last_sync_at),

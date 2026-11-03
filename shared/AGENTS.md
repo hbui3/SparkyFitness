@@ -54,4 +54,5 @@ _Last updated: 2026-10-24_
 
 - Fork contracts include private coach profiles, pantry/shopping/meal plans, Telegram, training feedback and adaptive training. Weekly workout plans retain `cycle_length_weeks` and assignment `week_index` alongside upstream sequential sessions.
 
+- `TrainingTimeline.api.zod.ts` distinguishes weekly days from sequential sessions through `scheduleType`, nullable `dayOfWeek`, and optional session metadata. Clients must not turn a null sequential day into Sunday.
 - Meal-planning dashboards may include `overdueEntries` separately from the strict range-scoped `planEntries`/`dailyNutrition` contract. Adaptive readiness scores are nullable when no signals exist. Provider sync responses distinguish successful completion from partial failure with a boolean `success`.

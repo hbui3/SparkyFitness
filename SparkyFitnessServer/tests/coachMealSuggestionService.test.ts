@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CoachProfileResponse } from '@workspace/shared';
+import { veganMealProfile as profile } from './helpers/coachMealProfile.js';
 import coachProfileService from '../services/coachProfileService.js';
 import {
   SWISS_RETAIL_PRODUCT_CATALOG,
@@ -23,33 +23,6 @@ vi.mock('../services/coachProfileService.js', () => ({
     validateMealSuggestion: vi.fn(),
   },
 }));
-
-const profile: CoachProfileResponse = {
-  enabled: true,
-  dietaryPattern: 'vegan',
-  primaryGoal: 'maintain_weight',
-  calorieTarget: 2400,
-  proteinTargetG: 140,
-  waterTargetMl: 2500,
-  excludedIngredients: [],
-  preferredIngredients: [],
-  dislikedIngredients: [],
-  routines: [],
-  coachingNotes: null,
-  adaptiveCheckInsEnabled: true,
-  adaptiveStartTime: '07:00',
-  adaptiveEndTime: '20:00',
-  adaptiveIntervalMinutes: 120,
-  proactiveCategories: ['nutrition', 'hydration'],
-  memoryEnabled: true,
-  autoMemoryEnabled: false,
-  dailyCheckInEnabled: true,
-  dailyCheckInTime: '20:00',
-  weeklyReviewEnabled: true,
-  weeklyReviewDay: 0,
-  weeklyReviewTime: '18:00',
-  updatedAt: '2026-08-24T08:00:00.000Z',
-};
 
 const targets = {
   caloriesRemaining: 700,
@@ -83,6 +56,52 @@ describe('coachMealSuggestionService', () => {
     ).not.toEqual(
       expect.arrayContaining(['Hähnchenbrust', 'Lachsfilet', 'Eier'])
     );
+  });
+
+  it('covers breakfast and snack as well as lunch and dinner for a vegan day', async () => {
+    const catalog = await getCoachMealCatalog('user-1');
+    for (const slot of ['breakfast', 'lunch', 'dinner', 'snack'] as const) {
+      expect(catalog.some((meal) => meal.mealSlots.includes(slot))).toBe(true);
+    }
+    const breakfast = catalog.find((meal) => meal.id === 'banana-oat-porridge');
+    expect(breakfast?.prepMinutes).toBe(10);
+    expect(breakfast?.ingredients).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nameDe: 'Haferflocken', amount: 80 }),
+        expect.objectContaining({ nameDe: 'Kürbiskerne', amount: 15 }),
+        expect.objectContaining({ nameDe: 'Wasser', shoppingRequired: false }),
+      ])
+    );
+    expect(coachProfileService.validateMealSuggestion).toHaveBeenCalledWith(
+      'user-1',
+      expect.arrayContaining([
+        expect.stringContaining('gluten'),
+        expect.stringContaining('pumpkin seed'),
+      ])
+    );
+  });
+
+  it('never offers the new vegan breakfast when its ingredients fail the food rules', async () => {
+    vi.mocked(coachProfileService.validateMealSuggestion).mockImplementation(
+      async (_userId, ingredients) => ({
+        allowed: !ingredients.some((ingredient) =>
+          ingredient.includes('pumpkin seed')
+        ),
+        violations: [],
+      })
+    );
+    expect(await getCoachMealCatalog('user-1', 'breakfast')).toEqual([]);
+    expect(
+      await getCoachMealSuggestionById('user-1', 'banana-oat-porridge')
+    ).toBeNull();
+
+    vi.mocked(coachProfileService.getCoachProfile).mockResolvedValue({
+      ...profile,
+      dislikedIngredients: ['banana'],
+    });
+    vi.mocked(coachProfileService.validateMealSuggestion).mockClear();
+    expect(await getCoachMealCatalog('user-1', 'breakfast')).toEqual([]);
+    expect(coachProfileService.validateMealSuggestion).not.toHaveBeenCalled();
   });
 
   it('never presents a blocked candidate and tries the next safe meal', async () => {

@@ -1,0 +1,28 @@
+import type { CoachProfileResponse } from '@workspace/shared';
+
+export const veganMealProfile: CoachProfileResponse = {
+  enabled: true,
+  dietaryPattern: 'vegan',
+  primaryGoal: 'maintain_weight',
+  calorieTarget: 2400,
+  proteinTargetG: 140,
+  waterTargetMl: 2500,
+  excludedIngredients: [],
+  preferredIngredients: [],
+  dislikedIngredients: [],
+  routines: [],
+  coachingNotes: null,
+  adaptiveCheckInsEnabled: true,
+  adaptiveStartTime: '07:00',
+  adaptiveEndTime: '20:00',
+  adaptiveIntervalMinutes: 120,
+  proactiveCategories: ['nutrition', 'hydration'],
+  memoryEnabled: true,
+  autoMemoryEnabled: false,
+  dailyCheckInEnabled: true,
+  dailyCheckInTime: '20:00',
+  weeklyReviewEnabled: true,
+  weeklyReviewDay: 0,
+  weeklyReviewTime: '18:00',
+  updatedAt: '2026-08-24T08:00:00.000Z',
+};

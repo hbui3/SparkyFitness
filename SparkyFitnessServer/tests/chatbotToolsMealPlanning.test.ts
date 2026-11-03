@@ -366,4 +366,70 @@ describe('sparky_suggest_next_meal', () => {
       entryId
     );
   });
+
+  it('can explicitly clear a pantry expiry date and retailer preference through chat', async () => {
+    const tools = buildMealPlanningTools('user-1', 'Europe/Berlin');
+    const itemId = '30000000-0000-4000-8000-000000000001';
+    const result = await tools.sparky_manage_meal_pantry.execute!(
+      {
+        action: 'update',
+        item_id: itemId,
+        expires_on: null,
+        preferred_retailer: null,
+        preferred_retailer_product_id: null,
+      },
+      toolOptions('clear-pantry-expiry')
+    );
+    expect(result).toContain('Managed Meal Pantry');
+    expect(coachMealPlanningService.updatePantryItem).toHaveBeenCalledWith(
+      'user-1',
+      itemId,
+      expect.objectContaining({ expiresOn: null, preferredProduct: null })
+    );
+  });
+
+  it.each(['2026-02-30', '2026-13-01'])(
+    'rejects an impossible pantry expiry date %s without changing stock',
+    async (date) => {
+      const result = await buildMealPlanningTools('user-1', 'Europe/Berlin')
+        .sparky_manage_meal_pantry.execute!(
+        {
+          action: 'update',
+          item_id: '30000000-0000-4000-8000-000000000001',
+          expires_on: date,
+        },
+        toolOptions('invalid-pantry-expiry')
+      );
+      expect(result).toContain('VALIDATION');
+      expect(coachMealPlanningService.updatePantryItem).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not report a successful pantry update when no editable fields were supplied', async () => {
+    const result = await buildMealPlanningTools('user-1', 'Europe/Berlin')
+      .sparky_manage_meal_pantry.execute!(
+      {
+        action: 'update',
+        item_id: '30000000-0000-4000-8000-000000000001',
+      },
+      toolOptions('empty-pantry-update')
+    );
+    expect(result).toContain('VALIDATION');
+    expect(coachMealPlanningService.updatePantryItem).not.toHaveBeenCalled();
+  });
+
+  it('rejects clearing only half of a retailer preference', async () => {
+    const result = await buildMealPlanningTools('user-1', 'Europe/Berlin')
+      .sparky_manage_meal_pantry.execute!(
+      {
+        action: 'update',
+        item_id: '30000000-0000-4000-8000-000000000001',
+        preferred_retailer: null,
+        preferred_retailer_product_id: '12345',
+      },
+      toolOptions('half-pantry-preference')
+    );
+    expect(result).toContain('VALIDATION');
+    expect(coachMealPlanningService.updatePantryItem).not.toHaveBeenCalled();
+  });
 });

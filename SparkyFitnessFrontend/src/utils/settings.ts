@@ -177,6 +177,7 @@ export const resolveProviderCredentialPayload = (
   app_key: string | null | undefined;
 } => {
   const type = editData.provider_type || '';
+  const usesAccountPassword = type === 'speediance' || type === 'igpsport';
 
   // The stored secret belongs to the row's current type. If the type changed,
   // a blank field clears (null) rather than preserves (undefined).
@@ -193,6 +194,8 @@ export const resolveProviderCredentialPayload = (
     app_id = editData.app_id || blankCredential;
   } else if (OAUTH_TOKEN_PROVIDERS.includes(type)) {
     app_id = editData.app_id?.trim() || blankCredential;
+  } else if (usesAccountPassword) {
+    app_id = editData.app_id?.trim() || null;
   } else {
     app_id = editData.app_id || null;
   }
@@ -201,6 +204,9 @@ export const resolveProviderCredentialPayload = (
   if (type === 'yazio') {
     app_key = yazioAppKey;
   } else if (type === 'openfoodfacts') {
+    app_key = editData.app_key || blankCredential;
+  } else if (usesAccountPassword) {
+    // Spaces are part of an account password; only an empty field means keep it.
     app_key = editData.app_key || blankCredential;
   } else {
     app_key = editData.app_key?.trim() || blankCredential;

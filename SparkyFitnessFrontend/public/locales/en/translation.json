@@ -3221,7 +3221,10 @@
         "wednesday": "Wednesday"
       },
       "weeklyReview": "Weekly review",
-      "weeklyReviewDescription": "Seven-day adherence plus your 30-day weight and nutrition trend."
+      "weeklyReviewDescription": "Seven-day adherence plus your 30-day weight and nutrition trend.",
+      "loadBeforeEditing": "Your saved coach settings could not be loaded. Try again before editing them.",
+      "memoryLoadBeforeEditing": "Saved memories could not be loaded. Try again to view and manage them.",
+      "telegramStatusUnavailable": "The Telegram connection status could not be loaded. Try again before changing the connection."
     },
     "mealPlanning": {
       "title": "Meal Planning",
@@ -3900,7 +3903,8 @@
     "selectRow": "Select row",
     "unknown": "Unknown",
     "avg": "Avg",
-    "max": "Max"
+    "max": "Max",
+    "retry": "Try again"
   },
   "diary": {
     "nutritionSummary": "Nutrition Summary",
@@ -10165,7 +10169,9 @@
       "in_progress": "In progress",
       "planned": "Planned",
       "missed": "Missed"
-    }
+    },
+    "retry": "Try again",
+    "session": "Session {{session}}"
   },
   "trainingCalendar": {
     "title": "Training calendar",

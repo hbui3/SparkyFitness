@@ -314,5 +314,90 @@ describe('coachContextService', () => {
         expect.stringContaining('2026-08-24 planned Full Body A'),
       ])
     );
+
+    if (!snapshot.trainingTimeline)
+      throw new Error('Expected a training timeline');
+    const weeklyPlan = snapshot.trainingTimeline.activePlans[0]!;
+    const sequentialLines = coachContextService
+      .formatCoachContext({
+        ...snapshot,
+        trainingTimeline: {
+          ...snapshot.trainingTimeline,
+          activePlans: [
+            {
+              ...weeklyPlan,
+              scheduleType: 'sequential',
+              assignments: [
+                {
+                  ...weeklyPlan.assignments[0]!,
+                  dayOfWeek: null,
+                  sessionIndex: 2,
+                  sessionName: 'Upper body',
+                },
+              ],
+            },
+          ],
+        },
+      })
+      .join('\n');
+    expect(sequentialLines).toContain('session 2 (Upper body) Full Body A');
+    expect(sequentialLines).not.toContain('weekday null');
+    expect(sequentialLines).not.toContain('cycle week');
+
+    const noTargets = coachContextService.coachTodayStatusFromSnapshot(
+      {
+        ...snapshot,
+        today: {
+          ...snapshot.today,
+          calorieTarget: null,
+          proteinTargetG: null,
+          waterTargetMl: null,
+          caloriesRemaining: null,
+          proteinRemainingG: null,
+          waterRemainingMl: null,
+        },
+      },
+      'en'
+    );
+    expect(noTargets.nextAction).toContain('Set your daily targets in Goals');
+    expect(noTargets.nextAction).not.toContain('well covered');
+    const caloriesStillOpen = coachContextService.coachTodayStatusFromSnapshot(
+      {
+        ...snapshot,
+        today: {
+          ...snapshot.today,
+          waterRemainingMl: 0,
+          proteinRemainingG: 0,
+          caloriesRemaining: 600,
+        },
+      },
+      'en'
+    );
+    expect(caloriesStillOpen.nextAction).toContain('600 kcal remain');
+    const lowRecoveryWithScheduledWorkout =
+      coachContextService.coachTodayStatusFromSnapshot(
+        {
+          ...snapshot,
+          recovery: { ...snapshot.recovery, trainingReadinessScore: 25 },
+          trainingSchedule: {
+            dueToday: [
+              {
+                name: 'Heavy workout',
+                date: today,
+                workoutPresetId: 44,
+                workoutPlanAssignmentId: 9,
+                completed: false,
+              },
+            ],
+            completedToday: [],
+            missedYesterday: [],
+            carriedForwardToday: [],
+          },
+        },
+        'en'
+      );
+    expect(lowRecoveryWithScheduledWorkout.nextAction).toContain(
+      'Prioritize recovery'
+    );
   });
 });

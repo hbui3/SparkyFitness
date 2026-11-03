@@ -122,9 +122,56 @@ export interface DirectWaterLogCommand {
 const WATER_COMMAND_EXCLUSION =
   /(?:\?|\b(?:wie\s+viel|how\s+much|ziel|goal|verbleib|remaining|fehlt|left|brauche|need|soll|should|genug|enough|empfiehl|recommend|nicht|kein(?:e|en|er|es)?|not|no)\b)/i;
 
+const DIRECT_WATER_WORDS = new Set([
+  'ich',
+  'habe',
+  'hab',
+  'heute',
+  'gerade',
+  'soeben',
+  'eben',
+  'jetzt',
+  'getrunken',
+  'trank',
+  'trinke',
+  'bitte',
+  'eintragen',
+  'eingetragen',
+  'erfassen',
+  'erfasst',
+  'logge',
+  'protokolliere',
+  'notiere',
+  'mir',
+  'noch',
+  'weitere',
+  'i',
+  'have',
+  'had',
+  'just',
+  'today',
+  'drank',
+  'drunk',
+  'drinking',
+  'logged',
+  'log',
+  'please',
+  'record',
+  'recorded',
+  'add',
+  'track',
+  'tracked',
+  'save',
+  'saved',
+  'me',
+  'another',
+  'more',
+]);
+
 /**
  * Recognizes only unambiguous, positive water log statements. Questions and
- * goal/advice requests stay in the regular AI path.
+ * goal/advice requests, dated entries, totals and mixed meals stay in the AI
+ * path, where the requested date and all parts of the message are preserved.
  */
 export function parseDirectWaterLogCommand(
   text: string
@@ -140,6 +187,13 @@ export function parseDirectWaterLogCommand(
     ),
   ];
   if (matches.length !== 1) return null;
+  const remainingWords = normalized
+    .replace(matches[0][0], ' ')
+    .replace(/\b(?:wasser|water)\b/gi, ' ')
+    .toLowerCase()
+    .split(/[\s.!;,]+/)
+    .filter(Boolean);
+  if (remainingWords.some((word) => !DIRECT_WATER_WORDS.has(word))) return null;
 
   const amount = Number(matches[0]?.[1]?.replace(',', '.'));
   const unit = matches[0]?.[2]?.toLowerCase();

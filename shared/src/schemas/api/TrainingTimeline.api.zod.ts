@@ -34,11 +34,15 @@ export const activeTrainingPlanSchema = z.object({
   description: z.string().nullable(),
   startDate: calendarDaySchema,
   endDate: calendarDaySchema.nullable(),
+  scheduleType: z.enum(['weekly', 'sequential']).optional(),
   cycleLengthWeeks: z.number().int().min(1).max(8),
   assignments: z.array(
     z.object({
-      dayOfWeek: z.number().int().min(0).max(6),
+      assignmentId: z.number().int().positive().nullable().optional(),
+      dayOfWeek: z.number().int().min(0).max(6).nullable(),
       weekIndex: z.number().int().min(0).max(7),
+      sessionIndex: z.number().int().positive().nullable().optional(),
+      sessionName: z.string().nullable().optional(),
       presetId: z.number().int().positive().nullable(),
       workoutName: z.string(),
       exerciseCount: z.number().int().nonnegative(),

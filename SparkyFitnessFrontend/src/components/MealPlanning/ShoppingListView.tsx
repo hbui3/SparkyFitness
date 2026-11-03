@@ -1,5 +1,7 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useRetryableOperationId } from '@/hooks/useRetryableOperationId';
+import { changedFieldsPatch } from '@/utils/changedFieldsPatch';
 import {
   ExternalLink,
   ListPlus,
@@ -55,7 +57,6 @@ import {
   useRecalculateCoachShoppingList,
   useRemoveCoachShoppingItem,
 } from '@/hooks/Settings/useMealPlanning';
-import { generateClientId } from '@/utils/generateClientId';
 import RetailProductNote from './RetailProductNote';
 import {
   formatPlanningQuantity,
@@ -212,6 +213,7 @@ export default function ShoppingListView({
   const patchItem = usePatchCoachShoppingItem();
   const removeItem = useRemoveCoachShoppingItem();
   const confirmPurchase = useConfirmCoachShoppingPurchase();
+  const purchaseOperation = useRetryableOperationId();
   const recalculateList = useRecalculateCoachShoppingList();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] =
@@ -260,6 +262,42 @@ export default function ShoppingListView({
   const selectedCount = selectedIds.size;
   const purchaseSelectionValid =
     selectedCount > 0 && purchases.length === selectedCount;
+  const previousProductKeys = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    const currentProductKeys = new Map(
+      neededItems.map((item) => {
+        const product = item.selectedProduct ?? item.productOptions[0] ?? null;
+        return [
+          item.id,
+          product
+            ? `${product.retailer}:${product.retailerProductId}:${product.packageQuantity}:${product.packageUnit}`
+            : 'none',
+        ];
+      })
+    );
+    const selectableIds = new Set(
+      [...currentProductKeys.keys()].filter(
+        (id) =>
+          !previousProductKeys.current.has(id) ||
+          previousProductKeys.current.get(id) === currentProductKeys.get(id)
+      )
+    );
+    const availableForSelection = (id: string) => selectableIds.has(id);
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter(availableForSelection));
+      return next.size === current.size ? current : next;
+    });
+    setPurchaseQuantities((current) => {
+      const remaining = Object.entries(current).filter(([id]) =>
+        availableForSelection(id)
+      );
+      return remaining.length === Object.keys(current).length
+        ? current
+        : Object.fromEntries(remaining);
+    });
+    previousProductKeys.current = currentProductKeys;
+  }, [neededItems]);
 
   const clearPurchaseSelection = (itemId: string) => {
     setSelectedIds((current) => {
@@ -298,6 +336,7 @@ export default function ShoppingListView({
 
   const submitItem = (event: FormEvent) => {
     event.preventDefault();
+    if (createItem.isPending || patchItem.isPending) return;
     const requiredQuantity = Number(form.requiredQuantity);
     if (
       !form.name.trim() ||
@@ -310,11 +349,22 @@ export default function ShoppingListView({
       const originalProductKey = currentProductKey(editingItem);
       const productChanged = form.productKey !== originalProductKey;
       const request: PatchCoachShoppingItemRequest = {
-        name: form.name.trim(),
-        requiredQuantity,
-        category: form.category,
-        quantityLocked: form.quantityLocked,
-        notes: form.notes.trim() || null,
+        ...changedFieldsPatch(
+          {
+            name: editingItem.name,
+            requiredQuantity: editingItem.requiredQuantity,
+            category: editingItem.category,
+            quantityLocked: editingItem.quantityLocked,
+            notes: editingItem.notes,
+          },
+          {
+            name: form.name.trim(),
+            requiredQuantity,
+            category: form.category,
+            quantityLocked: form.quantityLocked,
+            notes: form.notes.trim() || null,
+          }
+        ),
         ...(productChanged
           ? {
               selectedProduct: selectedProductForKey(
@@ -324,6 +374,10 @@ export default function ShoppingListView({
             }
           : {}),
       };
+      if (Object.keys(request).length === 0) {
+        setDialogOpen(false);
+        return;
+      }
       patchItem.mutate(
         { itemId: editingItem.id, request },
         { onSuccess: () => setDialogOpen(false) }
@@ -361,16 +415,23 @@ export default function ShoppingListView({
 
   const confirmSelectedPurchase = () => {
     if (!purchaseSelectionValid) return;
+    const purchaseBatch = purchases
+      .map(({ itemId, quantity }) => ({
+        itemId,
+        quantity,
+      }))
+      .sort((left, right) => left.itemId.localeCompare(right.itemId));
+    const operationId = purchaseOperation.getOperationId(
+      JSON.stringify(purchaseBatch)
+    );
     confirmPurchase.mutate(
       {
-        operationId: generateClientId(),
-        purchases: purchases.map(({ itemId, quantity }) => ({
-          itemId,
-          quantity,
-        })),
+        operationId,
+        purchases: purchaseBatch,
       },
       {
         onSuccess: () => {
+          purchaseOperation.completeOperation(operationId);
           setSelectedIds(new Set());
           setPurchaseQuantities({});
           setPurchaseDialogOpen(false);
@@ -611,7 +672,13 @@ export default function ShoppingListView({
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          if (!createItem.isPending && !patchItem.isPending)
+            setDialogOpen(open);
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -630,196 +697,209 @@ export default function ShoppingListView({
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={submitItem}>
-            <div className="space-y-2">
-              <Label htmlFor="shopping-item-name">
-                {t('settings.mealPlanning.fields.name', 'Name')}
-              </Label>
-              <Input
-                id="shopping-item-name"
-                value={form.name}
-                maxLength={200}
-                required
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <fieldset
+              disabled={createItem.isPending || patchItem.isPending}
+              className="min-w-0 space-y-4"
+            >
               <div className="space-y-2">
-                <Label htmlFor="shopping-item-quantity">
-                  {t(
-                    'settings.mealPlanning.fields.requiredQuantity',
-                    'Needed amount'
-                  )}
+                <Label htmlFor="shopping-item-name">
+                  {t('settings.mealPlanning.fields.name', 'Name')}
                 </Label>
                 <Input
-                  id="shopping-item-quantity"
-                  type="number"
-                  min="0.001"
-                  step="any"
+                  id="shopping-item-name"
+                  value={form.name}
+                  maxLength={200}
                   required
-                  value={form.requiredQuantity}
                   onChange={(event) =>
-                    setForm({ ...form, requiredQuantity: event.target.value })
+                    setForm({ ...form, name: event.target.value })
                   }
                 />
               </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="shopping-item-quantity">
+                    {t(
+                      'settings.mealPlanning.fields.requiredQuantity',
+                      'Needed amount'
+                    )}
+                  </Label>
+                  <Input
+                    id="shopping-item-quantity"
+                    type="number"
+                    min="0.001"
+                    step="any"
+                    required
+                    value={form.requiredQuantity}
+                    onChange={(event) =>
+                      setForm({ ...form, requiredQuantity: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="shopping-item-unit">
+                    {t('settings.mealPlanning.fields.unit', 'Unit')}
+                  </Label>
+                  <Select
+                    value={form.unit}
+                    disabled={editingItem !== null}
+                    onValueChange={(unit: CoachMealPlanningUnit) =>
+                      setForm({ ...form, unit })
+                    }
+                  >
+                    <SelectTrigger id="shopping-item-unit">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MEAL_PLANNING_UNITS.map((unit) => (
+                        <SelectItem key={unit} value={unit}>
+                          {planningUnitLabel(t, unit)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="shopping-item-unit">
-                  {t('settings.mealPlanning.fields.unit', 'Unit')}
+                <Label htmlFor="shopping-item-category">
+                  {t(
+                    'settings.mealPlanning.fields.category',
+                    'Grocery section'
+                  )}
                 </Label>
                 <Select
-                  value={form.unit}
-                  disabled={editingItem !== null}
-                  onValueChange={(unit: CoachMealPlanningUnit) =>
-                    setForm({ ...form, unit })
+                  value={form.category}
+                  onValueChange={(category: CoachMealPlanningCategory) =>
+                    setForm({ ...form, category })
                   }
                 >
-                  <SelectTrigger id="shopping-item-unit">
+                  <SelectTrigger id="shopping-item-category">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {MEAL_PLANNING_UNITS.map((unit) => (
-                      <SelectItem key={unit} value={unit}>
-                        {planningUnitLabel(t, unit)}
+                    {MEAL_PLANNING_CATEGORIES.map((category) => (
+                      <SelectItem key={category} value={category}>
+                        {planningCategoryLabel(t, category)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="shopping-item-category">
-                {t('settings.mealPlanning.fields.category', 'Grocery section')}
-              </Label>
-              <Select
-                value={form.category}
-                onValueChange={(category: CoachMealPlanningCategory) =>
-                  setForm({ ...form, category })
-                }
-              >
-                <SelectTrigger id="shopping-item-category">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MEAL_PLANNING_CATEGORIES.map((category) => (
-                    <SelectItem key={category} value={category}>
-                      {planningCategoryLabel(t, category)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="shopping-item-notes">
-                {t('settings.mealPlanning.fields.notes', 'Notes')}
-              </Label>
-              <Textarea
-                id="shopping-item-notes"
-                rows={2}
-                maxLength={1000}
-                value={form.notes}
-                onChange={(event) =>
-                  setForm({ ...form, notes: event.target.value })
-                }
-              />
-            </div>
-            {editingItem &&
-              compatibleProductOptions(editingItem).length > 0 && (
-                <div className="space-y-2">
-                  <Label htmlFor="shopping-item-product">
-                    {t(
-                      'settings.mealPlanning.fields.productPreference',
-                      'Preferred product'
-                    )}
-                  </Label>
-                  <Select
-                    value={form.productKey}
-                    onValueChange={(value) =>
-                      setForm({ ...form, productKey: value })
-                    }
-                  >
-                    <SelectTrigger id="shopping-item-product">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">
-                        {t(
-                          'settings.mealPlanning.fields.noPreference',
-                          'No preference'
-                        )}
-                      </SelectItem>
-                      {compatibleProductOptions(editingItem).map((product) => (
-                        <SelectItem
-                          key={productKey(product)}
-                          value={productKey(product)}
-                        >
-                          {retailerLabel(t, product.retailer)} · {product.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedProductForKey(
-                    compatibleProductOptions(editingItem),
-                    form.productKey
-                  )?.note && (
-                    <RetailProductNote
-                      note={
-                        selectedProductForKey(
-                          compatibleProductOptions(editingItem),
-                          form.productKey
-                        )?.note ?? ''
-                      }
-                    />
-                  )}
-                </div>
-              )}
-            {editingItem && (
-              <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
-                <Checkbox
-                  checked={form.quantityLocked}
-                  onCheckedChange={(checked) =>
-                    setForm({ ...form, quantityLocked: checked === true })
+              <div className="space-y-2">
+                <Label htmlFor="shopping-item-notes">
+                  {t('settings.mealPlanning.fields.notes', 'Notes')}
+                </Label>
+                <Textarea
+                  id="shopping-item-notes"
+                  rows={2}
+                  maxLength={1000}
+                  value={form.notes}
+                  onChange={(event) =>
+                    setForm({ ...form, notes: event.target.value })
                   }
                 />
-                <span>
-                  <span className="font-medium">
-                    {t(
-                      'settings.mealPlanning.shopping.lockQuantity',
-                      'Keep this amount fixed'
+              </div>
+              {editingItem &&
+                compatibleProductOptions(editingItem).length > 0 && (
+                  <div className="space-y-2">
+                    <Label htmlFor="shopping-item-product">
+                      {t(
+                        'settings.mealPlanning.fields.productPreference',
+                        'Preferred product'
+                      )}
+                    </Label>
+                    <Select
+                      value={form.productKey}
+                      onValueChange={(value) =>
+                        setForm({ ...form, productKey: value })
+                      }
+                    >
+                      <SelectTrigger id="shopping-item-product">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">
+                          {t(
+                            'settings.mealPlanning.fields.noPreference',
+                            'No preference'
+                          )}
+                        </SelectItem>
+                        {compatibleProductOptions(editingItem).map(
+                          (product) => (
+                            <SelectItem
+                              key={productKey(product)}
+                              value={productKey(product)}
+                            >
+                              {retailerLabel(t, product.retailer)} ·{' '}
+                              {product.name}
+                            </SelectItem>
+                          )
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {selectedProductForKey(
+                      compatibleProductOptions(editingItem),
+                      form.productKey
+                    )?.note && (
+                      <RetailProductNote
+                        note={
+                          selectedProductForKey(
+                            compatibleProductOptions(editingItem),
+                            form.productKey
+                          )?.note ?? ''
+                        }
+                      />
                     )}
+                  </div>
+                )}
+              {editingItem && (
+                <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
+                  <Checkbox
+                    checked={form.quantityLocked}
+                    onCheckedChange={(checked) =>
+                      setForm({ ...form, quantityLocked: checked === true })
+                    }
+                  />
+                  <span>
+                    <span className="font-medium">
+                      {t(
+                        'settings.mealPlanning.shopping.lockQuantity',
+                        'Keep this amount fixed'
+                      )}
+                    </span>
+                    <span className="block text-muted-foreground">
+                      {t(
+                        'settings.mealPlanning.shopping.lockQuantityDescription',
+                        'Future plan updates will not recalculate it.'
+                      )}
+                    </span>
                   </span>
-                  <span className="block text-muted-foreground">
-                    {t(
-                      'settings.mealPlanning.shopping.lockQuantityDescription',
-                      'Future plan updates will not recalculate it.'
-                    )}
-                  </span>
-                </span>
-              </label>
-            )}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-              >
-                {t('common.cancel', 'Cancel')}
-              </Button>
-              <Button
-                type="submit"
-                disabled={createItem.isPending || patchItem.isPending}
-              >
-                {t('common.save', 'Save')}
-              </Button>
-            </DialogFooter>
+                </label>
+              )}
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDialogOpen(false)}
+                >
+                  {t('common.cancel', 'Cancel')}
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={createItem.isPending || patchItem.isPending}
+                >
+                  {t('common.save', 'Save')}
+                </Button>
+              </DialogFooter>
+            </fieldset>
           </form>
         </DialogContent>
       </Dialog>
 
       <AlertDialog
         open={purchaseDialogOpen}
-        onOpenChange={setPurchaseDialogOpen}
+        onOpenChange={(open) => {
+          if (!confirmPurchase.isPending) setPurchaseDialogOpen(open);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -853,12 +933,15 @@ export default function ShoppingListView({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>
+            <AlertDialogCancel disabled={confirmPurchase.isPending}>
               {t('common.cancel', 'Cancel')}
             </AlertDialogCancel>
             <AlertDialogAction
               disabled={!purchaseSelectionValid || confirmPurchase.isPending}
-              onClick={confirmSelectedPurchase}
+              onClick={(event) => {
+                event.preventDefault();
+                confirmSelectedPurchase();
+              }}
             >
               {t(
                 'settings.mealPlanning.shopping.confirmPurchase',

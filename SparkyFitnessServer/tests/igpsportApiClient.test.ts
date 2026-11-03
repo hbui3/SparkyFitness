@@ -31,6 +31,27 @@ describe('IGPSportApiClient', () => {
     vi.clearAllMocks();
   });
 
+  it.each([null, 'unexpected', {}, { rows: null }, { rows: [{}] }])(
+    'rejects malformed history instead of treating it as a successful empty sync: %j',
+    async (data) => {
+      post.mockResolvedValue({
+        data: { code: 0, data: { access_token: 'access-token' } },
+      });
+      get.mockResolvedValue({ data: { code: 0, data } });
+      const client = new IGPSportApiClient({
+        region: 'Global',
+        timezone: 'Europe/Berlin',
+        httpClient,
+        downloadFetch,
+      });
+      await client.login('rider@example.com', 'local-password');
+
+      await expect(
+        client.getActivitiesPage('2026-08-01', '2026-08-18')
+      ).rejects.toBeInstanceOf(IGPSportApiError);
+    }
+  );
+
   it('logs in with the web app contract without placing credentials in headers', async () => {
     post.mockResolvedValue({
       data: { code: 200, data: { access_token: 'access-token' } },
