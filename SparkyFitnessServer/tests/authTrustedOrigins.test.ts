@@ -85,6 +85,8 @@ describe('OIDC origins across server instances', () => {
     vi.unstubAllEnvs();
   });
 
+  // Cold imports of the real auth/SSO graph under coverage can exceed 5s.
+  // Let both replicas finish before the next test resets their shared fixture.
   it('starts SSO on another instance after a provider address changes', async () => {
     const first = await createReplica();
     const second = await createReplica();
@@ -136,7 +138,7 @@ describe('OIDC origins across server instances', () => {
       expect((await response.json()).url).toContain(issuer + '/authorize');
       expect(getOidcProviders).toHaveBeenCalledTimes(1);
     }
-  });
+  }, 30_000);
 
   it('shares one snapshot within a request and refreshes it for the next request', async () => {
     const replica = await createReplica();
