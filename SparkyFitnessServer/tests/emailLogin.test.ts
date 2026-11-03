@@ -67,6 +67,8 @@ describe('email login environment precedence', () => {
     setLoginEnv(force, disable);
     expect(isEmailLoginDisabled()).toBe(disabled);
   });
+  // The first real auth import can exceed 5s under coverage on CPU-limited CI.
+  // Bound these boot checks separately; login and signup rules stay unchanged.
   it.each([
     ['false', 'true', false],
     ['true', 'true', true],
@@ -77,7 +79,8 @@ describe('email login environment precedence', () => {
       setLoginEnv(force, disable);
       const auth = await loadAuth();
       expect(auth.options.emailAndPassword?.enabled).toBe(enabled);
-    }
+    },
+    30_000
   );
   it('keeps demo credentials enabled while public email login is disabled', async () => {
     setLoginEnv('false', 'true');
