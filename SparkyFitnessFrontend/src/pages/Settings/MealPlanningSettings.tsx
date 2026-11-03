@@ -38,7 +38,7 @@ const MealPlanningSettings = () => {
   const generationOperation = useRetryableOperationId();
   const replacementOperation = useRetryableOperationId();
 
-  if (dashboard.isLoading) {
+  if (dashboard.isLoading && !dashboard.data) {
     return (
       <div
         className="space-y-4"
@@ -51,40 +51,52 @@ const MealPlanningSettings = () => {
     );
   }
 
-  if (dashboard.isError || !dashboard.data) {
-    return (
-      <Alert variant="destructive">
-        <AlertTriangle className="h-4 w-4" />
-        <AlertTitle>
-          {t(
-            'settings.mealPlanning.errorTitle',
-            'Meal planning is unavailable'
-          )}
-        </AlertTitle>
-        <AlertDescription className="mt-2 space-y-3">
-          <p>
-            {t(
-              'settings.mealPlanning.errorDescription',
-              'Your plan, shopping list, and pantry could not be loaded.'
+  const loadError = (
+    <Alert variant="destructive">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>
+        {dashboard.data
+          ? t(
+              'settings.mealPlanning.refreshErrorTitle',
+              'Meal planning could not be refreshed'
+            )
+          : t(
+              'settings.mealPlanning.errorTitle',
+              'Meal planning is unavailable'
             )}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void dashboard.refetch()}
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            {t('settings.mealPlanning.retry', 'Try again')}
-          </Button>
-        </AlertDescription>
-      </Alert>
-    );
-  }
+      </AlertTitle>
+      <AlertDescription className="mt-2 space-y-3">
+        <p>
+          {dashboard.data
+            ? t(
+                'settings.mealPlanning.refreshErrorDescription',
+                'Showing your last loaded data. Your current edits are preserved. Try again to load the latest changes.'
+              )
+            : t(
+                'settings.mealPlanning.errorDescription',
+                'Your plan, shopping list, and pantry could not be loaded.'
+              )}
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={dashboard.isFetching}
+          onClick={() => void dashboard.refetch()}
+        >
+          <RefreshCw className="mr-2 h-4 w-4" />
+          {t('settings.mealPlanning.retry', 'Try again')}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+
+  if (!dashboard.data) return loadError;
 
   const data = dashboard.data;
 
   return (
     <div className="space-y-5">
+      {dashboard.isError && loadError}
       <div className="space-y-1">
         <div className="flex items-center gap-2 text-sm font-medium">
           <CalendarDays className="h-4 w-4 text-muted-foreground" />

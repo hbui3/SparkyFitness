@@ -1226,6 +1226,88 @@ describe('MealPlanningSettings', () => {
     expect(generateClientId).toHaveBeenCalledTimes(2);
   });
 
+  it.each([false, true])(
+    'offers retry after a load failure with cached data=%s',
+    (cached) => {
+      const refetch = jest.fn();
+      jest.mocked(useCoachMealPlanningDashboard).mockReturnValue({
+        data: cached ? dashboard : undefined,
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        refetch,
+      } as unknown as ReturnType<typeof useCoachMealPlanningDashboard>);
+      render(<MealPlanningSettings />);
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        cached
+          ? 'Meal planning could not be refreshed'
+          : 'Meal planning is unavailable'
+      );
+      expect(screen.queryByRole('tab', { name: 'Plan' }) !== null).toBe(cached);
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      expect(refetch).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    {
+      tab: 'Pantry',
+      edit: 'Edit Basmati rice',
+      field: 'Target stock',
+      value: '600',
+      expected: 600,
+    },
+    {
+      tab: 'Shopping',
+      edit: 'Edit Red lentils',
+      field: 'Notes',
+      value: 'Buy after work',
+      expected: 'Buy after work',
+    },
+    {
+      tab: 'Plan',
+      edit: /Replace Red lentil bowl on /,
+      field: 'Portion size',
+      value: '1.5',
+      expected: 1.5,
+    },
+  ])(
+    'preserves the $tab draft through a failed background refresh and retry',
+    ({ tab, edit, field, value, expected }) => {
+      const { rerender } = render(<MealPlanningSettings />);
+      fireEvent.mouseDown(screen.getByRole('tab', { name: tab }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      fireEvent.click(screen.getByRole('button', { name: edit }));
+      const dialog = screen.getByRole('dialog');
+      fireEvent.change(within(dialog).getByLabelText(field), {
+        target: { value },
+      });
+
+      for (const isFetching of [false, true]) {
+        jest.mocked(useCoachMealPlanningDashboard).mockReturnValue({
+          data: dashboard,
+          isLoading: false,
+          isError: true,
+          isFetching,
+          refetch: jest.fn(),
+        } as unknown as ReturnType<typeof useCoachMealPlanningDashboard>);
+        rerender(<MealPlanningSettings />);
+        expect(dialog).toBeInTheDocument();
+        expect(within(dialog).getByLabelText(field)).toHaveValue(expected);
+        expect(patchPantryMutate).not.toHaveBeenCalled();
+        expect(patchShoppingMutate).not.toHaveBeenCalled();
+        expect(replaceMutate).not.toHaveBeenCalled();
+      }
+
+      mockDashboard({ ...dashboard });
+      rerender(<MealPlanningSettings />);
+      expect(dialog).toBeInTheDocument();
+      expect(within(dialog).getByLabelText(field)).toHaveValue(expected);
+    }
+  );
+
   it('retains a shopping editor draft across background changes without overwriting changed quantities', () => {
     const { rerender } = render(<MealPlanningSettings />);
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Shopping' }), {

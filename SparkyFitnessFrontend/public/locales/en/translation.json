@@ -3288,6 +3288,8 @@
       "loading": "Loading meal planning",
       "errorTitle": "Meal planning is unavailable",
       "errorDescription": "Your plan, shopping list, and pantry could not be loaded.",
+      "refreshErrorTitle": "Meal planning could not be refreshed",
+      "refreshErrorDescription": "Showing your last loaded data. Your current edits are preserved. Try again to load the latest changes.",
       "retry": "Try again",
       "warningsTitle": "Please check",
       "tabs": {
